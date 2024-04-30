@@ -313,7 +313,7 @@ macro_rules! reduce_math {
 reduce_math!(reduce_nums, f64, num_num, num_scalar_fill);
 reduce_math!(reduce_coms, Complex, com_x, complex_scalar_fill);
 
-fn fast_reduce_different<T, U>(
+pub fn fast_reduce_different<T, U>(
     arr: Array<T>,
     identity: U,
     default: Option<U>,
@@ -339,7 +339,7 @@ where
     fast_reduce(arr.convert(), identity, default, depth, fuu)
 }
 
-fn fast_reduce<T>(
+pub(crate) fn fast_reduce<T>(
     mut arr: Array<T>,
     identity: T,
     default: Option<T>,

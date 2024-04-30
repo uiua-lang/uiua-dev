@@ -7,7 +7,6 @@
     - Make array into stream
     - Excel
   - Optimize some linear algebra stuff
-    - Matrix product
     - Matrix inverse?
 - Change how functions are compiled so that compiled-out functions don't end up in the assembly
 - Spatial thinking tutorial/blog

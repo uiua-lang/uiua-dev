@@ -2479,4 +2479,5 @@ impl_primitive!(
     (2, Adjacent),
     (2(2), BothTrace, impure),
     (1, CountUnique),
+    (2, MatrixProduct),
 );

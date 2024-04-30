@@ -837,15 +837,15 @@ pub trait RealArrayValue: ArrayValue + Copy {
     /// Whether the value is an integer
     fn is_int(&self) -> bool;
     /// Convert the value to an `f64`
-    fn to_f64(&self) -> f64;
+    fn into_f64(self) -> f64;
 }
 
 impl RealArrayValue for f64 {
     fn is_int(&self) -> bool {
         self.fract().abs() < f64::EPSILON
     }
-    fn to_f64(&self) -> f64 {
-        *self
+    fn into_f64(self) -> f64 {
+        self
     }
 }
 
@@ -853,8 +853,8 @@ impl RealArrayValue for u8 {
     fn is_int(&self) -> bool {
         true
     }
-    fn to_f64(&self) -> f64 {
-        *self as f64
+    fn into_f64(self) -> f64 {
+        self as f64
     }
 }
 

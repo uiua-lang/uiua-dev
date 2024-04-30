@@ -198,6 +198,25 @@ pub(crate) fn optimize_instrs_mut(
         ([.., Instr::Push(_)], Instr::Prim(Pop, _)) => {
             instrs.pop();
         }
+        // Matrix product
+        (
+            [.., Instr::Prim(Transpose, _), Instr::PushFunc(table_f), Instr::Prim(Primitive::Table, span)],
+            instr @ Instr::ImplPrim(TransposeN(-1), _),
+        ) => {
+            if let [Instr::Prim(Mul, _), Instr::PushFunc(reduce_f), Instr::Prim(Reduce, _)] =
+                table_f.instrs(asm)
+            {
+                if let Some((Add, _)) = reduce_f.as_flipped_primitive(asm) {
+                    let span = *span;
+                    instrs.pop();
+                    instrs.pop();
+                    instrs.pop();
+                    instrs.push(Instr::ImplPrim(ImplPrimitive::MatrixProduct, span));
+                    return;
+                }
+            }
+            instrs.push(instr);
+        }
         (_, instr) => instrs.push(instr),
     }
 }

@@ -851,7 +851,7 @@ impl<T: RealArrayValue> Array<T> {
                     "Array must be a list of integers, but {n} is not an integer"
                 )));
             }
-            let n = n.to_f64();
+            let n = n.into_f64();
             if n.abs() > u128::MAX as f64 {
                 return Err(env.error(format!(
                     "{n} is too large for the {} algorithm",
@@ -940,7 +940,7 @@ where
         for (i, bits) in self.data.chunks_exact(bits_slice_len).enumerate() {
             let mut n = 0.0;
             for (j, bit) in bits.iter().enumerate() {
-                n += bit.to_f64() * 2.0f64.powi(j as i32);
+                n += bit.into_f64() * 2.0f64.powi(j as i32);
             }
             new_data_slice[i] = n;
         }
