@@ -12,9 +12,10 @@ use super::{
 
 impl Value {
     /// Multiply this value as a matrix by another
-    pub fn matrix_product(&self, other: &Self, env: &mut Uiua) -> UiuaResult<Value> {
+    pub fn matrix_product(self, other: &Self, env: &mut Uiua) -> UiuaResult<Value> {
         if !(self.rank() == 2 && other.rank() == 2) {
-            let (xs, ys) = (self, other);
+            let (mut xs, ys) = (self, other);
+            xs.transpose();
             let mut new_shape = Shape::from([xs.row_count(), ys.row_count()]);
             let mut builder = Value::builder(xs.row_count() * ys.row_count());
             env.without_fill(|env| -> UiuaResult {
@@ -58,6 +59,7 @@ impl Value {
             let mut tabled = builder.finish();
             new_shape.extend_from_slice(&tabled.shape()[1..]);
             *tabled.shape_mut() = new_shape;
+            tabled.transpose();
             return Ok(tabled);
         }
         match (self, other) {
