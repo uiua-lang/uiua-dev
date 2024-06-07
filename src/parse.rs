@@ -670,6 +670,53 @@ impl<'i> Parser<'i> {
         }
         lines
     }
+    fn array_words(&mut self, boxes: bool) -> (Vec<Vec<Sp<Word>>>, bool) {
+        let mut lines = Vec::new();
+        while self.try_spaces().is_some() {}
+        let mut barred = false;
+        while let Some(words) = self.try_words() {
+            let mut section = Vec::new();
+            while let Some(span) = self.try_exact(Bar.into()) {
+                let words_after_bar = self.try_words().unwrap_or_default();
+                if words_after_bar.iter().any(|w| w.value.is_code()) {
+                    section.push((span, words_after_bar));
+                }
+            }
+            if section.is_empty() {
+                lines.push(words);
+            } else {
+                let words_span =
+                    (words.first().unwrap().span.clone()).merge(words.last().unwrap().span.clone());
+                section.insert(0, (words_span, words));
+                lines.push(
+                    (section.into_iter().enumerate())
+                        .map(|(i, (span, words))| {
+                            span.sp(Word::Array(Arr {
+                                signature: None,
+                                lines: vec![words],
+                                closed: false,
+                                kind: if i == 0 {
+                                    ArrKind::BarFirst
+                                } else {
+                                    ArrKind::BarRest
+                                }(boxes),
+                            }))
+                        })
+                        .collect(),
+                );
+                barred = true;
+            }
+            let mut newlines = 0;
+            while self.try_exact(Newline).is_some() {
+                newlines += 1;
+                self.try_spaces();
+            }
+            if newlines > 1 {
+                lines.push(Vec::new());
+            }
+        }
+        (lines, barred)
+    }
     fn try_word(&mut self) -> Option<Sp<Word>> {
         self.comment()
             .map(|c| c.map(Word::Comment))
@@ -898,14 +945,14 @@ impl<'i> Parser<'i> {
             while self.try_exact(Newline).is_some() || self.try_exact(Spaces).is_some() {}
             let signature = self.try_signature(Bar);
             while self.try_exact(Newline).is_some() {}
-            let items = self.multiline_words(false);
+            let (lines, _) = self.array_words(false);
             let end = self.expect_close(CloseBracket.into());
             let span = start.merge(end.span);
             let arr = Arr {
                 signature,
-                lines: items,
-                boxes: false,
+                lines,
                 closed: end.value,
+                kind: ArrKind::Normal(false),
             };
             if arr_is_normal_di(&arr) {
                 self.diagnostics.push(Diagnostic::new(
@@ -926,14 +973,18 @@ impl<'i> Parser<'i> {
             while self.try_exact(Newline).is_some() || self.try_exact(Spaces).is_some() {}
             let signature = self.try_signature(Bar);
             while self.try_exact(Newline).is_some() {}
-            let items = self.multiline_words(false);
+            let (lines, barred) = self.array_words(true);
             let end = self.expect_close(CloseCurly.into());
             let span = start.merge(end.span);
             span.sp(Word::Array(Arr {
                 signature,
-                lines: items,
-                boxes: true,
+                lines,
                 closed: end.value,
+                kind: if barred {
+                    ArrKind::BoxedBarParent
+                } else {
+                    ArrKind::Normal(true)
+                },
             }))
         } else if let Some(spaces) = self.try_spaces() {
             spaces
@@ -1264,9 +1315,7 @@ fn split_word(word: Sp<Word>) -> Sp<Word> {
             Word::Func(func)
         }
         Word::Array(mut arr) => {
-            arr.lines = arr
-                .lines
-                .into_iter()
+            arr.lines = (arr.lines.into_iter())
                 .flat_map(|line| {
                     let mut split_words = split_words(line);
                     split_words.reverse();
@@ -1276,9 +1325,7 @@ fn split_word(word: Sp<Word>) -> Sp<Word> {
             Word::Array(arr)
         }
         Word::Pack(mut pack) => {
-            pack.branches = pack
-                .branches
-                .into_iter()
+            pack.branches = (pack.branches.into_iter())
                 .map(|mut br| {
                     br.value.lines = br.value.lines.into_iter().flat_map(split_words).collect();
                     br
@@ -1396,7 +1443,7 @@ where
 }
 
 fn arr_is_normal_di(arr: &Arr) -> bool {
-    if arr.boxes {
+    if arr.kind.boxes() {
         return false;
     }
     let mut is_di = false;

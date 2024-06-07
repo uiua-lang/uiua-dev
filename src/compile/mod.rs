@@ -1120,7 +1120,7 @@ code:
             }
             Word::Array(arr) => {
                 // Track span for LSP
-                if !arr.boxes
+                if !arr.kind.boxes()
                     && (arr.lines.iter().flatten())
                         .filter(|w| w.value.is_code())
                         .all(|w| w.value.is_literal() && !matches!(w.value, Word::Strand(_)))
@@ -1159,7 +1159,7 @@ code:
                 }
                 // Diagnostic for array of characters
                 if line_count <= 1
-                    && !arr.boxes
+                    && !arr.kind.boxes()
                     && !inner.is_empty()
                     && inner.iter().all(
                         |instr| matches!(instr, Instr::Push(Value::Char(arr)) if arr.rank() == 0),
@@ -1180,7 +1180,7 @@ code:
                         Instr::Push(v) => v.clone(),
                         _ => unreachable!(),
                     });
-                    let res = if arr.boxes {
+                    let res = if arr.kind.boxes() {
                         if empty {
                             Ok(Array::<Boxed>::default().into())
                         } else {
@@ -1209,7 +1209,7 @@ code:
                 instrs.extend(inner);
                 self.push_instr(Instr::EndArray {
                     span,
-                    boxed: arr.boxes,
+                    boxed: arr.kind.boxes(),
                 });
                 if !call {
                     let instrs = self.new_functions.pop().unwrap();

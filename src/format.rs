@@ -873,11 +873,8 @@ impl<'a> Formatter<'a> {
                 }
             }
             Word::Array(arr) => {
-                if arr.boxes {
-                    self.output.push('{');
-                } else {
-                    self.output.push('[');
-                }
+                let (left, right) = arr.kind.delims();
+                self.output.push_str(left);
                 if let Some(sig) = &arr.signature {
                     let trailing_space = arr.lines.len() <= 1
                         && !(arr.lines.iter().flatten()).any(|word| word_is_multiline(&word.value));
@@ -887,11 +884,7 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 self.format_multiline_words(&arr.lines, arr.signature.is_none(), true, depth + 1);
-                if arr.boxes {
-                    self.output.push('}');
-                } else {
-                    self.output.push(']');
-                }
+                self.output.push_str(right);
             }
             Word::Undertied(items) => {
                 for (i, item) in items.iter().enumerate() {

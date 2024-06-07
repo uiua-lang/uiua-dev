@@ -353,10 +353,42 @@ pub struct Arr {
     pub signature: Option<Sp<Signature>>,
     /// The words in the array
     pub lines: Vec<Vec<Sp<Word>>>,
-    /// Whether this is a box array
-    pub boxes: bool,
     /// Whether a closing bracket was found
     pub closed: bool,
+    /// The syntax this array uses
+    pub kind: ArrKind,
+}
+
+/// The syntax an array uses
+#[derive(Clone)]
+pub enum ArrKind {
+    /// Normal array syntax
+    Normal(bool),
+    /// The first section of a bar line
+    BarFirst(bool),
+    /// Any subsequent section of a bar line
+    BarRest(bool),
+    /// Box syntax array with bar children
+    BoxedBarParent,
+}
+
+impl ArrKind {
+    /// Whether this array puts its children in boxes
+    pub fn boxes(&self) -> bool {
+        match self {
+            ArrKind::Normal(boxes) | ArrKind::BarFirst(boxes) | ArrKind::BarRest(boxes) => *boxes,
+            ArrKind::BoxedBarParent => false,
+        }
+    }
+    /// Get the delimiters of this array syntax
+    pub fn delims(&self) -> (&'static str, &'static str) {
+        match self {
+            ArrKind::Normal(false) => ("[", "]"),
+            ArrKind::Normal(true) | ArrKind::BoxedBarParent => ("{", "}"),
+            ArrKind::BarFirst(_) => ("", ""),
+            ArrKind::BarRest(_) => ("|", ""),
+        }
+    }
 }
 
 impl fmt::Debug for Arr {
