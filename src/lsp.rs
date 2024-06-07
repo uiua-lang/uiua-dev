@@ -336,15 +336,16 @@ impl Spanner {
                     }
                 }
                 Word::Array(arr) => {
-                    spans.push(word.span.just_start(self.inputs()).sp(SpanKind::Delimiter));
+                    let (left, right) = arr.kind.delims();
+                    if !left.is_empty() {
+                        spans.push(word.span.just_start(self.inputs()).sp(SpanKind::Delimiter));
+                    }
                     spans.extend(arr.lines.iter().flat_map(|w| self.words_spans(w)));
-                    if arr.closed {
-                        let end = word.span.just_end(self.inputs());
-                        if end.as_str(self.inputs(), |s| s == "]")
-                            || end.as_str(self.inputs(), |s| s == "}")
-                        {
-                            spans.push(end.sp(SpanKind::Delimiter));
-                        }
+                    if arr.closed
+                        && !right.is_empty()
+                        && word.span.as_str(self.inputs(), |s| s.ends_with(right))
+                    {
+                        spans.push(word.span.just_end(self.inputs()).sp(SpanKind::Delimiter));
                     }
                 }
                 Word::Func(func) => {
