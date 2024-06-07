@@ -167,6 +167,7 @@ pub mod stand;
 mod sys;
 #[cfg(feature = "native_sys")]
 mod sys_native;
+mod uasm;
 mod value;
 
 #[allow(unused_imports)]
