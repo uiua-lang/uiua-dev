@@ -38,7 +38,16 @@ This version is not yet released. If you are reading this on the website, then t
   - This can shorten code when accessing many items from the same module
 - Add the [`datetime`](https://uiua.org/docs/datetime) function, which splits a time into its date and time components
 - [`un °`](https://uiua.org/docs/un) [`shape △`](https://uiua.org/docs/shape) now generates an array with the given shape and incrementing elements
+- Deprecate [`member ∊`](https://uiua.org/docs/member) and add [`memberof ∈`](https://uiua.org/docs/memberof)
+  - [`member ∊`](https://uiua.org/docs/member) almost always required flipping the arguments
+  - [`memberof ∈`](https://uiua.org/docs/memberof) is the same, but with the arguments flipped
+  - In the future, [`member ∊`](https://uiua.org/docs/member) will be removed, and [`memberof ∈`](https://uiua.org/docs/memberof)'s glyph will be changed and format to `∊`
+- Deprecate [`indexof ⊗`](https://uiua.org/docs/indexof) and add [`indexin ⨂`](https://uiua.org/docs/indexin)
+  - [`indexof ⊗`](https://uiua.org/docs/indexof) almost always required flipping the arguments
+  - [`indexin ⨂`](https://uiua.org/docs/indexin) is the same, but with the arguments flipped
+  - In the future, [`indexof ⊗`](https://uiua.org/docs/indexof) will be removed, and [`indexin ⨂`](https://uiua.org/docs/indexin)'s glyph will be changed and format to `⊗`
 - [`un °`](https://uiua.org/docs/un) [`pick ⊡`](https://uiua.org/docs/pick) is now equivalent to [`range ⇡`](https://uiua.org/docs/range) [`shape △`](https://uiua.org/docs/shape) [`duplicate .`](https://uiua.org/docs/duplicate)
+- [`un °`](https://uiua.org/docs/un) [`shape △`](https://uiua.org/docs/shape) now generates an array with the given shape and incrementing elements
 - [`keep ▽`](https://uiua.org/docs/keep) will now cycle counts if the counts array is shorter than the counted array
 - [`keep ▽`](https://uiua.org/docs/keep) now works with non-integer scalar counts to scale an array
 - [`join ⊂`](https://uiua.org/docs/join) with rank differences greater than 1 can now extend the smaller array

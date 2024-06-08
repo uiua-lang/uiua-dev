@@ -48,7 +48,7 @@ Rule ← /+⊞= ⊓(⊚⋯|°⋯⇌◫3⇌ ⊂⊂0:0)
 ⇌[⍥⊸(Rule30)⌊÷2⧻.] # Run";
 const ROMAN: &str = r#"k ← "IVXLCDM"
 n ← [1 5 10 50 100 500 1000]
-F ← /+-⊃(↻1×|×¬)≡/>◫2⊂:0.⊏⊗:k:n
+F ← /+-⊃(↻1×|×¬)≡/>◫2⊂:0.⊏⨂k:n
 F "LVII"
 F "MCMXCIV""#;
 const MANDELBROT: &str = "\
