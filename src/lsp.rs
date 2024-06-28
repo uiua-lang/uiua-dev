@@ -204,10 +204,10 @@ impl Spanner {
                         let binding_docs = self.binding_docs(&name.span);
                         spans.push(name.span.clone().sp(SpanKind::Ident(binding_docs)));
                     }
-                    spans.push(import.tilde_span.clone().sp(SpanKind::Delimiter));
+                    spans.push(import.quote_span.clone().sp(SpanKind::Delimiter));
                     spans.push(import.path.span.clone().sp(SpanKind::String));
                     for line in import.lines.iter().flatten() {
-                        spans.push(line.tilde_span.clone().sp(SpanKind::Delimiter));
+                        spans.push(line.quote_span.clone().sp(SpanKind::Delimiter));
                         for item in &line.items {
                             let binding_docs = self.reference_docs(&item.span);
                             spans.push(item.span.clone().sp(SpanKind::Ident(binding_docs)));
@@ -476,7 +476,7 @@ impl Spanner {
         for comp in path {
             let module_docs = self.reference_docs(&comp.module.span);
             spans.push(comp.module.span.clone().sp(SpanKind::Ident(module_docs)));
-            spans.push(comp.tilde_span.clone().sp(SpanKind::Delimiter));
+            spans.push(comp.quote_span.clone().sp(SpanKind::Delimiter));
         }
         spans
     }
@@ -640,14 +640,14 @@ mod server {
                     )),
                     hover_provider: Some(HoverProviderCapability::Simple(true)),
                     completion_provider: Some(CompletionOptions {
-                        trigger_characters: Some(vec!["~".into(), "&".into()]),
+                        trigger_characters: Some(vec!["'".into(), "&".into()]),
                         ..Default::default()
                     }),
                     document_formatting_provider: Some(OneOf::Left(true)),
                     document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
                         first_trigger_character: ' '.to_string(),
                         more_trigger_character: Some(
-                            "[{()}]|1234567890~!@#$%^&*_-+=.,<>/?\\\nABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                            "[{()}]|1234567890';!@#$%^&*_-+=.,<>/?\\\nABCDEFGHIJKLMNOPQRSTUVWXYZ"
                                 .chars()
                                 .map(|c| c.to_string())
                                 .collect(),
@@ -1038,7 +1038,7 @@ mod server {
                             continue;
                         }
                         completions.push(make_completion(
-                            format!("{name}~{item_name}"),
+                            format!("{name}'{item_name}"),
                             &sp.span,
                             &binding,
                         ));

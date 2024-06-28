@@ -1043,7 +1043,7 @@ pub fn Editor<'a>(
             None,
             "tutorial/modules#visibility",
         ),
-        ("~", "import", "", None, "tutorial/modules"),
+        ("'", "import", "", None, "tutorial/modules"),
         (
             "|",
             "signature",
@@ -1213,7 +1213,7 @@ pub fn Editor<'a>(
                 let code = get_code();
                 if code.trim().is_empty() {
                     let function = if path.extension().is_some_and(|ext| ext == "ua") {
-                        "~"
+                        "'"
                     } else if path
                         .extension()
                         .map_or(true, |ext| ["txt", "md"].iter().any(|e| e == &ext))

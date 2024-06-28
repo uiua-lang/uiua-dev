@@ -74,8 +74,8 @@ pub enum ModuleKind {
 pub struct Import {
     /// The name given to the imported module
     pub name: Option<Sp<Ident>>,
-    /// The span of the ~
-    pub tilde_span: CodeSpan,
+    /// The span of the '
+    pub quote_span: CodeSpan,
     /// The import path
     pub path: Sp<String>,
     /// The import lines
@@ -85,8 +85,8 @@ pub struct Import {
 #[derive(Debug, Clone)]
 /// A line of imported items
 pub struct ImportLine {
-    /// The span of the ~
-    pub tilde_span: CodeSpan,
+    /// The span of the '
+    pub quote_span: CodeSpan,
     /// The imported items
     pub items: Vec<Sp<Ident>>,
 }
@@ -242,7 +242,7 @@ impl fmt::Debug for Word {
             Word::Label(label) => write!(f, "${label}"),
             Word::Ref(ident) => write!(f, "ref({ident})"),
             Word::IncompleteRef { path, .. } => {
-                write!(f, "incomplete_ref({}~...)", path[0].module.value)
+                write!(f, "incomplete_ref({}'...)", path[0].module.value)
             }
             Word::Array(arr) => arr.fmt(f),
             Word::Strand(items) => write!(f, "strand({items:?})"),
@@ -319,8 +319,8 @@ pub struct Ref {
 pub struct RefComponent {
     /// The name of the module
     pub module: Sp<Ident>,
-    /// The span of the ~
-    pub tilde_span: CodeSpan,
+    /// The span of the '
+    pub quote_span: CodeSpan,
 }
 
 impl Ref {
@@ -349,7 +349,7 @@ impl Eq for Ref {}
 impl fmt::Debug for Ref {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for comp in &self.path {
-            write!(f, "{}~", comp.module.value)?;
+            write!(f, "{}'", comp.module.value)?;
         }
         write!(f, "{}", self.name.value)
     }
@@ -358,7 +358,7 @@ impl fmt::Debug for Ref {
 impl fmt::Display for Ref {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for comp in &self.path {
-            write!(f, "{}~", comp.module.value)?;
+            write!(f, "{}'", comp.module.value)?;
         }
         write!(f, "{}", self.name.value)
     }

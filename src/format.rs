@@ -667,7 +667,7 @@ impl<'a> Formatter<'a> {
                     self.output.push(' ');
                     self.prev_import_function = Some(name.value.clone());
                 }
-                self.output.push_str("~ ");
+                self.output.push_str("' ");
                 self.push(&import.path.span, &format!("{:?}", import.path.value));
 
                 let mut import = import.clone();
@@ -692,7 +692,7 @@ impl<'a> Formatter<'a> {
                 if lines.iter().flatten().count() == 1 {
                     let line = lines.iter().flatten().next().unwrap();
                     self.output.push(' ');
-                    self.push(&line.tilde_span, "~");
+                    self.push(&line.quote_span, "'");
                     for item in &line.items {
                         self.output.push(' ');
                         self.push(&item.span, &item.value);
@@ -709,7 +709,7 @@ impl<'a> Formatter<'a> {
                                     self.output.push(' ');
                                 }
                             }
-                            self.push(&line.tilde_span, "~");
+                            self.push(&line.quote_span, "'");
                             for item in &line.items {
                                 self.output.push(' ');
                                 self.push(&item.span, &item.value);
@@ -752,7 +752,7 @@ impl<'a> Formatter<'a> {
         }
         for comp in comps {
             self.push(&comp.module.span, &comp.module.value);
-            self.push(&comp.tilde_span, "~");
+            self.push(&comp.quote_span, "'");
         }
     }
     fn format_words(&mut self, words: &[Sp<Word>], trim_end: bool, depth: usize) {

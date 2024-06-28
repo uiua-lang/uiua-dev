@@ -1103,7 +1103,7 @@ code:
             Word::IncompleteRef { path, in_macro_arg } => {
                 if let Some((_, locals)) = self.ref_path(&path, in_macro_arg)? {
                     self.add_error(
-                        path.last().unwrap().tilde_span.clone(),
+                        path.last().unwrap().quote_span.clone(),
                         "Incomplete module reference",
                     );
                     for (local, comp) in locals.iter().zip(path) {

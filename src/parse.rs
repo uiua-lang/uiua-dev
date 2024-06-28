@@ -398,7 +398,7 @@ impl<'i> Parser<'i> {
         let name = self.try_ident();
         self.try_spaces();
         // Tilde
-        let Some(tilde_span) = self.try_exact(Tilde.into()) else {
+        let Some(quote_span) = self.try_exact(Quote.into()) else {
             self.index = start;
             return None;
         };
@@ -410,7 +410,7 @@ impl<'i> Parser<'i> {
         };
         let path = path.map(Into::into);
         self.try_spaces();
-        Some((name, tilde_span, path))
+        Some((name, quote_span, path))
     }
     fn try_binding(&mut self) -> Option<Binding> {
         let (name, arrow_span, public, array_macro) = self.try_binding_init()?;
@@ -470,12 +470,12 @@ impl<'i> Parser<'i> {
         }
     }
     fn try_import(&mut self) -> Option<Import> {
-        let (name, tilde_span, path) = self.try_import_init()?;
+        let (name, quote_span, path) = self.try_import_init()?;
         // Items
         let mut lines: Vec<Option<ImportLine>> = Vec::new();
         let mut line: Option<ImportLine> = None;
         self.try_exact(Newline);
-        let mut last_tilde_index = self.index;
+        let mut last_quote_index = self.index;
         while let Some(token) = self.tokens.get(self.index).cloned() {
             let span = token.span;
             let token = token.value;
@@ -486,16 +486,16 @@ impl<'i> Parser<'i> {
                     let name = span.clone().sp(ident);
                     line.items.push(name);
                 }
-                Simple(Tilde) if line.is_none() => {
-                    last_tilde_index = self.index;
+                Simple(Quote) if line.is_none() => {
+                    last_quote_index = self.index;
                     line = Some(ImportLine {
-                        tilde_span: span.clone(),
+                        quote_span: span.clone(),
                         items: Vec::new(),
                     })
                 }
-                Simple(Tilde) => self
+                Simple(Quote) => self
                     .errors
-                    .push(span.sp(ParseError::Unexpected(Simple(Tilde)))),
+                    .push(span.sp(ParseError::Unexpected(Simple(Quote)))),
                 Newline => {
                     lines.push(line.take());
                 }
@@ -506,7 +506,7 @@ impl<'i> Parser<'i> {
         }
         if let Some(line) = line {
             if line.items.is_empty() {
-                self.index = last_tilde_index;
+                self.index = last_quote_index;
             } else {
                 lines.push(Some(line));
             }
@@ -520,7 +520,7 @@ impl<'i> Parser<'i> {
         }
         Some(Import {
             name,
-            tilde_span,
+            quote_span,
             path,
             lines,
         })
@@ -535,10 +535,10 @@ impl<'i> Parser<'i> {
         let mut name = self.try_ident()?;
         let start_span = name.span.clone();
         let mut path = Vec::new();
-        while let Some(tilde_span) = self.try_exact(Tilde.into()) {
+        while let Some(quote_span) = self.try_exact(Quote.into()) {
             let comp = RefComponent {
                 module: name,
-                tilde_span,
+                quote_span,
             };
             let Some(next) = self.try_ident() else {
                 self.try_spaces();
@@ -547,7 +547,7 @@ impl<'i> Parser<'i> {
                     .get(self.index)
                     .map_or(true, |t| !matches!(t.value, Token::Str(_)))
                 {
-                    let span = start_span.merge(comp.tilde_span.clone());
+                    let span = start_span.merge(comp.quote_span.clone());
                     path.push(comp);
                     return Some(span.sp(Word::IncompleteRef {
                         path,
@@ -787,11 +787,11 @@ impl<'i> Parser<'i> {
         for i in 0..modifier.args() {
             loop {
                 args.extend(self.try_spaces());
-                if let Some(span) = self.try_exact(Quote.into()) {
+                if let Some(span) = self.try_exact(Semicolon.into()) {
                     self.errors.push(span.sp(ParseError::SplitInModifier));
                     continue;
                 }
-                if let Some(span) = self.try_exact(Quote2.into()) {
+                if let Some(span) = self.try_exact(DoubleSemicolon.into()) {
                     self.errors.push(span.sp(ParseError::UnsplitInModifier));
                     continue;
                 }

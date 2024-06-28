@@ -635,7 +635,6 @@ pub enum AsciiToken {
     Tilde,
     TripleMinus,
     Quote,
-    Quote2,
     Placeholder(PlaceholderOp),
 }
 
@@ -664,7 +663,6 @@ impl fmt::Display for AsciiToken {
             AsciiToken::Tilde => write!(f, "~"),
             AsciiToken::TripleMinus => write!(f, "---"),
             AsciiToken::Quote => write!(f, "'"),
-            AsciiToken::Quote2 => write!(f, "''"),
             AsciiToken::Placeholder(op) => write!(f, "{op}"),
         }
     }
@@ -803,20 +801,7 @@ impl<'a> Lexer<'a> {
                 ";" if self.next_char_exact(";") => self.end(DoubleSemicolon, start),
                 ";" => self.end(Semicolon, start),
                 "-" if self.next_chars_exact(["-", "-"]) => self.end(TripleMinus, start),
-                "'" if self.next_char_exact("'") => {
-                    if let Some(swiz) = self.array_swizzle() {
-                        self.end(ArraySwizzle(swiz), start)
-                    } else {
-                        self.end(Quote2, start)
-                    }
-                }
-                "'" => {
-                    if let Some(swiz) = self.stack_swizzle() {
-                        self.end(StackSwizzle(swiz), start)
-                    } else {
-                        self.end(Quote, start)
-                    }
-                }
+                "'" => self.end(Quote, start),
                 "λ" => {
                     let swiz = self.stack_swizzle().unwrap_or_default();
                     self.end(StackSwizzle(swiz), start)
