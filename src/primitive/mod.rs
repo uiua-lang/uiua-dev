@@ -359,6 +359,13 @@ impl Primitive {
     pub(crate) fn deprecation_suggestion(&self) -> Option<String> {
         use Primitive::*;
         Some(match self {
+            Over => format!(
+                "use some of ({} {} {} {}) instead",
+                On.format(),
+                But.format(),
+                With.format(),
+                By.format()
+            ),
             Coordinate => format!(
                 "use {} {} {} instead",
                 First.format(),
@@ -392,7 +399,7 @@ impl Primitive {
         use SysOp::*;
         matches!(
             self,
-            (But | With | Backward)
+            (Backward)
                 | (Orient | Coordinate | Astar | Fft | Triangle | Case)
                 | Sys(Ffi | MemCopy | MemFree | TlsListen)
                 | (Stringify | Quote | Sig)

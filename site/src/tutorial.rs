@@ -320,11 +320,11 @@ fn TutorialBasic() -> impl IntoView {
 
         <Challenge
             number=2
-            prompt="divides the second number by the first but keeps the inputs on the stack"
-            example="5 10"
-            answer="÷,,"
-            tests={&["6 24", "2 100", "17 51"]}
-            hidden="8 32"/>
+            prompt="divides the first number by the second but keeps the inputs on the stack"
+            example="10 5"
+            answer="÷:"
+            tests={&["24 6", "100 2", "51 17"]}
+            hidden="32 8"/>
 
         <Challenge
             number=3
@@ -1201,7 +1201,7 @@ def splitArray(array):
 
 splitArray([1, 2, 3, 7, 2, 4, 5])"</code>
         <p>"In Uiua, it is much simpler, and there are no "<code>"if"</code>"s or "<code>"for"</code>"s to be found:"</p>
-        <Editor example="F ← ∩▽¬,,◿2.\nF [1 2 3 7 2 4 5]"/>
+        <Editor example="F ← ∩▽⟜⤙¬◿2.\nF [1 2 3 7 2 4 5]"/>
         <p>"That being said, not every problem lends itself to array operations. Uiua has a few methods for handling such cases."</p>
 
         <Hd id="repeat-do">"Looping with "<Prim prim=Repeat/>" and "<Prim prim=Do/></Hd>
@@ -1420,8 +1420,7 @@ fn TutorialAdvancedArray() -> impl IntoView {
         <p>"In this example, we apply a table of rotations to each matrix cell of a 3D array."</p>
         <Editor example="°⊚ ≡[..]⇡3           # Target array
 [0_0 0_1]_[¯1_1 1_0] # Rotations table
-,,                   # Copy to see inputs
-⍜(☇1)⊞↻              # All rotation combinations
+⟜⤙⍜(☇1)⊞↻            # All rotation combinations
 ≡≡□                  # Box for display"/>
 
         <Hd id="challenges">"Challenges"</Hd>
@@ -1591,7 +1590,7 @@ F!!!+×⊂ [1 2 3][4 5 6]"/>
         <p>"Let's look at a simple example to see how this ordering works."</p>
         <Editor example="F‼ ← ^!^!\nG‼ ← ^!^!^:\nF‼(⊂1|⊂2) []\nG‼(⊂1|⊂2) []"/>
         <p>"If we wanted to call each of two functions twice, we could use a similar pattern to what we use in normal Uiua code."</p>
-        <Editor example="[,, 1 2]\nF‼ ← ^!^!^!^!^,^,\nF‼(⊂1|⊂2) []"/>
+        <Editor example="F‼ ← ^!^!^!^!^,^,\nF‼(⊂1|⊂2) []"/>
 
         <Hd id="two-kinds">"Two Kinds of Macros"</Hd>
         <p>"The macros described so far are called "<em>"stack macros"</em>", because they move operands around on a stack."</p>

@@ -657,7 +657,7 @@ primitive!(
     ///
     /// Uiua does not have dedicated boolean logical operators.
     /// [multiply] can be used as a logical AND.
-    /// ex: ×,,⊓≥≤5,8 . [6 2 5 9 6 5 0 4]
+    /// ex: ⊸⤚×⊓≥≤5,8 . [6 2 5 9 6 5 0 4]
     (2, Mul, DyadicPervasive, ("multiply", AsciiToken::Star, '×')),
     /// Divide values
     ///
@@ -706,7 +706,7 @@ primitive!(
     /// Uiua does not have dedicated boolean logical operators.
     /// [minimum] can be used as a logical AND.
     /// ex: ≥5:≤8. [6 2 5 9 6 5 0 4]
-    ///   : ↧,,
+    ///   : ⊸⤚↧
     (2, Min, DyadicPervasive, ("minimum", '↧')),
     /// Take the maximum of two arrays
     ///
@@ -715,7 +715,7 @@ primitive!(
     ///
     /// Uiua does not have dedicated boolean logical operators.
     /// [maximum] can be used as a logical OR.
-    /// ex: ↥,,≤5:≥8. [6 2 5 9 6 5 0 4]
+    /// ex: ⊸⤚↥≤5:≥8. [6 2 5 9 6 5 0 4]
     (2, Max, DyadicPervasive, ("maximum", '↥')),
     /// Take the arctangent of two numbers
     ///
@@ -1325,8 +1325,8 @@ primitive!(
     ///
     /// Arbitrary rank arrays are supported.
     /// The first array's rank must be `less or equal` the rank of the second.
-    /// ex: ⦷,, 3_4 ↯2_3⇡6
-    /// ex: ⦷,, [1_2 5_6] [1_2_3_4 5_6_1_2 7_8_5_6 4_3_1_2]
+    /// ex: ⊸⤚⦷ 3_4 ↯2_3⇡6
+    /// ex: ⊸⤚⦷ [1_2 5_6] [1_2_3_4 5_6_1_2 7_8_5_6 4_3_1_2]
     ///
     /// [mask] works well with [partition] in a way that [find] does not.
     /// Here, we [not] the [mask] of a non-scalar delimiter to split a string.
@@ -1368,19 +1368,19 @@ primitive!(
     ///
     /// While [indexof] returns an array of top-level indices into the searched-in array, [coordinate] returns an array of multi-dimensional coordinates.
     /// ex: # Experimental!
-    ///   : ⟔,, 14 ↯2_3_4⇡24
+    ///   : ⊸⤚⟔ 14 ↯2_3_4⇡24
     /// ex: # Experimental!
-    ///   : ⟔,, [4 5 6 7] ↯2_3_4⇡24
+    ///   : ⊸⤚⟔ [4 5 6 7] ↯2_3_4⇡24
     /// ex: # Experimental!
-    ///   : ⟔,, +12↯3_4⇡12 ↯2_3_4⇡24
+    ///   : ⊸⤚⟔ +12↯3_4⇡12 ↯2_3_4⇡24
     /// ex: # Experimental!
-    ///   : ⟔,, [1 2 3] [2 1 4 5 3]
+    ///   : ⊸⤚⟔ [1 2 3] [2 1 4 5 3]
     /// If the index cannot be found, the [shape] of the searched-in array is returned.
     /// ex: # Experimental!
-    ///   : ⟔,, 100 ↯2_3_4⇡24
+    ///   : ⊸⤚⟔ 100 ↯2_3_4⇡24
     /// If you want to get multiple coordinates from an array, you may need to use [rows] and [fix].
     /// ex: # Experimental!
-    ///   : ≡⟔⊙¤,, [1 2 3 4 5] [1_5_3 6_2_4]
+    ///   : ≡⟔⊸⤚⊙¤ [1 2 3 4 5] [1_5_3 6_2_4]
     /// You can use the returned indices with [pick] to get the rows that were found.
     /// If you expect one of the searched-for rows to be missing, you can use [fill] to set a default value.
     /// ex: # Experimental!
@@ -1761,33 +1761,25 @@ primitive!(
     ([1], On, Stack, ("on", '⟜')),
     /// Call a function but keep its last argument on the top of the stack
     ///
-    /// ex: # Experimental!
-    ///   : [⤙+ 2 5]
+    /// ex: [⤙+ 2 5]
     ///   : [⤙- 2 5]
     /// [but] can be used to copy a value from deep in the stack, or to move it.
-    /// ex: # Experimental!
-    ///   : [⤙⊙⊙⊙∘ 1 2 3 4]
+    /// ex: [⤙⊙⊙⊙∘ 1 2 3 4]
     ///   : [⤙⊙⊙⊙◌ 1 2 3 4]
     /// [but] always takes at least 2 arguments, even if its function takes fewer.
-    /// ex! # Experimental!
-    ///   : [⤙¯ 2]
-    /// ex: # Experimental!
-    ///   : [⤙¯ 2 5]
+    /// ex! [⤙¯ 2]
+    /// ex: [⤙¯ 2 5]
     ([1], But, Stack, ("but", '⤙')),
     /// Call a function but keep its first argument under the outputs on the stack
     ///
-    /// ex: # Experimental!
-    ///   : [⤚+ 2 5]
+    /// ex: [⤚+ 2 5]
     ///   : [⤚- 2 5]
     /// [with] can be used to copy a value from the top of the stack to a position deeper, or to move it.
-    /// ex: # Experimental!
-    ///   : [⤚⊙⊙⊙∘ 1 2 3 4]
+    /// ex: [⤚⊙⊙⊙∘ 1 2 3 4]
     ///   : [⤚⋅⊙⊙∘ 1 2 3 4]
     /// [with] always takes at least 2 arguments, even if its function takes fewer.
-    /// ex! # Experimental!
-    ///   : [⤚¯ 2]
-    /// ex: # Experimental!
-    ///   : [⤚¯ 2 5]
+    /// ex! [⤚¯ 2]
+    /// ex: [⤚¯ 2 5]
     ([1], With, Stack, ("with", '⤚')),
     /// Duplicate a function's last argument before calling it
     ///
@@ -1886,8 +1878,8 @@ primitive!(
     /// ex: # Experimental!
     ///   : F ← setund(
     ///   :   &p$"Normal _".
-    ///   : | &p$"Do:   set ctx = _, value = _" ,, +1.
-    ///   : | &p$"Undo: get ctx = _, value = _" ⊙.
+    ///   : | &p⊸⤚$"Do:   set ctx = _, value = _" +1.
+    ///   : | &p⊸$"Undo: get ctx = _, value = _"
     ///   : )
     ///   : ◌F 5
     ///   : ◌⍜F(×10) 5
@@ -1949,7 +1941,7 @@ primitive!(
     /// ex: [⊓⊓⊓+-×÷ 10 20 5 8 3 7 2 5]
     /// ex: [⊓(+|-|×|÷) 10 20 5 8 3 7 2 5]
     /// [bracket] is a nice way to check if a number is within a range.
-    /// ex: ×,,⊓≥≤5,8 . [6 2 5 9 6 5 0 4]
+    /// ex: ⊸⤚×⊓≥≤5,8 . [6 2 5 9 6 5 0 4]
     ([2], Bracket, Planet, ("bracket", '⊓')),
     /// Repeat a function while a condition holds
     ///
@@ -1960,7 +1952,7 @@ primitive!(
     /// Here is an example that evaluates a [Collatz sequence](https://en.wikipedia.org/wiki/Collatz_conjecture).
     /// The next number in the sequence is calculated in the condition function but [join]ed to the sequence in the loop function.
     /// ex: C ← ⨬(+1×3|÷2)=0◿2.
-    ///   : ◌⍢⊂(¬∊,,C⊢.) [7]
+    ///   : ◌⍢⊂(¬⊸⤚∊C⊢.) [7]
     /// If the condition function consumes its only arguments to evaluate the condition, then those arguments will be implicitly copied.
     /// Consider this equivalence:
     /// ex: ⍢(×3|<100)  1
@@ -2445,7 +2437,7 @@ primitive!(
     /// ex: map 1_2 3_4
     ///   : ⍣get0 5 .
     /// ex: map 1_2 3_4
-    ///   : ⨬⋅⋅0get has,, 5 .
+    ///   : ⨬⋅⋅0get ⊸⤚has 5 .
     /// You can provide a default value with [fill].
     /// ex: map 1_2 3_4
     ///   : ⬚0get 1 .
@@ -2477,7 +2469,7 @@ primitive!(
     /// This is useful when you want to inspect the current ordering of the stack.
     /// For example, if you are juggling some values on the stack, you can use [stack] to inspect the stack afterwards:
     /// ex: 1 2 3
-    ///   : ,,⊙.:
+    ///   : ⊸⤚⊙.:
     ///   : ?
     ///   : +×-×+
     /// ex: 2_3_10 ? 17 ↯3_4⇡12
@@ -2503,7 +2495,7 @@ primitive!(
     /// This is useful when you want to inspect the current ordering of the stack.
     /// For example, if you are juggling some values on the stack, you can use [dump] to inspect the stack afterwards:
     /// ex: 1 2 3
-    ///   : ,,⊙.:
+    ///   : ⊸⤚⊙.:
     ///   : dump∘
     ///   : +×-×+
     /// [dump][shape] is useful if your raw array data isn't worth looking at, but the shapes are.
@@ -2601,7 +2593,7 @@ primitive!(
     /// The heuristic function `absolute value``reduce``complex``subtract` calculates the euclidean distance between two points.
     /// The goal function simply checks if the current node [match]es the given goal node.
     /// ex: # Experimental!
-    ///   : Neis ← [∩¯,,⇌.⇡2]
+    ///   : Neis ← [∩⊸⤚¯⇌.⇡2]
     ///   : Neis # Side-adjacent neighbors offsets
     ///   :
     ///   : °□⊢ astar(
@@ -2611,16 +2603,16 @@ primitive!(
     ///   : )0_0 3_5      # Start and goal
     /// If we omit the cost array from the neighbors function and simply use `1` as the heuristic, the algorithm becomes Dijkstra's algorithm.
     /// ex: # Experimental!
-    ///   : Neis ← [∩¯,,⇌.⇡2]
+    ///   : Neis ← [∩⊸⤚¯⇌.⇡2]
     ///   : °□⊢ astar(+Neis¤)1≍ 0_0 3_5
     /// In the examples above, we use `un``box``first` to get only the first path. [first][astar] is optimized to not do extra work.
     /// If we want *all* shortest paths, we can omit [first].
     /// ex: # Experimental!
-    ///   : Neis ← [∩¯,,⇌.⇡2]
+    ///   : Neis ← [∩⊸⤚¯⇌.⇡2]
     ///   : astar(+Neis¤)1≍ 0_0 1_2
     /// If pathing on a grid like the examples above, we can use [un][where] to visualize the path that was taken!
     /// ex: # Experimental!
-    ///   : Neis ← [∩¯,,⇌.⇡2]
+    ///   : Neis ← [∩⊸⤚¯⇌.⇡2]
     ///   : °□⊢ astar(+Neis¤|⌵/ℂ-|≍) 3_4 13_20
     ///   : °⊚
     ///   : ▽⟜≡▽8 # Upscale
