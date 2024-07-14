@@ -6,7 +6,7 @@ use leptos_meta::*;
 use leptos_router::*;
 use uiua::{Primitive, SysOp, EXAMPLE_UA};
 
-use crate::{editor::*, other_tutorial::OtherTutorialParams, Hd, Prim, Prims};
+use crate::{editor::*, other_tutorial::OtherTutorialParams, title_markdown, Hd, Prim, Prims};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Sequence)]
 pub enum TutorialPage {
@@ -24,6 +24,7 @@ pub enum TutorialPage {
     AdvancedArray,
     ThinkingWithArrays,
     Macros,
+    WritingLongerCode,
     Modules,
     Testing,
 }
@@ -48,6 +49,7 @@ impl TutorialPage {
             Self::AdvancedArray => "Advanced Array Manipulation",
             Self::ThinkingWithArrays => "Thinking With Arrays",
             Self::Macros => "Macros",
+            Self::WritingLongerCode => "Writing Longer Code",
             Self::Modules => "Modules",
             Self::Testing => "Testing",
         }
@@ -79,6 +81,7 @@ pub fn Tutorial() -> impl IntoView {
                 TutorialPage::AdvancedArray => TutorialAdvancedArray().into_view(),
                 TutorialPage::ThinkingWithArrays => TutorialThinkingWithArrays().into_view(),
                 TutorialPage::Macros => TutorialMacros().into_view(),
+                TutorialPage::WritingLongerCode => TutorialWritingLongerCode().into_view(),
                 TutorialPage::Modules => TutorialModules().into_view(),
                 TutorialPage::Testing => TutorialTesting().into_view(),
             };
@@ -1661,6 +1664,13 @@ F!!!+×⊂ [1 2 3][4 5 6]"/>
         <p>"This is the end of the tutorial that pertains to writing "<em>"programs"</em>"."</p>
         <p>"If you want to use Uiua to write "<em>"software"</em>", then read on for the sections on modules and testing."</p>
         <p>"If you don't care about that stuff and want to learn more about the language, you can check out:"</p>
+    }
+}
+
+#[component]
+fn TutorialWritingLongerCode() -> impl IntoView {
+    view! {
+        { title_markdown("Writing Longer Code", "/text/writing_longer_code.md", ()).into_view() }
         <EndOfTutorialList/>
     }
 }
