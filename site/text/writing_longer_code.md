@@ -43,5 +43,92 @@ This is a useful example because it involves juggling 3 arguments that are used 
 Let's start with the discriminant term ` √(b² - 4ac)`.
 
 ```uiua
-
+Disc ←
+Disc 1 2 0
 ```
+
+To show how you might build up a solution with only stack reordering, we'll only use [`duplicate`](), [`flip`](), [`over`](), and [`dip`]() to attempt to get all the arguments in the right order.
+
+First, we'll might try to get `a` and `c` next to each other above `b` on the stack.
+
+```uiua
+Disc ← ⊙:
+Disc 1 2 0
+```
+
+Then, we can create the `4ac` and `b²` terms.
+
+```uiua
+Disc ← ××4⊙⊙(ⁿ2) ⊙:
+Disc 1 2 0
+```
+
+Then we'll [subtract](), account for [complex]() roots, and take the [sqrt]().
+
+```uiua
+Disc ← √ℂ0- ××4⊙⊙(ⁿ2) ⊙:
+Disc 1 2 0
+```
+
+That finishes the discriminant.
+We can implement `±` by [couple]()ing the value with it's [negate]().
+
+```uiua
+Quad ← ⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:
+Quad 1 2 0
+```
+
+And now we have a problem. We still need to use `a` and `b` one more time, but they have already been consumed.
+`a` and `b` start at the top of the stack, so we can copy them with [over]() and put the rest of out code in two [dip]()s.
+
+```uiua
+Quad ← ⊙⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:),,
+Quad 1 2 0
+```
+
+Then we'll [subtract]() `b`... 
+
+```uiua
+Quad ← ⊙(-⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:)),,
+Quad 1 2 0
+```
+
+...and [divide]() by `2a`.
+
+```uiua
+Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:)),,
+Quad 1 2 0
+```
+
+And their we have it, the quadratic formula.
+
+```uiua
+Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:)),,
+Quad 1 2 0
+Quad 1 2 5
+Quad 2 3 1
+```
+
+On close inspection, the astute reader may notice that the above code sucks. What's worse, it's not even as bad as it could be. If you hadn't thought to use [over]() and [dip]() in that way, you may have instead used the dreaded `:⊙:` to rotate 3 values on the stack.
+
+The problem with reordering stack values this often is that the state of the stack at any point in the code gets harder and harder for the writer to keep in their head. It also makes it much harder for the reader to deduce the state of the stack at a glance.
+
+## Stack-Source Locality
+
+The code above is also obtuse for another reason.
+
+Imagine a person who is less familiar with this code going to read it. It may be someone else, but it may also be a future version of yourself. If they look at the leftmost term `÷×2`, they'll likely be able to quickly tell that it takes two arguments. But how do they figure out what those arguments are? They would have to make their way all the way to the *other side of the function* to find the [over]() that creates the copy of `a`. They would only end up there after having built up the mental model of the state of the stack throughout the *entire function*.
+
+This obtuseness is the result of the above code violating a fundamental principal of writing good Uiua code, that of *stack-source locality*. Stated simply, **code that creates values should be as close as possible to the code that uses those values**.
+
+In our example, [divide]() and [over]() are on opposite sides of the function: a massive violation of stack-source locality.
+
+This principal is not a formula you can plug values into. It is not a set of procedures that will make code better. It is a guiding tenet meant to shape the way you think about the flow of your data and how you structure your programs. How well a given code snippet maintains stack-source locality is up to interpretation, and different Uiua programmers may interpret it differently, even for the same program.
+
+## A Better Way
+
+So how do we write better Uiua code? How do we keep stack-source locality? How do we avoid making the stack so convoluted that our code becomes unreadable.
+
+The short answer is to make liberal use of [fork]().
+
+The power of [fork](), [dip](), [gap](), [on](), and [by]() is that they allow access to arbitrary values on the stack *without* reordering it. When the stack maintains its order, it is much easier to reason about values' position on it, since their positions seldom change relative to each other.

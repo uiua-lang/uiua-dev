@@ -1657,13 +1657,6 @@ F!!!+×⊂ [1 2 3][4 5 6]"/>
             flip=true
             tests={&["F‼⇌⍉ [1_2 3_4]", "F‼⊂⇌ 1_2 3_4 5_6"]}
             hidden="5"/>
-
-        <br/>
-        <br/>
-        <hr/>
-        <p>"This is the end of the tutorial that pertains to writing "<em>"programs"</em>"."</p>
-        <p>"If you want to use Uiua to write "<em>"software"</em>", then read on for the sections on modules and testing."</p>
-        <p>"If you don't care about that stuff and want to learn more about the language, you can check out:"</p>
     }
 }
 
@@ -1671,6 +1664,13 @@ F!!!+×⊂ [1 2 3][4 5 6]"/>
 fn TutorialWritingLongerCode() -> impl IntoView {
     view! {
         { title_markdown("Writing Longer Code", "/text/writing_longer_code.md", ()).into_view() }
+
+        <br/>
+        <br/>
+        <hr/>
+        <p>"This is the end of the tutorial that pertains to writing "<em>"programs"</em>"."</p>
+        <p>"If you want to use Uiua to write "<em>"software"</em>", then read on for the sections on modules and testing."</p>
+        <p>"If you don't care about that stuff and want to learn more about the language, you can check out:"</p>
         <EndOfTutorialList/>
     }
 }
