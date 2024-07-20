@@ -56,17 +56,17 @@ Disc ← ⊙:
 Disc 1 2 0
 ```
 
-Then, we can create the `4ac` and `b²` terms.
+Then, we can create the `4ac` and `b²` terms and [subtract]().
 
 ```uiua
-Disc ← ××4⊙⊙(ⁿ2) ⊙:
+Disc ← -××4⊙⊙(ⁿ2) ⊙:
 Disc 1 2 0
 ```
 
-Then we'll [subtract](), account for [complex]() roots, and take the [sqrt]().
+Then we'll account for [complex]() roots and take the [sqrt]().
 
 ```uiua
-Disc ← √ℂ0- ××4⊙⊙(ⁿ2) ⊙:
+Disc ← √ℂ0 -××4⊙⊙(ⁿ2) ⊙:
 Disc 1 2 0
 ```
 
@@ -74,7 +74,7 @@ That finishes the discriminant.
 We can implement `±` by [couple]()ing the value with it's [negate]().
 
 ```uiua
-Quad ← ⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:
+Quad ← ⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:
 Quad 1 2 0
 ```
 
@@ -82,28 +82,28 @@ And now we have a problem. We still need to use `a` and `b` one more time, but t
 `a` and `b` start at the top of the stack, so we can copy them with [over]() and put the rest of out code in two [dip]()s.
 
 ```uiua
-Quad ← ⊙⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:),,
+Quad ← ⊙⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:),,
 Quad 1 2 0
 ```
 
 Then we'll [subtract]() `b`... 
 
 ```uiua
-Quad ← ⊙(-⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:)),,
+Quad ← ⊙(-⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:)),,
 Quad 1 2 0
 ```
 
 ...and [divide]() by `2a`.
 
 ```uiua
-Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:)),,
+Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:)),,
 Quad 1 2 0
 ```
 
 And their we have it, the quadratic formula.
 
 ```uiua
-Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0- ××4⊙⊙(ⁿ2) ⊙:)),,
+Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:)),,
 Quad 1 2 0
 Quad 1 2 5
 Quad 2 3 1
@@ -132,3 +132,68 @@ So how do we write better Uiua code? How do we keep stack-source locality? How d
 The short answer is to make liberal use of [fork]().
 
 The power of [fork](), [dip](), [gap](), [on](), and [by]() is that they allow access to arbitrary values on the stack *without* reordering it. When the stack maintains its order, it is much easier to reason about values' position on it, since their positions seldom change relative to each other.
+
+Let's redo the quadratic formula implementation using these modifiers.
+
+We'll start again with the discriminant.
+
+```uiua
+Disc ← -⊃(××4⊙⋅∘)⋅(ⁿ2)
+Disc 1 2 0
+```
+
+Notice that when we use planet notation, it is easier to tell which functions are being applied to which values.
+
+We'll implement the `√` and `±` in the same way as before.
+
+```uiua
+Disc ← ⊟¯. √ℂ0- ⊃(××4⊙⋅∘)⋅(ⁿ2)
+Disc 1 2 0
+```
+
+Even though `b` has been consumed, we can gain access to it again using another [fork]() and implement the `-b` term.
+
+```uiua
+Quad ← -⊃⋅∘(⊟¯. √ℂ0 -⊃(××4⊙⋅∘)⋅(ⁿ2))
+Quad 1 2 0
+```
+
+Then, we can use another [fork]() to add the `/ 2a` part.
+
+```uiua
+Quad ← ÷⊃(×2|-⊃⋅∘(⊟¯. √ℂ0 -⊃(××4⊙⋅∘)⋅(ⁿ2)))
+Quad 1 2 0
+```
+
+Long lines like this can hurt readability. One thing we can do to alleviate this is split the discriminant onto its own line.
+
+```uiua
+Quad ← ÷⊃(×2)(
+  -⊃⋅∘(
+    -⊃(××4⊙⋅∘)⋅(ⁿ2)
+    ⊟¯. √ℂ0
+  )
+)
+Quad 1 2 0
+```
+
+Alternatively, we can pull the discriminant into its own function.
+
+```uiua
+# A thing of beauty
+Disc ← -⊃(××4⊙⋅∘)⋅(ⁿ2)
+Quad ← ÷⊃(×2|-⊃⋅∘(⊟¯. √ℂ0 Disc))
+Quad 1 2 0
+```
+
+Let's compare this solution to the previous one. To improve the comparison, we'll make the discriminant its own function here as well.
+
+```uiua
+Disc ← -××4⊙⊙(ⁿ2) ⊙:
+Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 Disc)),,
+Quad 1 2 0
+```
+
+The difference is night-and-day. The old, naive solution, even with the benefit of being broken up, still has all of its same issues.
+
+If we look in the improved solution and do the same search for the source of [divide]()'s arguments, we don't have to go far before finding the [fork]() with `×2` and `-`. Stack-source locality holds for all parts of the code!
