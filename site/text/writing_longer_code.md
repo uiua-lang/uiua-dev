@@ -8,7 +8,7 @@ However, it may not be immediately clear how to write more complex code that doe
 
 When you first start using Uiua beyond just simple examples and challenges, you will likely encounter difficulty passing more than a couple values around.
 
-In disallowing named local variables, Uiua asks something of the programmer that most other languages do not. It asks that you to re-orient the way you think about data. How you refer to it, how it flows through a program.
+In disallowing named local variables, Uiua asks something of the programmer that most other languages do not. It asks that you re-orient the way you think about data. How you refer to it, how it flows through a program.
 
 If you pay the price of this re-orientation, Uiua offers you a few things in return.
 
@@ -22,9 +22,15 @@ Ceremony in programming is the bits of code you have to write not because they a
 
 Different languages require different amounts of ceremony. Uiua tries to eliminate it as much as possible while remaining readable.
 
+Completely forbidding named local variables may seem unnecessary or overly strict. Perhaps the weakest, most subjective benefit that this prohibition gives you is programs that have *beauty*. In many cases, being forced to write tacit code means being forced to reduce a problem to its essence, to *only* the functions that actually compose it. 
+
+Many who stumble upon the array languages discover this beauty, though many also consider it only appropriate for smaller sections of code. Some encounter the beauty of tacit, glyph-based languages and are unable to recognize it, seeing only unfamiliar characters and not willing to really understand. What's worse, some who encounter it and endeavor to understand write off the beauty of tacit code as nothing more than a fun curiosity, unworthy of being explored beyond the surface level.
+
+Uiua asks the question, why can't all code be beautiful? Why can't all problems be reduced to their fundamentals? Why can't a language be all at once aesthetically pleasing, intellectually engaging, *and* practical?
+
 ## The Stack Pitfall
 
-Being stack-based is Uiua's key to being usable as a pure-tacit language. However the stack can be an unwieldy tool if used recklessly. Many stack languages have built-in functions for rotating the stack, fishing values from deep in the stack, or arbitrarily reordering it. While these things are technically possible in Uiua, they are discouraged, and they are verbose by design.
+Being stack-based is Uiua's key to being usable as a pure-tacit language. However, the stack can be an unwieldy tool if used recklessly. Many stack languages have built-in functions for rotating the stack, fishing values from deep in the stack, or arbitrarily reordering it. While these things are technically possible in Uiua, they are discouraged, and they are verbose by design.
 
 Uiua encourages a more structured approach to stack manipulation. There are no single functions for rotating the stack or for swapping more than 2 values.
 
