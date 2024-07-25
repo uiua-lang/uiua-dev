@@ -30,7 +30,7 @@ Uiua asks the question, why can't all code be beautiful? Why can't all problems 
 
 ## The Stack Pitfall
 
-Being stack-based is Uiua's key to being usable as a pure-tacit language. However, the stack can be an unwieldy tool if used recklessly. Many stack languages have built-in functions for rotating the stack, fishing values from deep in the stack, or arbitrarily reordering it. While these things are technically possible in Uiua, they are discouraged, and they are verbose by design.
+Being stack-based is Uiua's key to being usable as a pure-tacit language. However, the stack can be an unwieldy tool if used recklessly. Many stack languages have built-in functions for rotating the stack, fishing values up from deep in the stack, or arbitrarily reordering it. While these things are technically possible in Uiua, they are discouraged, and the code for them is verbose by design.
 
 Uiua encourages a more structured approach to stack manipulation. There are no single functions for rotating the stack or for swapping more than 2 values.
 
@@ -46,10 +46,10 @@ As a motivating example, let's attempt to implement the quadratic formula. Given
 
 This is a useful example because it involves juggling 3 arguments that are used in a non-regular way.
 
-Let's start with the discriminant term ` √(b² - 4ac)`.
+Let's start with the discriminant term ` b² - 4ac`.
 
 ```uiua
-Disc ←
+Disc ← # Code goes here
 Disc 1 2 0
 ```
 
@@ -62,25 +62,31 @@ Disc ← ⊙:
 Disc 1 2 0
 ```
 
-Then, we can create the `4ac` and `b²` terms and [subtract]().
+Because `a` and `c` are on top of the stack, making the `4ac` term is easy.
 
 ```uiua
-Disc ← -××4⊙⊙(ⁿ2) ⊙:
+Disc ← ××4 ⊙:
 Disc 1 2 0
 ```
 
-Then we'll account for [complex]() roots and take the [sqrt]().
+We can get down to `b` with [dip](), create the `b²` term, and [subtract]().
 
 ```uiua
-Disc ← √ℂ0 -××4⊙⊙(ⁿ2) ⊙:
+Disc ← -⊙(ⁿ2)××4 ⊙:
 Disc 1 2 0
 ```
 
-That finishes the discriminant.
-We can implement `±` by [couple]()ing the value with it's [negate]().
+That finishes the discriminant. Next, we'll account for [complex]() roots and take the [sqrt]().
 
 ```uiua
-Quad ← ⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:
+Disc ← √ℂ0 -⊙(ⁿ2)××4 ⊙:
+Disc 1 2 0
+```
+
+We can implement `±` by [couple]()ing the value with itself [negate]()d.
+
+```uiua
+Quad ← ⊟¯. √ℂ0 -⊙(ⁿ2)××4 ⊙:
 Quad 1 2 0
 ```
 
@@ -88,28 +94,28 @@ And now we have a problem. We still need to use `a` and `b` one more time, but t
 `a` and `b` start at the top of the stack, so we can copy them with [over]() and put the rest of out code in two [dip]()s.
 
 ```uiua
-Quad ← ⊙⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:),,
+Quad ← ⊙⊙(⊟¯. √ℂ0 -⊙(ⁿ2)××4 ⊙:),,
 Quad 1 2 0
 ```
 
 Then we'll [subtract]() `b`... 
 
 ```uiua
-Quad ← ⊙(-⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:)),,
+Quad ← ⊙(-⊙(⊟¯. √ℂ0 -⊙(ⁿ2)××4 ⊙:)),,
 Quad 1 2 0
 ```
 
 ...and [divide]() by `2a`.
 
 ```uiua
-Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:)),,
+Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 -⊙(ⁿ2)××4 ⊙:)),,
 Quad 1 2 0
 ```
 
 And their we have it, the quadratic formula.
 
 ```uiua
-Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 -××4⊙⊙(ⁿ2) ⊙:)),,
+Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 -⊙(ⁿ2)××4 ⊙:)),,
 Quad 1 2 0
 Quad 1 2 5
 Quad 2 3 1
@@ -127,13 +133,13 @@ Imagine a person who is less familiar with this code going to read it. It may be
 
 This obtuseness is the result of the above code violating a fundamental principal of writing good Uiua code, that of *stack-source locality*. Stated simply, **code that creates values should be as close as possible to the code that uses those values**.
 
-In our example, [divide]() and [over]() are on opposite sides of the function: a massive violation of stack-source locality.
+In our example, [divide]() and the [over]() that creates its argument are on opposite sides of the function: a massive violation of stack-source locality.
 
 This principal is not a formula you can plug values into. It is not a set of procedures that will make code better. It is a guiding tenet meant to shape the way you think about the flow of your data and how you structure your programs. How well a given code snippet maintains stack-source locality is up to interpretation, and different Uiua programmers may interpret it differently, even for the same program.
 
 ## A Better Way
 
-So how do we write better Uiua code? How do we keep stack-source locality? How do we avoid making the stack so convoluted that our code becomes unreadable.
+So how do we write better Uiua code? How do we keep stack-source locality? How do we avoid making the stack so convoluted that our code becomes unreadable?
 
 The short answer is to make liberal use of [fork]().
 
@@ -153,7 +159,7 @@ Notice that when we use planet notation, it is easier to tell which functions ar
 We'll implement the `√` and `±` in the same way as before.
 
 ```uiua
-Disc ← ⊟¯. √ℂ0- ⊃(××4⊙⋅∘)⋅(ⁿ2)
+Disc ← ⊟¯. √ℂ0 -⊃(××4⊙⋅∘)⋅(ⁿ2)
 Disc 1 2 0
 ```
 
@@ -195,7 +201,7 @@ Quad 1 2 0
 Let's compare this solution to the previous one. To improve the comparison, we'll make the discriminant its own function here as well.
 
 ```uiua
-Disc ← -××4⊙⊙(ⁿ2) ⊙:
+Disc ← -⊙(ⁿ2)××4 ⊙:
 Quad ← ÷×2⊙(-⊙(⊟¯. √ℂ0 Disc)),,
 Quad 1 2 0
 ```
@@ -203,3 +209,34 @@ Quad 1 2 0
 The difference is night-and-day. The old, naive solution, even with the benefit of being broken up, still has all of its same issues.
 
 If we look in the improved solution and do the same search for the source of [divide]()'s arguments, we don't have to go far before finding the [fork]() with `×2` and `-`. Stack-source locality holds for all parts of the code!
+
+# When to Reorder
+
+While reordering stack values is discouraged, a little bit of reordering up front can sometimes greatly simplify subsequent code. The recommended place to do this is at the very beginning of a function.
+
+A function should *take* its arguments in the order that is most natural for calling. If necessary, you may choose to reorder a functions arguments at the beginning of its body so that they are easier to work with inside the function.
+
+If we for some reason decided that the best calling order for our `Quad` function was `c` `b` `a`, then we could add a reordering step to the beginning and keep the rest of the implementation the same.
+
+```uiua
+Disc ← -⊃(××4⊙⋅∘)⋅(ⁿ2)
+Quad ← (
+  ⊃(⋅⋅∘|⋅∘|∘) # Reorder
+  ÷⊃(×2|-⊃⋅∘(⊟¯. √ℂ0 Disc))
+)
+Quad 0 2 1
+```
+
+Even though the reordering step could be written shorter as `⊃⋅⋅∘:` it is written in a long form here for the benefit of the reader. But you may decide that `⊃⋅⋅∘:` is perfectly clear, and that's fine!
+
+## Three Rules
+
+As stated before, the advice in this section is just that, advice. It is not a set of hard and fast rules that must be followed.
+
+However, if you are the kind of person that *likes* a simple list of rules, then here it is:
+
+- **Reorder the stack as little as possible**
+- **Break up long lines, sometimes into separate functions**
+- **Maintain stack-source locality**
+
+Like all programming languages (though perhaps more than some), writing Uiua code is as much art as it is science. The deconstruction of a problem, the synthesis of a solution, the care for the reader; these are all things you get a feel for as you work more with the language.
