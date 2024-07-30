@@ -1,4 +1,4 @@
-# Writing Longer Code
+# Tacit Code
 
 So far, most of the code examples in this tutorial have been fairly short. While Uiua is great for short, simple code, it is designed to be a general-purpose language. Uiua aims to be decent for everything from Code Golf to command-line utilities, from websites to games.
 
@@ -12,21 +12,15 @@ In disallowing named local variables, Uiua asks something of the programmer that
 
 If you pay the price of this re-orientation, Uiua offers you a few things in return.
 
-For one, you eliminate the need to name things that are not worth naming. Consider the classic C `for` loop `for (int i = 0; i < len; i++)`. Why do we have to write all that for such a fundamental concept? Why do we call it `i`? In more modern languages like Rust, we have range-based for loops. But even in `for item in items`, we still have to come up with a name for `item`, even though this name is irrelevant to actually solving our problem. These are simple examples of the classic problem in computer science of naming things.
+For one, you end up writing a lot less code. When you don't bind lots of local variables and constantly refer to them in expressions, your code ends up being much shorter. This makes scanning through code require less scrolling and jumping around.
 
-Other array languages like APL, J, and BQN also allow you to write highly *tacit* code. Even some non-array languages like Haskell allow a high degree of tacitness.
+This is one of the many ways that Uiua reduces *ceremony.* Ceremony in a programming language is all the code you have to write that is not directly related to the problem you are trying to solve. This includes everything from minor syntax like braces and keywords to complex boilerplate like interface implementations. Uiua does not eliminate all ceremony (no language can), but it aims to eliminate as much as possible while maintaining a certain level of readability and structure.
 
-Uiua goes a step further by requiring *all* code to be tacit. In doing this, we eliminate the *ceremony* of naming.
+This is not to say that local bindings are not useful in other languages. There are two original motivations for Uiua eliminating local variables: simplicity of implementation, and beauty.
 
-Ceremony in programming is the bits of code you have to write not because they are part of solving your problem, but because they are part of the syntax or semantics of the language.
+*If you are not too concerned with performance and implementation, you can skip this paragraph.* Uiua's arrays are garbage-collected via reference counting. This reference count is also used when mutating an array. For example, if you [reverse]() an array when no duplicates exist, the array is simply reversed in place. However, if at least one other copy of the array exists on the stack, the array's entire buffer will be copied, and this new copy will be reversed instead. If variables could be locally bound, a copy would have to be stored for the duration of the variable's scope. Without complex escape analysis, this could lead to unnecessary copies when using local variables. Because values on the stack are cleaned up as they are used, arrays only need to be copied as often as is actually necessary!
 
-Different languages require different amounts of ceremony. Uiua tries to eliminate it as much as possible while remaining readable.
-
-Completely forbidding named local variables may seem unnecessary or overly strict. Perhaps the weakest, most subjective benefit that this prohibition gives you is programs that have *beauty*. In many cases, being forced to write tacit code means being forced to reduce a problem to its essence, to *only* the functions that actually compose it. 
-
-Many who stumble upon the array languages discover this beauty, though many also consider it only appropriate for smaller sections of code. Some encounter the beauty of tacit, glyph-based languages and are unable to recognize it, seeing only unfamiliar characters and not willing to really understand. What's worse, some who encounter it and endeavor to understand write off the beauty of tacit code as nothing more than a fun curiosity, unworthy of being explored beyond the surface level.
-
-Uiua asks the question, why can't all code be beautiful? Why can't all problems be reduced to their fundamentals? Why can't a language be all at once aesthetically pleasing, intellectually engaging, *and* practical?
+But in the end, the primary motivation for forbidding local variables is that leads to code that is both beautiful and enjoyable to write. This is, of course, highly subjective, but if you've made it this far into the tutorial, then hopefully you've seen some of that beauty, felt some of that joy.
 
 ## The Stack Pitfall
 

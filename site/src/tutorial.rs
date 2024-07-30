@@ -24,7 +24,7 @@ pub enum TutorialPage {
     AdvancedArray,
     ThinkingWithArrays,
     Macros,
-    WritingLongerCode,
+    TacitCode,
     Modules,
     Testing,
 }
@@ -49,7 +49,7 @@ impl TutorialPage {
             Self::AdvancedArray => "Advanced Array Manipulation",
             Self::ThinkingWithArrays => "Thinking With Arrays",
             Self::Macros => "Macros",
-            Self::WritingLongerCode => "Writing Longer Code",
+            Self::TacitCode => "Tacit Code",
             Self::Modules => "Modules",
             Self::Testing => "Testing",
         }
@@ -81,7 +81,7 @@ pub fn Tutorial() -> impl IntoView {
                 TutorialPage::AdvancedArray => TutorialAdvancedArray().into_view(),
                 TutorialPage::ThinkingWithArrays => TutorialThinkingWithArrays().into_view(),
                 TutorialPage::Macros => TutorialMacros().into_view(),
-                TutorialPage::WritingLongerCode => TutorialWritingLongerCode().into_view(),
+                TutorialPage::TacitCode => TutorialTacitCode().into_view(),
                 TutorialPage::Modules => TutorialModules().into_view(),
                 TutorialPage::Testing => TutorialTesting().into_view(),
             };
@@ -1661,9 +1661,9 @@ F!!!+×⊂ [1 2 3][4 5 6]"/>
 }
 
 #[component]
-fn TutorialWritingLongerCode() -> impl IntoView {
+fn TutorialTacitCode() -> impl IntoView {
     view! {
-        { title_markdown("Writing Longer Code", "/text/writing_longer_code.md", ()).into_view() }
+        { title_markdown("Tacit Code", "/text/tacit_code.md", ()).into_view() }
 
         <br/>
         <br/>
