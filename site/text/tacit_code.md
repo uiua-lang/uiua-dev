@@ -34,7 +34,7 @@ When complex stack manipulation *is* required, it is usually done with [planet n
 
 The online Uiua pad and the `uiua watch` command in the native interpreter make it easy to write Uiua code interactively. You can easily see the state of the stack after each change you make to the code.
 
-Unfortunately, while this iterative process is good for exploring possibilities, an ad-hoc approach to stack manipulation often leads to code that is very hard to read.
+This iterative process is good for exploring possibilities, and it is the intended way to write Uiua code. However, a naive, ad-hoc approach to stack manipulation often leads to code that is very hard to read.
 
 As a motivating example, let's attempt to implement the quadratic formula. Given numbers `a`, `b`, and `c`, the roots of the function `ax² + bx + c` can be found via the expression `(-b ± √(b² - 4ac)) / 2a`.
 
@@ -115,7 +115,7 @@ Quad 1 2 5
 Quad 2 3 1
 ```
 
-On close inspection, the astute reader may notice that the above code sucks. What's worse, it's not even as bad as it could be. If you hadn't thought to use [over]() and [dip]() in that way, you may have instead used the dreaded `:⊙:` to rotate 3 values on the stack.
+On close inspection, the astute reader may notice that the above code sucks. What's worse, it's not even as bad as it could be. If you hadn't thought to use [over]() and [dip]() in that way, you may have instead used `:⊙:` to rotate 3 values on the stack, making it even more convoluted.
 
 The problem with reordering stack values this often is that the state of the stack at any point in the code gets harder and harder for the writer to keep in their head. It also makes it much harder for the reader to deduce the state of the stack at a glance.
 
