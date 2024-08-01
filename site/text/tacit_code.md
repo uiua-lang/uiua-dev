@@ -125,11 +125,11 @@ The code above is also obtuse for another reason.
 
 Imagine a person who is less familiar with this code going to read it. It may be someone else, but it may also be a future version of yourself. If they look at the leftmost term `÷×2`, they'll likely be able to quickly tell that it takes two arguments. But how do they figure out what those arguments are? They would have to make their way all the way to the *other side of the function* to find the [over]() that creates the copy of `a`. They would only end up there after having built up the mental model of the state of the stack throughout the *entire function*.
 
-This obtuseness is the result of the above code violating a fundamental principal of writing good Uiua code, that of *stack-source locality*. Stated simply, **code that creates values should be as close as possible to the code that uses those values**.
+This obtuseness is the result of the above code violating a fundamental principle of writing good Uiua code, that of *stack-source locality*. Stated simply, **code that creates values should be as close as possible to the code that uses those values**.
 
 In our example, [divide]() and the [over]() that creates its argument are on opposite sides of the function: a massive violation of stack-source locality.
 
-This principal is not a formula you can plug values into. It is not a set of procedures that will make code better. It is a guiding tenet meant to shape the way you think about the flow of your data and how you structure your programs. How well a given code snippet maintains stack-source locality is up to interpretation, and different Uiua programmers may interpret it differently, even for the same program.
+This principle is not a formula you can plug values into. It is not a set of procedures that will make code better. It is a guiding tenet meant to shape the way you think about the flow of your data and how you structure your programs. How well a given code snippet maintains stack-source locality is up to interpretation, and different Uiua programmers may interpret it differently, even for the same program.
 
 ## A Better Way
 
@@ -230,7 +230,7 @@ As stated before, the advice in this section is just that, advice. It is not a s
 However, if you are the kind of person that *likes* a simple list of rules, then here it is:
 
 - **Reorder the stack as little as possible**
-- **Break up long lines, sometimes into separate functions**
+- **Break up long lines with whitespace or into separate functions**
 - **Maintain stack-source locality**
 
 Like all programming languages (though perhaps more than some), writing Uiua code is as much art as it is science. The deconstruction of a problem, the synthesis of a solution, the care for the reader; these are all things you get a feel for as you work more with the language.
