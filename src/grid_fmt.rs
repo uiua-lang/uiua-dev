@@ -65,6 +65,8 @@ impl GridFmt for f64 {
             format!("{minus}η")
         } else if positive == f64::INFINITY {
             format!("{minus}∞")
+        } else if positive == f64::EPSILON {
+            format!("{minus}ε")
         } else if f.to_bits() == EMPTY_NAN.to_bits() || f.to_bits() == TOMBSTONE_NAN.to_bits() {
             "⋅".into()
         } else if f.to_bits() == WILDCARD_NAN.to_bits() {

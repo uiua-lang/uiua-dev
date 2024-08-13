@@ -2429,6 +2429,14 @@ primitive!(
     /// Equivalent to `multiply``4``eta` or `multiply``2``pi`
     /// ex: [×4η ×2π τ]
     (0, Tau, Constant, ("tau", 'τ')),
+    /// The machine epsilon
+    ///
+    /// This is the difference between 1 and the next smallest representable number.
+    /// It is useful as an error bound for floating point calculations.
+    /// ex:          + 0.1 0.2 # Math with a floating point error
+    ///   :     =0.3 + 0.1 0.2 # Normal comparison fails
+    ///   : <ε⌵ -0.3 + 0.1 0.2 # Check if difference is less than epsilon
+    (0, Epsilon, Constant, ("epsilon", 'ε')),
     /// The biggest number
     ///
     /// ex: ∞

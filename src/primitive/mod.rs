@@ -270,23 +270,6 @@ impl fmt::Display for ImplPrimitive {
     }
 }
 
-macro_rules! constant {
-    ($name:ident, $value:expr) => {
-        fn $name() -> Value {
-            thread_local! {
-                #[allow(non_upper_case_globals)]
-                static $name: Value = $value.into();
-            }
-            $name.with(Value::clone)
-        }
-    };
-}
-
-constant!(eta, PI / 2.0);
-constant!(pi, PI);
-constant!(tau, TAU);
-constant!(inf, f64::INFINITY);
-
 /// A wrapper that nicely prints a `Primitive`
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FormatPrimitive(pub Primitive);
@@ -543,10 +526,11 @@ impl Primitive {
     /// Execute the primitive
     pub fn run(&self, env: &mut Uiua) -> UiuaResult {
         match self {
-            Primitive::Eta => env.push(eta()),
-            Primitive::Pi => env.push(pi()),
-            Primitive::Tau => env.push(tau()),
-            Primitive::Infinity => env.push(inf()),
+            Primitive::Eta => env.push(PI / 2.0),
+            Primitive::Pi => env.push(PI),
+            Primitive::Tau => env.push(TAU),
+            Primitive::Infinity => env.push(f64::INFINITY),
+            Primitive::Epsilon => env.push(f64::EPSILON),
             Primitive::Identity => env.touch_array_stack(1)?,
             Primitive::Not => env.monadic_env(Value::not)?,
             Primitive::Neg => env.monadic_env(Value::neg)?,

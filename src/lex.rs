@@ -1454,7 +1454,7 @@ fn parse_format_fragments(s: &str) -> Vec<String> {
 
 /// Whether a character can be part of a Uiua identifier
 pub fn is_ident_char(c: char) -> bool {
-    c.is_alphabetic() && !"ⁿₙπτηℂλ".contains(c) || SUBSCRIPT_NUMS.contains(&c)
+    c.is_alphabetic() && !"ⁿₙπτηℂλε".contains(c) || SUBSCRIPT_NUMS.contains(&c)
 }
 
 /// Whether a string is a custom glyph

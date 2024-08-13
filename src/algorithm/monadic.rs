@@ -79,6 +79,7 @@ impl Value {
                     (["π", "pi"], PI),
                     (["τ", "tau"], TAU),
                     (["∞", "inf"], f64::INFINITY),
+                    (["ε", "epsilon"], f64::EPSILON),
                 ] {
                     if let Some((before, after)) = s.split_once('/') {
                         for name in names {
@@ -1929,6 +1930,8 @@ fn f64_repr(n: f64) -> String {
         "τ".into()
     } else if abs.is_infinite() {
         "∞".into()
+    } else if abs == f64::EPSILON {
+        "ε".into()
     } else {
         abs.to_string()
     };
