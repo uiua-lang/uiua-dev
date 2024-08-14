@@ -136,7 +136,6 @@ fn impl_prim_inverse(prim: ImplPrimitive, span: usize) -> Option<Instr> {
         UnUtf => Instr::Prim(Utf8, span),
         UnAtan => Instr::Prim(Atan, span),
         UnComplex => Instr::Prim(Complex, span),
-        UnCouple => Instr::Prim(Couple, span),
         UnParse => Instr::Prim(Parse, span),
         UnFix => Instr::Prim(Fix, span),
         UnShape => Instr::Prim(Shape, span),
@@ -443,6 +442,7 @@ pub(crate) fn under_instrs(
         &maybe_val!(UnderPatternFn(under_setund_pattern, "setund")),
         &UnderPatternFn(under_trivial_pattern, "trivial"),
         &UnderPatternFn(under_array_pattern, "array"),
+        &UnderPatternFn(under_uncouple_pattern, "uncouple"),
         &UnderPatternFn(under_unpack_pattern, "unpack"),
         &UnderPatternFn(under_touch_pattern, "touch"),
         &UnderPatternFn(under_repeat_pattern, "repeat"),
@@ -764,7 +764,14 @@ fn under_un_pattern<'a>(
             return Some((input, under));
         }
     }
-    Some((input, (befores, instrs)))
+    Some((
+        input,
+        if let Some((befores, afters)) = under_instrs(&befores, g_sig, comp) {
+            (befores, afters)
+        } else {
+            (befores, instrs)
+        },
+    ))
 }
 
 fn under_call_pattern<'a>(
@@ -2119,6 +2126,35 @@ fn invert_unpack_pattern<'a>(
     Some((&[], instrs))
 }
 
+fn under_uncouple_pattern<'a>(
+    input: &'a [Instr],
+    g_sig: Signature,
+    _comp: &mut Compiler,
+) -> Option<(&'a [Instr], Under)> {
+    let [uncouple @ Instr::ImplPrim(ImplPrimitive::UnCouple, span), input @ ..] = input else {
+        return None;
+    };
+    let count = (2 + g_sig.outputs).saturating_sub(g_sig.args);
+    Some((
+        input,
+        if count == 2 || g_sig.args > 2 {
+            let befores = eco_vec![uncouple.clone()];
+            let afters = eco_vec![Instr::Prim(Primitive::Couple, *span)];
+            (befores, afters)
+        } else {
+            let befores = eco_vec![uncouple.clone(), Instr::BeginArray];
+            let afters = eco_vec![
+                Instr::TouchStack { count, span: *span },
+                Instr::EndArray {
+                    span: *span,
+                    boxed: false,
+                },
+            ];
+            (befores, afters)
+        },
+    ))
+}
+
 fn under_unpack_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
@@ -2127,16 +2163,15 @@ fn under_unpack_pattern<'a>(
     let [unpack @ Instr::Unpack { count, span, unbox }, input @ ..] = input else {
         return None;
     };
+    let span = *span;
+    let count = (*count + g_sig.outputs).saturating_sub(g_sig.args);
     let (mut befores, mut afters) = under_instrs(input, g_sig, comp)?;
     befores.insert(0, unpack.clone());
     afters.insert(0, Instr::BeginArray);
     afters.extend([
-        Instr::TouchStack {
-            count: *count,
-            span: *span,
-        },
+        Instr::TouchStack { count, span },
         Instr::EndArray {
-            span: *span,
+            span,
             boxed: *unbox,
         },
     ]);
