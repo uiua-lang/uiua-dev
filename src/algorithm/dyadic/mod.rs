@@ -9,7 +9,7 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
     iter::{once, repeat},
-    mem::take,
+    mem::{replace, take},
     slice,
 };
 
@@ -1182,17 +1182,25 @@ impl<T: ArrayValue> Array<T> {
 
 impl Value {
     /// Use this value to `chunks` another
-    pub fn chunks(&self, from: Self, env: &Uiua) -> UiuaResult<Self> {
+    pub fn chunks(&self, mut from: Self, env: &Uiua) -> UiuaResult<Self> {
         let isize_spec = self.as_ints(env, "Chunk size must be an integer or list of integers")?;
+        from.match_scalar_fill(env);
         Ok(match from {
             Value::Num(a) => a.chunks(&isize_spec, env)?.into(),
-            Value::Byte(a) if env.number_only_fill() => {
-                a.convert_ref::<f64>().chunks(&isize_spec, env)?.into()
-            }
             Value::Byte(a) => a.chunks(&isize_spec, env)?.into(),
             Value::Complex(a) => a.chunks(&isize_spec, env)?.into(),
             Value::Char(a) => a.chunks(&isize_spec, env)?.into(),
             Value::Box(a) => a.chunks(&isize_spec, env)?.into(),
+        })
+    }
+    pub(crate) fn undo_chunks(self, size: &Self, env: &Uiua) -> UiuaResult<Self> {
+        let isize_spec = size.as_ints(env, "Chunk size must be an integer or list of integers")?;
+        Ok(match self {
+            Value::Num(a) => a.undo_chunks(&isize_spec, env)?.into(),
+            Value::Byte(a) => a.undo_chunks(&isize_spec, env)?.into(),
+            Value::Complex(a) => a.undo_chunks(&isize_spec, env)?.into(),
+            Value::Char(a) => a.undo_chunks(&isize_spec, env)?.into(),
+            Value::Box(a) => a.undo_chunks(&isize_spec, env)?.into(),
         })
     }
 }
@@ -1321,6 +1329,60 @@ impl<T: ArrayValue> Array<T> {
             break;
         }
         Ok(Array::new(new_shape, new_data))
+    }
+    pub(crate) fn undo_chunks(mut self, isize_spec: &[isize], env: &Uiua) -> UiuaResult<Self> {
+        if isize_spec.iter().any(|&s| s == 0) {
+            return Err(env.error("Chunk size cannot be zero"));
+        }
+        if self.rank() < isize_spec.len() * 2 {
+            return Ok(self);
+        }
+        match isize_spec.len() {
+            0 | 1 => {
+                let a = self.shape.remove(0);
+                self.shape[0] *= a;
+            }
+            n => {
+                dbg!(&self.shape);
+                let mut data = EcoVec::with_capacity(self.element_count());
+                for depth in (0..n - 1).rev() {
+                    let depth = depth + 2;
+                    let [a, b, c] = [depth - 1, depth, depth + 1];
+                    let prods = |n: usize| {
+                        (
+                            self.shape[..n].iter().product::<usize>(),
+                            self.shape[n..].iter().product::<usize>(),
+                        )
+                    };
+                    let (a_count, a_len) = prods(a);
+                    let (b_count, b_len) = prods(b);
+                    let (c_count, c_len) = prods(c);
+                    println!("a: {a}, b: {b}, c: {c}");
+                    println!("a_count: {a_count}, a_len: {a_len}");
+                    println!("b_count: {b_count}, b_len: {b_len}");
+                    println!("c_count: {c_count}, c_len: {c_len}");
+                    for r in 0..a_count {
+                        for i in 0..self.shape[b] {
+                            for j in 0..self.shape[a] {
+                                println!("r: {r}, i: {i}, j: {j}");
+                                let start = r * a_len + j * b_len + i * c_len;
+                                dbg!(start);
+                                let slice = &self.data[start..][..c_len];
+                                println!("slice: {slice:?}");
+                                data.extend_from_slice(slice);
+                            }
+                        }
+                    }
+                    data = replace(&mut self.data, data.into()).into();
+                    self.shape[n] *= self.shape[0];
+                    self.shape.remove(0);
+                }
+                self.shape[n] *= self.shape[0];
+                self.shape.remove(0);
+                self.validate_shape();
+            }
+        }
+        Ok(self)
     }
 }
 
