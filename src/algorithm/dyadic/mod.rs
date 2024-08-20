@@ -1334,54 +1334,42 @@ impl<T: ArrayValue> Array<T> {
         if isize_spec.iter().any(|&s| s == 0) {
             return Err(env.error("Chunk size cannot be zero"));
         }
-        if self.rank() < isize_spec.len() * 2 {
+        let n = isize_spec.len();
+        if self.rank() < n * 2 {
             return Ok(self);
         }
-        match isize_spec.len() {
-            0 | 1 => {
-                let a = self.shape.remove(0);
-                self.shape[0] *= a;
-            }
-            n => {
-                dbg!(&self.shape);
-                let mut data = EcoVec::with_capacity(self.element_count());
-                for depth in (0..n - 1).rev() {
-                    let depth = depth + 2;
-                    let [a, b, c] = [depth - 1, depth, depth + 1];
-                    let prods = |n: usize| {
-                        (
-                            self.shape[..n].iter().product::<usize>(),
-                            self.shape[n..].iter().product::<usize>(),
-                        )
-                    };
-                    let (a_count, a_len) = prods(a);
-                    let (b_count, b_len) = prods(b);
-                    let (c_count, c_len) = prods(c);
-                    println!("a: {a}, b: {b}, c: {c}");
-                    println!("a_count: {a_count}, a_len: {a_len}");
-                    println!("b_count: {b_count}, b_len: {b_len}");
-                    println!("c_count: {c_count}, c_len: {c_len}");
-                    for r in 0..a_count {
-                        for i in 0..self.shape[b] {
-                            for j in 0..self.shape[a] {
-                                println!("r: {r}, i: {i}, j: {j}");
-                                let start = r * a_len + j * b_len + i * c_len;
-                                dbg!(start);
-                                let slice = &self.data[start..][..c_len];
-                                println!("slice: {slice:?}");
-                                data.extend_from_slice(slice);
-                            }
+
+        if n >= 2 {
+            // Some of the most deranged code I've ever written
+            let mut data = EcoVec::with_capacity(self.element_count());
+            for d in 0..n - 1 {
+                let r_count: usize = self.shape[..n - d - 1].iter().product();
+                let r_len: usize = self.shape[n - d - 1..].iter().product();
+                let a_len: usize = self.shape[n - d..].iter().product();
+                let b_len: usize = self.shape[n + n - (2 * d + 1)..].iter().product();
+                for r in 0..r_count {
+                    for i in 0..self.shape[n - d..n + n - (2 * d + 1)]
+                        .iter()
+                        .product::<usize>()
+                    {
+                        for j in 0..self.shape[n - d - 1] {
+                            let start = r * r_len + j * a_len + i * b_len;
+                            let slice = &self.data[start..][..b_len];
+                            data.extend_from_slice(slice);
                         }
                     }
-                    data = replace(&mut self.data, data.into()).into();
-                    self.shape[n] *= self.shape[0];
-                    self.shape.remove(0);
                 }
-                self.shape[n] *= self.shape[0];
-                self.shape.remove(0);
-                self.validate_shape();
+                data = replace(&mut self.data, data.into()).into();
+                data.clear();
+                self.shape[n + n - (2 * d + 1)] *= self.shape[n - (d + 1)];
+                self.shape.remove(n - (d + 1));
             }
         }
+
+        self.shape[1] *= self.shape[0];
+        self.shape.remove(0);
+        self.validate_shape();
+
         Ok(self)
     }
 }
