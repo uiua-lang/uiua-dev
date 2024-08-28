@@ -606,6 +606,7 @@ pub fn undo_partition_part1(env: &mut Uiua) -> UiuaResult {
         )));
     }
     let partitioned = env.pop(1)?;
+    let is_scalar = partitioned.shape() == [];
     // Untransform rows
     let mut untransformed = Vec::with_capacity(partitioned.row_count());
     for row in partitioned.into_rows().rev() {
@@ -614,17 +615,21 @@ pub fn undo_partition_part1(env: &mut Uiua) -> UiuaResult {
         untransformed.push(Boxed(env.pop("unpartitioned row")?));
     }
     untransformed.reverse();
-    env.push(Array::from_iter(untransformed));
+    let mut arr = Array::from_iter(untransformed);
+    if is_scalar && arr.row_count() == 1 {
+        arr.shape_mut().remove(0);
+    }
+    env.push(arr);
     Ok(())
 }
 
 #[allow(clippy::unit_arg)]
 pub fn undo_partition_part2(env: &mut Uiua) -> UiuaResult {
-    let untransformed = env.pop(1)?;
+    let from = env.pop(1)?;
     let markers = env
         .pop(2)?
         .as_integer_array(env, "⊜ partition markers must be an array of integers")?;
-    let mut original = env.pop(3)?;
+    let mut into = env.pop(3)?;
     if markers.rank() == 1 {
         // Count partition markers
         let mut marker_partitions: Vec<(isize, usize)> = Vec::new();
@@ -641,35 +646,116 @@ pub fn undo_partition_part2(env: &mut Uiua) -> UiuaResult {
             }
         }
         let positive_partitions = marker_partitions.iter().filter(|(m, _)| *m > 0).count();
-        if positive_partitions != untransformed.row_count() {
-            return Err(env.error(format!(
-                "Cannot undo {} because the partitioned array \
-                originally had {} rows, but now it has {}",
-                Primitive::Partition.format(),
-                positive_partitions,
-                untransformed.row_count()
-            )));
-        }
-
-        // Unpartition
-        let mut untransformed_rows = untransformed.into_rows().map(Value::unboxed);
-        let mut unpartitioned = Vec::with_capacity(marker_partitions.len() * original.row_len());
-        let mut original_offset = 0;
-        for (marker, part_len) in marker_partitions {
-            if marker > 0 {
-                unpartitioned.extend(untransformed_rows.next().unwrap().into_rows());
-            } else {
-                unpartitioned
-                    .extend((original_offset..original_offset + part_len).map(|i| original.row(i)));
+        let from_shape = if from.row_count() == 0 {
+            from.shape().clone()
+        } else {
+            let mut shape = from.row(0).unboxed().shape().clone();
+            shape.insert(0, from.row_count());
+            shape
+        };
+        dbg!(from.shape(), &from_shape, into.shape());
+        let val = match from_shape.len().cmp(&into.rank()) {
+            Ordering::Equal => {
+                if from.row_count() != positive_partitions {
+                    return Err(env.error(format!(
+                        "Cannot undo {} because the partitioned array \
+                        originally had {} rows, but now it has {}",
+                        Primitive::Partition.format(),
+                        positive_partitions,
+                        from.row_count()
+                    )));
+                }
+                if !(from_shape.iter().skip(1)).eq(into.shape().iter().skip(1)) {
+                    let mut original_shape = into.shape().row();
+                    original_shape.insert(0, from.row_count());
+                    return Err(env.error(format!(
+                        "Attempted to undo partition, but the shape of \
+                        the partitioned array changed from {} to {}",
+                        original_shape, from_shape
+                    )));
+                }
+                let mut untransformed_rows = from.into_rows().map(Value::unboxed);
+                let mut unpartitioned =
+                    Vec::with_capacity(marker_partitions.len() * into.row_len());
+                let mut original_offset = 0;
+                for (marker, part_len) in marker_partitions {
+                    if marker > 0 {
+                        unpartitioned.extend(untransformed_rows.next().unwrap().into_rows());
+                    } else {
+                        unpartitioned.extend(
+                            (original_offset..original_offset + part_len).map(|i| into.row(i)),
+                        );
+                    }
+                    original_offset += part_len;
+                }
+                Value::from_row_values(unpartitioned, env)?
             }
-            original_offset += part_len;
-        }
-        env.push(Value::from_row_values(unpartitioned, env)?);
+            Ordering::Less => {
+                if !into.shape().ends_with(&from_shape) {
+                    return Err(env.error(format!(
+                        "Cannot undo keep of array with shape {} \
+                        into array with shape {}",
+                        from_shape,
+                        into.shape()
+                    )));
+                }
+                let mut unpartitioned =
+                    Vec::with_capacity(marker_partitions.len() * into.row_len());
+                let mut original_offset = 0;
+                for (marker, part_len) in marker_partitions {
+                    if marker > 0 {
+                        unpartitioned.extend(from.rows().map(Value::unboxed));
+                    } else {
+                        unpartitioned.extend(
+                            (original_offset..original_offset + part_len).map(|i| into.row(i)),
+                        );
+                    }
+                    original_offset += part_len;
+                }
+                Value::from_row_values(unpartitioned, env)?
+            }
+            Ordering::Greater => {
+                if from.row_count() != positive_partitions {
+                    return Err(env.error(format!(
+                        "Attempted to undo partition, but the length of \
+                        the kept array changed from {positive_partitions} to {}",
+                        from.row_count()
+                    )));
+                }
+                if from.rank() - into.rank() > 1 || from_shape[2..] != into.shape()[1..] {
+                    return Err(env.error(format!(
+                        "Cannot undo partition of array with shape {} \
+                        into array with shape {}",
+                        from_shape,
+                        into.shape()
+                    )));
+                }
+                let mut untransformed_rows = from.into_rows().map(Value::unboxed);
+                let mut unpartitioned =
+                    Vec::with_capacity(marker_partitions.len() * into.row_len());
+                let mut original_offset = 0;
+                for (marker, part_len) in marker_partitions {
+                    if marker > 0 {
+                        unpartitioned.extend(
+                            (untransformed_rows.next().unwrap().into_rows())
+                                .flat_map(Value::into_rows),
+                        );
+                    } else {
+                        unpartitioned.extend(
+                            (original_offset..original_offset + part_len).map(|i| into.row(i)),
+                        );
+                    }
+                    original_offset += part_len;
+                }
+                Value::from_row_values(unpartitioned, env)?
+            }
+        };
+        env.push(val);
     } else {
-        let row_shape: Shape = original.shape()[markers.rank()..].into();
+        let row_shape: Shape = into.shape()[markers.rank()..].into();
         let indices = multi_partition_indices(markers);
         let row_elem_count: usize = row_shape.iter().product();
-        let untransformed_rows = untransformed.into_rows().map(Value::unboxed);
+        let untransformed_rows = from.into_rows().map(Value::unboxed);
         for ((_, indices), untransformed_row) in indices.into_iter().zip(untransformed_rows) {
             if indices.len() != untransformed_row.row_count() {
                 return Err(env.error(format!(
@@ -682,7 +768,7 @@ pub fn undo_partition_part2(env: &mut Uiua) -> UiuaResult {
             }
             for (index, row) in indices.into_iter().zip(untransformed_row.into_rows()) {
                 let start = index * row_elem_count;
-                original.generic_bin_mut(
+                into.generic_bin_mut(
                     row,
                     |a, b| Ok(update_array_at(a, start, b.data.as_slice())),
                     |a, b| Ok(update_array_at(a, start, b.data.as_slice())),
@@ -699,7 +785,7 @@ pub fn undo_partition_part2(env: &mut Uiua) -> UiuaResult {
                 )?;
             }
         }
-        env.push(original);
+        env.push(into);
     }
     Ok(())
 }
