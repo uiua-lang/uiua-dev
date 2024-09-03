@@ -15,7 +15,7 @@ use crate::{
     Complex, Primitive, WILDCARD_CHAR, WILDCARD_NAN,
 };
 
-type Grid<T = char> = Vec<Vec<T>>;
+pub type Grid<T = char> = Vec<Vec<T>>;
 type Metagrid = Grid<Grid>;
 
 #[derive(Debug, Clone, Copy, Default)]

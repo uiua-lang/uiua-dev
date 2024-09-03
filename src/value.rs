@@ -14,7 +14,7 @@ use crate::{
     array::*,
     cowslice::CowSlice,
     grid_fmt::GridFmt,
-    Boxed, Complex, Shape, Uiua, UiuaResult,
+    Abstract, Boxed, Complex, Shape, Uiua, UiuaResult,
 };
 
 /// A generic array value
@@ -34,6 +34,8 @@ pub enum Value {
     Char(Array<char>),
     /// Common box array
     Box(Array<Boxed>),
+    // /// An abstract array
+    // Abstract(Abstract),
 }
 
 impl Default for Value {

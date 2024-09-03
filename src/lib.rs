@@ -142,6 +142,7 @@ The `uiua` crate has the following noteable feature flags:
 )]
 #![warn(missing_docs)]
 
+mod abstr;
 mod algorithm;
 mod array;
 mod assembly;
@@ -176,6 +177,7 @@ mod value;
 
 #[allow(unused_imports)]
 pub use self::{
+    abstr::*,
     algorithm::encode,
     array::*,
     assembly::*,
