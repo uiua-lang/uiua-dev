@@ -516,6 +516,7 @@ pub enum Token {
     LeftArrowTilde,
     OpenAngle,
     CloseAngle,
+    ReferenceMark,
     Newline,
     Spaces,
 }
@@ -616,7 +617,7 @@ impl fmt::Display for Token {
                 }
                 Ok(())
             }
-            Token::Label(s) => write!(f, "${s}"),
+            Token::Label(s) => write!(f, "⑊{s}"),
             Token::FormatStr(parts) | Token::MultilineFormatStr(parts) => {
                 write!(f, "format string")?;
                 for (i, part) in parts.iter().enumerate() {
@@ -636,6 +637,7 @@ impl fmt::Display for Token {
             Token::LeftArrowTilde => write!(f, "←~"),
             Token::OpenAngle => write!(f, "⟨"),
             Token::CloseAngle => write!(f, "⟩"),
+            Token::ReferenceMark => write!(f, "⑊"),
             Token::Newline => write!(f, "newline"),
             Token::Spaces => write!(f, "space(s)"),
         }
@@ -1014,7 +1016,7 @@ impl<'a> Lexer<'a> {
                     self.end(Char(char), start)
                 }
                 // Strings
-                "\"" | "$" => {
+                "\"" | "$" | "⑊" => {
                     let first_dollar = c == "$";
                     let format_raw = first_dollar && self.next_char_exact("$");
                     if first_dollar
@@ -1061,7 +1063,7 @@ impl<'a> Lexer<'a> {
                         }
                         continue;
                     }
-                    if first_dollar && !self.next_char_exact("\"") {
+                    if (first_dollar || c == "⑊") && !self.next_char_exact("\"") {
                         let label = canonicalize_ident(&self.ident(self.loc, ""));
                         self.end(Label(label), start);
                         continue;

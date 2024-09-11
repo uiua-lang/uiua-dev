@@ -834,7 +834,7 @@ impl<'a> Formatter<'a> {
                 }
                 self.push(&word.span, &formatted);
             }
-            Word::Label(label) => self.push(&word.span, &format!("${label}")),
+            Word::Label(label) => self.push(&word.span, &format!("⑊{label}")),
             Word::Char(_) | Word::String(_) | Word::FormatString(_) => self
                 .output
                 .push_str(&self.inputs.get(&word.span.src)[word.span.byte_range()]),
