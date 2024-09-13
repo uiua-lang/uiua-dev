@@ -195,6 +195,7 @@ struct CurrentBinding {
     signature: Option<Signature>,
     referenced: bool,
     global_index: usize,
+    enabled: bool,
 }
 
 /// A scope where names are defined
@@ -1500,6 +1501,7 @@ code:
         }
         inner_sig.ok()
     }
+    /// Resolve all parts of a [`Ref`] into [`LocalName`]s
     fn ref_local(&self, r: &Ref) -> UiuaResult<(Vec<LocalName>, LocalName)> {
         if let Some((module, path_locals)) = self.ref_path(&r.path, r.in_macro_arg)? {
             if let Some(local) = module.names.get(&r.name.value).copied().or_else(|| {
@@ -1545,6 +1547,7 @@ code:
         }
         self.find_name(name.strip_suffix('!')?, skip_local)
     }
+    /// Resolve a reference path to get a module and a list of local names
     fn ref_path(
         &self,
         path: &[RefComponent],
@@ -1637,11 +1640,29 @@ code:
 
         Ok(Some((module, path_locals)))
     }
+    /// Compile a [`Ref`]
     fn reference(&mut self, r: Ref, call: bool) -> UiuaResult {
         if r.path.is_empty() {
             self.ident(r.name.value, r.name.span, call, r.in_macro_arg)
         } else {
-            let (path_locals, local) = self.ref_local(&r)?;
+            let locals = self.ref_local(&r);
+
+            // Resolve `Scope` reference
+            if locals.is_err() && r.path.first().unwrap().module.value == "Scope" {
+                let enabled = self
+                    .current_bindings
+                    .last_mut()
+                    .map(|cb| take(&mut cb.enabled));
+                let mut reduce_ref = r.clone();
+                reduce_ref.path.remove(0);
+                let res = self.reference(reduce_ref, call);
+                if let Some(enabled) = enabled {
+                    self.current_bindings.last_mut().unwrap().enabled = enabled;
+                }
+                return res;
+            }
+
+            let (path_locals, local) = locals?;
             self.validate_local(&r.name.value, local, &r.name.span);
             for (local, comp) in path_locals.into_iter().zip(&r.path) {
                 self.validate_local(&comp.module.value, local, &comp.module.span);
@@ -1655,7 +1676,13 @@ code:
         }
     }
     fn ident(&mut self, ident: Ident, span: CodeSpan, call: bool, skip_local: bool) -> UiuaResult {
-        if let Some(curr) = (self.current_bindings.last_mut()).filter(|curr| curr.name == ident) {
+        if let Some(curr) = self
+            .current_bindings
+            .iter_mut()
+            .rev()
+            .find(|cb| cb.enabled)
+            .filter(|curr| curr.name == ident)
+        {
             // Name is a recursive call
             let Some(sig) = curr.signature else {
                 return Err(self.fatal_error(
