@@ -9,19 +9,20 @@ Date ← $"_, _ +0000" ⊃(
   /$"_ _"
 )
 
-# Parse out Path, Date, Title
+# Parse out Path, Guid, Date, Title
 &fras $ site/blog/list.txt
 ⊜□⊸≠@\n
-⍚°$"_: _ - _"
+⍚°$"_(_): _ - _"
 
 Tag "rss version=\"2.0\"" Tag "channel" ⊂ {
   Tag "title" $ Uiua Blog
   Tag "description" $ Blog of the Uiua Programming Language
   Tag "link" $ https://uiua.org/blog
   Tag "lastBuildDate" Date now} ⍚(
-  ⊙(Date °datetime ⋕⊜□⊸≠@-) # Convert date
+  ⊙⊙(Date °datetime ⋕⊜□⊸≠@-) # Convert date
   Tag "item" {
     ⊓(Tag "link" $"https://uiua.org/blog/_"
+    | Tag "guid isPermaLink=\"false\""
     | Tag "pubDate"
     | Tag "title"
     )})
