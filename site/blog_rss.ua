@@ -14,10 +14,13 @@ Date ← $"_, _ +0000" ⊃(
 ⊜□⊸≠@\n
 ⍚°$"_(_): _ - _"
 
-Tag "rss version=\"2.0\"" Tag "channel" ⊂ {
+Rss ← $ rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"
+AtomLink ← $ atom:link href="https://uiua.org/blog/feed.rss" rel="self" type="application/rss+xml"
+Tag Rss Tag "channel" ⊂ {
   Tag "title" $ Uiua Blog
   Tag "description" $ Blog of the Uiua Programming Language
   Tag "link" $ https://uiua.org/blog
+  Tag AtomLink ""
   Tag "lastBuildDate" Date now} ⍚(
   ⊙⊙(Date °datetime ⋕⊜□⊸≠@-) # Convert date
   Tag "item" {
