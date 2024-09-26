@@ -368,60 +368,28 @@ impl<T: ArrayValue> Array<T> {
         let elem_count = validate_size::<T>(shape.iter().copied(), env)?;
         let mut data = EcoVec::with_capacity(elem_count);
         let row_len = self.row_len();
-        if k == n {
-            let mut stack = Vec::new();
-            stack.push((0, EcoVec::from(self.data)));
-            while let Some((start, curr)) = stack.pop() {
-                if start == n {
-                    unsafe { data.extend_from_trusted(curr) };
+        // It took me forever to find this algorithm
+        let mut perm: Vec<usize> = (0..n).collect();
+        let mut cycles: Vec<usize> = (n - k + 1..=n).rev().collect();
+        for &i in &perm[..k] {
+            data.extend_from_slice(&self.data[i * row_len..][..row_len]);
+        }
+        'outer: loop {
+            for i in (0..k).rev() {
+                cycles[i] -= 1;
+                if cycles[i] == 0 {
+                    perm[i..].rotate_left(1);
+                    cycles[i] = n - i;
                 } else {
-                    for i in (start..n).rev() {
-                        let mut next = curr.clone();
-                        next.make_mut().swap(start, i);
-                        stack.push((start + 1, next));
+                    let j = cycles[i];
+                    perm.swap(i, n - j);
+                    for &i in &perm[..k] {
+                        data.extend_from_slice(&self.data[i * row_len..][..row_len]);
                     }
+                    continue 'outer;
                 }
             }
-        } else {
-            let mut indices: Vec<usize> = (0..k).collect();
-            let mut counts = vec![0; k];
-            let mut curr = indices.clone();
-            'outer: loop {
-                curr.clone_from(&indices);
-                counts.iter_mut().for_each(|c| *c = 0);
-                for &idx in &curr {
-                    data.extend_from_slice(&self.data[idx * row_len..][..row_len]);
-                }
-                let mut i = 0;
-                while i < k {
-                    if counts[i] < i {
-                        let a = if i % 2 == 0 { 0 } else { counts[i] };
-                        curr.swap(a, i);
-                        for &idx in &curr {
-                            data.extend_from_slice(&self.data[idx * row_len..][..row_len]);
-                        }
-                        counts[i] += 1;
-                        i = 0;
-                    } else {
-                        counts[i] = 0;
-                        i += 1;
-                    }
-                }
-
-                // Next indices
-                i = k;
-                while i > 0 {
-                    i -= 1;
-                    if indices[i] < n - k + i {
-                        indices[i] += 1;
-                        for j in i + 1..k {
-                            indices[j] = indices[j - 1] + 1;
-                        }
-                        continue 'outer;
-                    }
-                }
-                break;
-            }
+            break;
         }
         Ok(Array::new(shape, data))
     }
