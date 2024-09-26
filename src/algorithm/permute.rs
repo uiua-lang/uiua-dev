@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use ecow::EcoVec;
 
 use crate::{
@@ -73,7 +71,7 @@ fn tuple2(f: Function, env: &mut Uiua) -> UiuaResult {
                 Primitive::Le => k.choose(&xs, false, true, env)?,
                 Primitive::Gt => k.choose(&xs, true, false, env)?,
                 Primitive::Ge => k.choose(&xs, true, true, env)?,
-                Primitive::Ne => k.permute(&xs, env)?,
+                Primitive::Ne => k.permute(xs, env)?,
                 _ => break 'blk,
             };
             env.push(res);
@@ -203,7 +201,7 @@ impl Value {
         val_as_arr!(from, |a| a.choose(k, reverse, same, env).map(Into::into))
     }
     /// `permute` all combinations of `k` rows from a value
-    pub fn permute(&self, from: &Self, env: &Uiua) -> UiuaResult<Self> {
+    pub fn permute(&self, from: Self, env: &Uiua) -> UiuaResult<Self> {
         let k = self.as_nat(env, "Permute k must be an integer")?;
         if let Ok(n) = from.as_nat(env, "") {
             return permutations(n, k, env).map(Into::into);
@@ -352,7 +350,7 @@ impl<T: ArrayValue> Array<T> {
         })
     }
     /// `permute` all combinations of `k` rows from this array
-    fn permute(&self, k: usize, env: &Uiua) -> UiuaResult<Self> {
+    fn permute(self, k: usize, env: &Uiua) -> UiuaResult<Self> {
         if self.rank() == 0 {
             return Err(env.error("Cannot permute scalar"));
         }
@@ -370,26 +368,60 @@ impl<T: ArrayValue> Array<T> {
         let elem_count = validate_size::<T>(shape.iter().copied(), env)?;
         let mut data = EcoVec::with_capacity(elem_count);
         let row_len = self.row_len();
-        let mut indices = vec![0; k];
-        let mut set = HashSet::with_capacity(k);
-        'outer: loop {
-            env.respect_execution_limit()?;
-            set.clear();
-            if indices.iter().all(|&i| set.insert(i)) {
-                for &i in indices.iter().rev() {
-                    data.extend_from_slice(&self.data[i * row_len..][..row_len]);
-                }
-            }
-            // Increment indices
-            for i in 0..k {
-                indices[i] += 1;
-                if indices[i] == n {
-                    indices[i] = 0;
+        if k == n {
+            let mut stack = Vec::new();
+            stack.push((0, EcoVec::from(self.data)));
+            while let Some((start, curr)) = stack.pop() {
+                if start == n {
+                    unsafe { data.extend_from_trusted(curr) };
                 } else {
-                    continue 'outer;
+                    for i in (start..n).rev() {
+                        let mut next = curr.clone();
+                        next.make_mut().swap(start, i);
+                        stack.push((start + 1, next));
+                    }
                 }
             }
-            break;
+        } else {
+            let mut indices: Vec<usize> = (0..k).collect();
+            let mut counts = vec![0; k];
+            let mut curr = indices.clone();
+            'outer: loop {
+                curr.clone_from(&indices);
+                counts.iter_mut().for_each(|c| *c = 0);
+                for &idx in &curr {
+                    data.extend_from_slice(&self.data[idx * row_len..][..row_len]);
+                }
+                let mut i = 0;
+                while i < k {
+                    if counts[i] < i {
+                        let a = if i % 2 == 0 { 0 } else { counts[i] };
+                        curr.swap(a, i);
+                        for &idx in &curr {
+                            data.extend_from_slice(&self.data[idx * row_len..][..row_len]);
+                        }
+                        counts[i] += 1;
+                        i = 0;
+                    } else {
+                        counts[i] = 0;
+                        i += 1;
+                    }
+                }
+
+                // Next indices
+                i = k;
+                while i > 0 {
+                    i -= 1;
+                    if indices[i] < n - k + i {
+                        indices[i] += 1;
+                        for j in i + 1..k {
+                            indices[j] = indices[j - 1] + 1;
+                        }
+                        continue 'outer;
+                    }
+                }
+                break;
+            }
         }
         Ok(Array::new(shape, data))
     }
