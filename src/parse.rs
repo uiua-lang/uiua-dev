@@ -452,7 +452,10 @@ impl<'i> Parser<'i> {
             ));
         }
         // Signature
-        let signature = self.try_signature(true);
+        let mut signatures = Vec::new();
+        while let Some(sig) = self.try_signature(true) {
+            signatures.push(sig);
+        }
         // Words
         let words = self.try_words().unwrap_or_default();
         self.validate_binding_name(&name);
@@ -462,7 +465,7 @@ impl<'i> Parser<'i> {
             public,
             array_macro,
             words,
-            signature,
+            signatures,
         })
     }
     fn validate_binding_name(&mut self, name: &Sp<Ident>) {

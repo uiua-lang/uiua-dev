@@ -63,7 +63,7 @@ pub struct Compiler {
     /// The bindings of imported files
     imports: HashMap<PathBuf, Module>,
     /// Unexpanded stack macros
-    stack_macros: HashMap<usize, StackMacro>,
+    stack_macros: HashMap<usize, PosMacro>,
     /// Unexpanded array macros
     array_macros: HashMap<usize, ArrayMacro>,
     /// The depth of macro expansion
@@ -164,13 +164,15 @@ pub struct Module {
     experimental: bool,
 }
 
+/// A positional macro
 #[derive(Clone)]
-struct StackMacro {
+struct PosMacro {
     words: Vec<Sp<Word>>,
     names: IndexMap<Ident, LocalName>,
     hygenic: bool,
 }
 
+/// An array macro
 #[derive(Clone)]
 struct ArrayMacro {
     function: Function,
@@ -195,6 +197,7 @@ struct CurrentBinding {
     signature: Option<Signature>,
     referenced: bool,
     global_index: usize,
+    pos_sigs: Vec<Signature>,
 }
 
 /// A scope where names are defined
@@ -779,7 +782,7 @@ code:
             comment
         });
         self.asm
-            .add_global_at(local, BindingKind::Const(value), span, comment);
+            .add_binding_at(local, BindingKind::Const(value), span, comment);
         self.scope.names.insert(name, local);
     }
     /// Import a module
@@ -1368,6 +1371,27 @@ code:
             }
             Word::Primitive(p) => self.primitive(p, word.span, call)?,
             Word::Modified(m) => self.modified(*m, None, call)?,
+            Word::Placeholder(PlaceholderOp::Nth(i)) => {
+                let index = i as usize;
+                if let Some(binding) = self.current_bindings.last() {
+                    let sig = binding.pos_sigs.get(i as usize).copied().ok_or_else(|| {
+                        self.fatal_error(
+                            word.span.clone(),
+                            format!(
+                                "Positional macro argument index {i} out \
+                                of bounds of {}'s {} function arguments",
+                                binding.name,
+                                binding.pos_sigs.len()
+                            ),
+                        )
+                    })?;
+                    let span = self.add_span(word.span.clone());
+                    self.push_instr(Instr::PushPosArg { index, sig, span });
+                    if call {
+                        self.push_instr(Instr::Call(span));
+                    }
+                }
+            }
             Word::Placeholder(_) => {
                 // We could error here, but it's easier to handle it higher up
             }
@@ -1587,7 +1611,7 @@ code:
                     format!("`{}` is a constant, not a module", first.module.value),
                 ))
             }
-            BindingKind::StackMacro(_) => {
+            BindingKind::PosMacro(_) => {
                 return Err(self.fatal_error(
                     first.module.span.clone(),
                     format!("`{}` is a stack macro, not a module", first.module.value),
@@ -1628,7 +1652,7 @@ code:
                         format!("`{}` is a constant, not a module", comp.module.value),
                     ))
                 }
-                BindingKind::StackMacro(_) => {
+                BindingKind::PosMacro(_) => {
                     return Err(self.fatal_error(
                         comp.module.span.clone(),
                         format!("`{}` is a stack macro, not a module", comp.module.value),
@@ -1670,7 +1694,7 @@ code:
                     span,
                     format!(
                         "Recursive function `{ident}` must have a \
-                        signature declared after the `←`."
+                        signature declared after the ←."
                     ),
                 ));
             };
@@ -1774,7 +1798,7 @@ code:
                     self.add_error(span, "Cannot import module item here.");
                 }
             }
-            BindingKind::StackMacro(_) | BindingKind::ArrayMacro(_) => {
+            BindingKind::PosMacro(_) | BindingKind::ArrayMacro(_) => {
                 // We could error here, but it's easier to handle it higher up
             }
         }

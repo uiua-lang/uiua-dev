@@ -35,7 +35,7 @@ pub struct Binding {
     /// Whether the binding is an array macro
     pub array_macro: bool,
     /// The signature
-    pub signature: Option<Sp<Signature>>,
+    pub signatures: Vec<Sp<Signature>>,
     /// The code
     pub words: Vec<Sp<Word>>,
 }

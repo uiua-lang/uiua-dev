@@ -653,10 +653,10 @@ impl<'a> Formatter<'a> {
                 if binding.array_macro {
                     self.output.push('^');
                 }
-                if !binding.words.is_empty() || binding.signature.is_some() {
+                if !binding.words.is_empty() || !binding.signatures.is_empty() {
                     self.output.push(' ');
                 }
-                if let Some(sig) = &binding.signature {
+                for sig in &binding.signatures {
                     self.format_signature('|', sig.value, true);
                 }
                 let span = binding
@@ -664,7 +664,7 @@ impl<'a> Formatter<'a> {
                     .first()
                     .zip(binding.words.last())
                     .map(|(first, last)| first.span.clone().merge(last.span.clone()))
-                    .or_else(|| binding.signature.as_ref().map(|sig| sig.span.clone()))
+                    .or_else(|| binding.signatures.last().map(|sig| sig.span.clone()))
                     .unwrap_or_else(|| binding.arrow_span.clone());
                 let mut lines = flip_unsplit_lines(split_words(binding.words.clone()));
                 if lines.len() == 1 {

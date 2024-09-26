@@ -57,6 +57,17 @@ pub enum Instr {
     Recur(usize),
     /// Push a function onto the function stack
     PushFunc(Function),
+    /// Set the positional macro arguments
+    SetPosArgs {
+        count: usize,
+        span: usize,
+    },
+    /// Call a positional macro argument
+    PushPosArg {
+        index: usize,
+        sig: Signature,
+        span: usize,
+    },
     /// Execute a switch
     Switch {
         count: usize,
@@ -258,6 +269,8 @@ impl Hash for Instr {
                 ..
             } => (27, index, name, type_num).hash(state),
             Instr::StackSwizzle(swizzle, _) => (31, swizzle).hash(state),
+            Instr::SetPosArgs { count, .. } => (32, count).hash(state),
+            Instr::PushPosArg { index, .. } => (33, index).hash(state),
         }
     }
 }
@@ -321,6 +334,7 @@ macro_rules! instr_span {
                     Self::ValidateType { span, .. } => span,
                     Self::Unpack { span, .. } => span,
                     Self::TouchStack { span, .. } => span,
+                    Self::SetPosArgs { span, .. } => span,
                     _ => return None,
                 })
             }
@@ -622,6 +636,8 @@ impl fmt::Display for Instr {
             Instr::SetOutputComment { i, n, .. } => write!(f, "<set output comment {i}({n})>"),
             Instr::PushSig(sig) => write!(f, "{sig}"),
             Instr::PopSig => write!(f, "-|"),
+            Instr::SetPosArgs { count, .. } => write!(f, "<set {count} pos args>"),
+            Instr::PushPosArg { index, .. } => write!(f, "<call pos arg {index}>"),
         }
     }
 }

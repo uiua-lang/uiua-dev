@@ -67,10 +67,35 @@ impl Compiler {
                 );
             }
             let new_func = self.compile_words(binding.words, true)?;
+            let declared_sig = match binding.signatures.as_slice() {
+                [] => None,
+                [sig] => Some(sig.clone()),
+                [sig, another, ..] => {
+                    self.add_error(
+                        another.span.clone(),
+                        "Array macro cannot have more than 1 signature",
+                    );
+                    Some(sig.clone())
+                }
+            };
             let sig = match instrs_signature(&new_func.instrs) {
-                Ok(s) => s,
+                Ok(s) => {
+                    if let Some(declared) = declared_sig {
+                        if s != declared.value {
+                            self.add_error(
+                                span.clone(),
+                                format!(
+                                    "Array macro signature mismatch: \
+                                    declared {} but inferred {s}",
+                                    declared.value
+                                ),
+                            );
+                        }
+                    }
+                    s
+                }
                 Err(e) => {
-                    if let Some(sig) = binding.signature {
+                    if let Some(sig) = declared_sig {
                         sig.value
                     } else {
                         self.add_error(
@@ -100,7 +125,7 @@ impl Compiler {
             }
             let function = self.make_function(FunctionId::Named(name.clone()), sig, new_func);
             self.scope.names.insert(name.clone(), local);
-            (self.asm).add_global_at(
+            (self.asm).add_binding_at(
                 local,
                 BindingKind::ArrayMacro(function.slice),
                 Some(span.clone()),
@@ -138,13 +163,8 @@ impl Compiler {
         }
         if placeholder_count > 0 || ident_margs > 0 {
             self.scope.names.insert(name.clone(), local);
-            (self.asm).add_global_at(
-                local,
-                BindingKind::StackMacro(ident_margs),
-                Some(span.clone()),
-                comment.map(|text| DocComment::from(text.as_str())),
-            );
             let mut words = binding.words.clone();
+            let mut recursive = false;
             recurse_words_mut(&mut words, &mut |word| {
                 let mut path_locals = None;
                 let mut name_local = None;
@@ -176,9 +196,14 @@ impl Compiler {
                     }
                     _ => {}
                 }
-                if let Some((name, local)) = name_local {
-                    self.validate_local(&name.value, local, &name.span);
-                    (self.code_meta.global_references).insert(name.span.clone(), local.index);
+                if let Some((nm, local)) = name_local {
+                    if nm.value == name
+                        && path_locals.as_ref().map_or(true, |(pl, _)| pl.is_empty())
+                    {
+                        recursive = true;
+                    }
+                    self.validate_local(&nm.value, local, &nm.span);
+                    (self.code_meta.global_references).insert(nm.span.clone(), local.index);
                 }
                 if let Some((path, locals)) = path_locals {
                     for (local, comp) in locals.into_iter().zip(path) {
@@ -187,12 +212,73 @@ impl Compiler {
                     }
                 }
             });
-            let mac = StackMacro {
-                words,
-                names: self.scope.names.clone(),
-                hygenic: true,
-            };
-            self.stack_macros.insert(local.index, mac);
+            if recursive {
+                let mut sigs = binding.signatures;
+                if sigs.is_empty() {
+                    return Err(self.fatal_error(
+                        span.clone(),
+                        format!(
+                            "Recursive macro `{name}` must have \
+                            signatures declared after the ←.",
+                        ),
+                    ));
+                };
+                let sig = sigs.remove(0);
+                let pos_sigs = sigs;
+                if pos_sigs.len() != ident_margs {
+                    self.add_error(
+                        span.clone(),
+                        format!(
+                            "Recursive macro `{name}` must have {} \
+                            total signatures after the ←, but it has {}",
+                            ident_margs + 1,
+                            pos_sigs.len() + 1,
+                        ),
+                    );
+                }
+                let count = pos_sigs.len();
+                self.current_bindings.push(CurrentBinding {
+                    name: name.clone(),
+                    signature: Some(sig.value),
+                    referenced: false,
+                    global_index: local.index,
+                    pos_sigs: pos_sigs.into_iter().map(|s| s.value).collect(),
+                });
+                self.new_functions.push(NewFunction::default());
+                let mut new_func = self.compile_words(words, true)?;
+                new_func.instrs.insert(
+                    0,
+                    Instr::SetPosArgs {
+                        count,
+                        span: spandex,
+                    },
+                );
+                self.current_bindings.pop().unwrap();
+                new_func.flags |= FunctionFlags::RECURSIVE;
+                let sig = self.sig_of(&new_func.instrs, span)?;
+                let func = self.make_function(FunctionId::Named(name.clone()), sig, new_func);
+                let instrs = eco_vec![Instr::PushFunc(func), Instr::CallRecursive(spandex)];
+                let func = self.make_function(FunctionId::Named(name.clone()), sig, instrs.into());
+                self.asm.add_binding_at(
+                    local,
+                    BindingKind::Func(func),
+                    Some(span.clone()),
+                    comment.map(|text| DocComment::from(text.as_str())),
+                );
+            } else {
+                self.asm.add_binding_at(
+                    local,
+                    BindingKind::PosMacro(ident_margs),
+                    Some(span.clone()),
+                    comment.map(|text| DocComment::from(text.as_str())),
+                );
+                let mac = PosMacro {
+                    words,
+                    names: self.scope.names.clone(),
+                    hygenic: true,
+                };
+                self.stack_macros.insert(local.index, mac);
+            }
             return Ok(());
         }
 
@@ -234,12 +320,25 @@ impl Compiler {
                 span
             });
 
+        let declared_sig = match binding.signatures.as_slice() {
+            [] => None,
+            [sig] => Some(sig.clone()),
+            [sig, another, ..] => {
+                self.add_error(
+                    another.span.clone(),
+                    "Binding cannot have more than 1 signature",
+                );
+                Some(sig.clone())
+            }
+        };
+
         // Compile the body
         self.current_bindings.push(CurrentBinding {
             name: name.clone(),
-            signature: binding.signature.as_ref().map(|s| s.value),
+            signature: declared_sig.as_ref().map(|s| s.value),
             referenced: false,
             global_index: local.index,
+            pos_sigs: Vec::new(),
         });
         let mut binding_code_words = binding.words.iter().filter(|w| w.value.is_code());
         let is_single_func = binding_code_words.clone().count() == 1
@@ -390,7 +489,7 @@ impl Compiler {
                 }
 
                 // Validate signature
-                if let Some(declared_sig) = &binding.signature {
+                if let Some(declared_sig) = &declared_sig {
                     if declared_sig.value != sig {
                         self.add_error(
                             declared_sig.span.clone(),
@@ -406,13 +505,13 @@ impl Compiler {
                     words_span,
                     SigDecl {
                         sig,
-                        explicit: binding.signature.is_some(),
+                        explicit: declared_sig.is_some(),
                         inline: false,
                     },
                 );
             }
             Err(e) => {
-                if let Some(sig) = binding.signature {
+                if let Some(sig) = declared_sig {
                     // Binding is a normal function
                     if e.kind == SigCheckErrorKind::Ambiguous {
                         new_func.flags |= FunctionFlags::NO_INLINE;
@@ -479,7 +578,7 @@ impl Compiler {
                 let comment = prev_com
                     .or_else(|| module.comment.clone())
                     .map(|text| DocComment::from(text.as_str()));
-                self.asm.add_global_at(
+                self.asm.add_binding_at(
                     local,
                     BindingKind::Module(module),
                     Some(name.span.clone()),
@@ -516,7 +615,7 @@ impl Compiler {
                 index: global_index,
                 public: true,
             };
-            self.asm.add_global_at(
+            self.asm.add_binding_at(
                 local,
                 BindingKind::Import(module_path.clone()),
                 Some(name.span.clone()),

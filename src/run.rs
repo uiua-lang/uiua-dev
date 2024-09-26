@@ -109,6 +109,8 @@ pub(crate) struct StackFrame {
     pub(crate) pc: usize,
     /// Additional spans for error reporting
     spans: Vec<(usize, Option<Primitive>)>,
+    /// Positional macro arguments
+    pub(crate) pos_fns: Vec<Function>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +192,7 @@ impl Default for Runtime {
                 call_span: 0,
                 pc: 0,
                 spans: Vec::new(),
+                pos_fns: Vec::new(),
             }],
             recur_stack: Vec::new(),
             fill_stack: Vec::new(),
@@ -470,7 +473,7 @@ code:
                             "Called module global. \
                             This is a bug in the interpreter.",
                         )),
-                        BindingKind::StackMacro(_) => Err(self.error(
+                        BindingKind::PosMacro(_) => Err(self.error(
                             "Called stack macro global. \
                             This is a bug in the interpreter.",
                         )),
@@ -522,6 +525,40 @@ code:
                     self.rt.function_stack.push(f.clone());
                     Ok(())
                 }
+                &Instr::SetPosArgs { count, span } => self.with_span(span, |env| {
+                    env.rt.call_stack.last_mut().unwrap().pos_fns.clear();
+                    for _ in 0..count {
+                        let f = env.pop_function()?;
+                        env.rt.call_stack.last_mut().unwrap().pos_fns.push(f);
+                    }
+                    Ok(())
+                }),
+                &Instr::PushPosArg { index, sig, span } => self.with_span(span, |env| {
+                    let frame = (env.rt.call_stack.iter().rev())
+                        .find(|frame| !frame.pos_fns.is_empty())
+                        .ok_or_else(|| {
+                            env.error(
+                                "No positional macro arguments available. \
+                                This is a bug in the interpreter.",
+                            )
+                        })?;
+                    let f = frame.pos_fns.get(index).ok_or_else(|| {
+                        env.error(format!(
+                            "Positional macro argument index {index} out of bounds of \
+                            {} arguments. This is a bug in the interpreter.",
+                            frame.pos_fns.len()
+                        ))
+                    })?;
+                    if f.signature() != sig {
+                        return Err(env.error(format!(
+                            "Positional macro argument {index} expects signature \
+                            {sig}, but the passed function has signature {}",
+                            f.signature()
+                        )));
+                    }
+                    env.push_func(f.clone());
+                    Ok(())
+                }),
                 &Instr::Switch {
                     count,
                     sig,
@@ -779,6 +816,7 @@ code:
             call_span,
             spans: Vec::new(),
             pc: 0,
+            pos_fns: Vec::new(),
         };
         self.exec(frame)
     }
@@ -859,6 +897,7 @@ code:
                 call_span,
                 spans: Vec::new(),
                 pc: 0,
+                pos_fns: Vec::new(),
             },
             call_span,
         )
@@ -1410,8 +1449,18 @@ code:
         res
     }
     pub(crate) fn recur(&mut self) -> UiuaResult {
+        #[cfg(debug_assertions)]
+        const RECURSION_LIMIT: usize = 22;
+        #[cfg(not(debug_assertions))]
+        const RECURSION_LIMIT: usize = 130;
+        if self.rt.call_stack.len() > RECURSION_LIMIT {
+            return Err(self.error("Recursion limit reached"));
+        }
         let Some(i) = self.rt.recur_stack.last().copied() else {
-            return Err(self.error("No recursion context set"));
+            return Err(self.error(
+                "No recursion context set. This \
+                is a bug in the interpreter.",
+            ));
         };
         let mut frame = self.rt.call_stack[i].clone();
         frame.pc = 0;

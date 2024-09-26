@@ -75,7 +75,7 @@ impl Assembly {
         comment: Option<DocComment>,
     ) {
         let span = self.spans[span].clone();
-        self.add_global_at(local, BindingKind::Func(function), span.code(), comment);
+        self.add_binding_at(local, BindingKind::Func(function), span.code(), comment);
     }
     pub(crate) fn bind_const(
         &mut self,
@@ -85,9 +85,9 @@ impl Assembly {
         comment: Option<DocComment>,
     ) {
         let span = self.spans[span].clone();
-        self.add_global_at(local, BindingKind::Const(value), span.code(), comment);
+        self.add_binding_at(local, BindingKind::Const(value), span.code(), comment);
     }
-    pub(crate) fn add_global_at(
+    pub(crate) fn add_binding_at(
         &mut self,
         local: LocalName,
         global: BindingKind,
@@ -422,10 +422,10 @@ pub enum BindingKind {
     Import(PathBuf),
     /// A scoped module
     Module(Module),
-    /// A stack macro
+    /// A positional macro
     ///
     /// Contains the number of arguments
-    StackMacro(usize),
+    PosMacro(usize),
     /// An array macro
     ArrayMacro(FuncSlice),
 }
@@ -438,7 +438,7 @@ impl BindingKind {
             Self::Func(func) => Some(func.signature()),
             Self::Import { .. } => None,
             Self::Module(_) => None,
-            Self::StackMacro(_) => None,
+            Self::PosMacro(_) => None,
             Self::ArrayMacro(_) => None,
         }
     }
@@ -730,6 +730,8 @@ enum InstrRep {
     CallRecursive(usize),
     Recur(usize),
     PushFunc(Function),
+    SetPosArgs(usize, usize),
+    PushPosArg(usize, Signature, usize),
     Switch(usize, Signature, usize, bool),
     Format(EcoVec<EcoString>, usize),
     MatchFormatPattern(EcoVec<EcoString>, usize),
@@ -768,6 +770,8 @@ impl From<Instr> for InstrRep {
             Instr::CallRecursive(span) => Self::CallRecursive(span),
             Instr::Recur(span) => Self::Recur(span),
             Instr::PushFunc(func) => Self::PushFunc(func),
+            Instr::SetPosArgs { count, span } => Self::SetPosArgs(count, span),
+            Instr::PushPosArg { index, sig, span } => Self::PushPosArg(index, sig, span),
             Instr::Switch {
                 count,
                 sig,
@@ -824,6 +828,8 @@ impl From<InstrRep> for Instr {
             InstrRep::CallRecursive(span) => Self::CallRecursive(span),
             InstrRep::Recur(span) => Self::Recur(span),
             InstrRep::PushFunc(func) => Self::PushFunc(func),
+            InstrRep::SetPosArgs(count, span) => Self::SetPosArgs { count, span },
+            InstrRep::PushPosArg(index, sig, span) => Self::PushPosArg { index, sig, span },
             InstrRep::Switch(count, sig, span, under_cond) => Self::Switch {
                 count,
                 sig,
