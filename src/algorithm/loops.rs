@@ -61,10 +61,13 @@ pub fn repeat(with_inverse: bool, env: &mut Uiua) -> UiuaResult {
         }
         // Collect arguments
         let mut args = Vec::with_capacity(sig.args + 1);
-        let new_shape = n.shape().clone();
+        let mut new_shape = n.shape().clone();
         args.push(n);
         for i in 0..sig.args {
             let arg = env.pop(i + 1)?;
+            for (a, &b) in new_shape.iter_mut().zip(arg.shape()) {
+                *a = (*a).max(b);
+            }
             args.push(arg);
         }
         args[1..].reverse();
@@ -86,14 +89,14 @@ pub fn repeat(with_inverse: bool, env: &mut Uiua) -> UiuaResult {
                 },
                 env,
             )?;
-            // println!("ns: {} {:?}", n.shape, n.data);
+            println!("ns: {} {:?}", n.shape, n.data);
             rows_to_sel.clear();
             for row in rows[1..].iter_mut() {
                 let row = match row {
                     Ok(row) => row.next().unwrap(),
                     Err(row) => row.clone(),
                 };
-                // println!("row: {:?}", row);
+                println!("row: {:?}", row);
                 if n.rank() > row.rank() || is_empty {
                     rows_to_sel.push(Err(row));
                 } else {
@@ -103,19 +106,19 @@ pub fn repeat(with_inverse: bool, env: &mut Uiua) -> UiuaResult {
             }
             for sel_row_slice in n.row_slices() {
                 for &elem in sel_row_slice {
-                    // println!("  elem: {}", elem);
+                    println!("  elem: {}", elem);
                     for row in &mut rows_to_sel {
                         let row = match row {
                             Ok(row) => row.next().unwrap(),
                             Err(row) => row.clone(),
                         };
-                        // println!("  row: {:?}", row);
+                        println!("  row: {:?}", row);
                         env.push(row);
                     }
                     repeat_impl(f.clone(), inv.clone(), elem, env)?;
                     for i in 0..sig.outputs {
                         let res = env.pop("repeat output")?;
-                        // println!("    res: {:?}", res);
+                        println!("    res: {:?}", res);
                         outputs[i].push(res);
                     }
                 }
