@@ -474,7 +474,7 @@ code:
                             This is a bug in the interpreter.",
                         )),
                         BindingKind::PosMacro(_) => Err(self.error(
-                            "Called stack macro global. \
+                            "Called positional macro global. \
                             This is a bug in the interpreter.",
                         )),
                         BindingKind::ArrayMacro(_) => Err(self.error(

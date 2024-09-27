@@ -138,7 +138,7 @@ impl Compiler {
             self.array_macros.insert(local.index, mac);
             return Ok(());
         }
-        // Stack macro
+        // Positional macro
         match (ident_margs > 0, placeholder_count > 0) {
             (true, true) | (false, false) => {}
             (true, false) => {
@@ -277,7 +277,7 @@ impl Compiler {
                     names: self.scope.names.clone(),
                     hygenic: true,
                 };
-                self.stack_macros.insert(local.index, mac);
+                self.positional_macros.insert(local.index, mac);
             }
             return Ok(());
         }

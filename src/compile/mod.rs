@@ -62,8 +62,8 @@ pub struct Compiler {
     current_imports: Vec<PathBuf>,
     /// The bindings of imported files
     imports: HashMap<PathBuf, Module>,
-    /// Unexpanded stack macros
-    stack_macros: HashMap<usize, PosMacro>,
+    /// Unexpanded positional macros
+    positional_macros: HashMap<usize, PosMacro>,
     /// Unexpanded array macros
     array_macros: HashMap<usize, ArrayMacro>,
     /// The depth of macro expansion
@@ -103,7 +103,7 @@ impl Default for Compiler {
             mode: RunMode::All,
             current_imports: Vec::new(),
             imports: HashMap::new(),
-            stack_macros: HashMap::new(),
+            positional_macros: HashMap::new(),
             array_macros: HashMap::new(),
             macro_depth: 0,
             in_inverse: false,
@@ -1614,7 +1614,10 @@ code:
             BindingKind::PosMacro(_) => {
                 return Err(self.fatal_error(
                     first.module.span.clone(),
-                    format!("`{}` is a stack macro, not a module", first.module.value),
+                    format!(
+                        "`{}` is a positional macro, not a module",
+                        first.module.value
+                    ),
                 ))
             }
             BindingKind::ArrayMacro(_) => {
@@ -1655,7 +1658,10 @@ code:
                 BindingKind::PosMacro(_) => {
                     return Err(self.fatal_error(
                         comp.module.span.clone(),
-                        format!("`{}` is a stack macro, not a module", comp.module.value),
+                        format!(
+                            "`{}` is a positional macro, not a module",
+                            comp.module.value
+                        ),
                     ))
                 }
                 BindingKind::ArrayMacro(_) => {
