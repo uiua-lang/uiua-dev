@@ -514,6 +514,7 @@ pub enum Token {
     CloseAngle,
     OpenModule,
     CloseModule,
+    PackDelim,
     Newline,
     Spaces,
 }
@@ -641,6 +642,7 @@ impl fmt::Display for Token {
             }
             Token::OpenModule => write!(f, "┌─╴"),
             Token::CloseModule => write!(f, "└─╴"),
+            Token::PackDelim => write!(f, "│"),
         }
     }
 }
@@ -948,6 +950,7 @@ impl<'a> Lexer<'a> {
                 "└" if self.next_char_exact("─") && self.next_char_exact("╴") => {
                     self.end(CloseModule, start)
                 }
+                "│" | "╵" | "╷" => self.end(PackDelim, start),
                 // Stack and trace
                 "?" => {
                     let mut n = 0;

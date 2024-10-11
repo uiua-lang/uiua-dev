@@ -1043,7 +1043,13 @@ impl<'a> Formatter<'a> {
                             self.newline(depth + (!lines.is_empty()) as usize);
                         }
                     } else {
-                        self.output.push('|');
+                        self.output.push(if i == 0 {
+                            '╷'
+                        } else if i == pack.branches.len() - 1 {
+                            '╵'
+                        } else {
+                            '│'
+                        });
                         if any_multiline {
                             self.output.push(' ');
                         }

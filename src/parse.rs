@@ -1076,7 +1076,10 @@ impl<'i> Parser<'i> {
             let first = self.func_contents();
             // Try to match pack branches
             let mut branches = Vec::new();
-            while let Some(start) = self.try_exact(Bar.into()) {
+            while let Some(start) = self
+                .try_exact(Bar.into())
+                .or_else(|| self.try_exact(PackDelim))
+            {
                 let (signature, lines, span) = self.func_contents();
                 let span = if let Some(span) = span {
                     start.merge(span)
