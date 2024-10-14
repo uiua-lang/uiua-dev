@@ -1514,7 +1514,7 @@ pub fn is_ident_char(c: char) -> bool {
 
 /// Whether a character can be among the first characters of a Uiua identifier
 pub fn is_ident_start(c: char) -> bool {
-    c.is_alphabetic() && !"ⁿₙπτηℂ".contains(c)
+    c.is_alphabetic() && !"ⁿₙπτηℂꕕ".contains(c)
 }
 
 fn subscript_num(s: &str) -> Option<usize> {

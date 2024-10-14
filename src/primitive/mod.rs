@@ -485,6 +485,10 @@ impl Primitive {
                 "use new {} instead, which has its arguments flipped",
                 MemberOf.format()
             ),
+            IndexOf => format!(
+                "use new {} instead, which has its arguments flipped",
+                IndexIn.format()
+            ),
             Coordinate => format!(
                 "use {} {} {} instead",
                 First.format(),
@@ -764,6 +768,7 @@ impl Primitive {
             Primitive::Find => env.dyadic_rr_env(Value::find)?,
             Primitive::Mask => env.dyadic_rr_env(Value::mask)?,
             Primitive::IndexOf => env.dyadic_rr_env(Value::index_of)?,
+            Primitive::IndexIn => env.dyadic_rr_env(|a, b, env| b.index_of(a, env))?,
             Primitive::Coordinate => env.dyadic_rr_env(Value::coordinate)?,
             Primitive::Choose => {
                 env.dyadic_rr_env(|k, val, env| k.choose(val, false, false, env))?

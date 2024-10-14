@@ -1800,7 +1800,9 @@ fn prim_sig_class(prim: Primitive, sig: Option<Signature>) -> &'static str {
         Primitive::Identity => code_font!("stack-function"),
         Primitive::Transpose => code_font!("monadic-function trans text-gradient"),
         Primitive::Both => code_font!("monadic-modifier bi text-gradient"),
-        Primitive::Member => code_font!("dyadic-function caution text-gradient"),
+        Primitive::Member | Primitive::IndexOf => {
+            code_font!("dyadic-function caution text-gradient")
+        }
         Primitive::Couple => match sig.map(|sig| sig.args) {
             None | Some(2) => code_font!("dyadic-function"),
             Some(0) => code_font!("monadic-function aroace text-gradient"),

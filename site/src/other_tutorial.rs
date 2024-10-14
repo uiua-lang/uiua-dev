@@ -201,7 +201,7 @@ pub fn Documentation() -> impl IntoView {
         <p>"Hover over any of the instances of the name "<code>"Avg"</code>" in the example below to see the documentation."</p>
         <Editor example="# Get the average of an array\nAvg ← ÷⧻⟜/+\nAvg [1 2 7 6]"/>
         <p>"Multiple lines of documentation can be written by using multiple comments."</p>
-        <Editor example="# Remove the first instance of one array from another\n# The first array must be one rank lower than the second\nRemFirst ← ⍜↻(↘1)⊗⊙.\nRemFirst 1_2 [3_5 1_2 0_2 1_2]"/>
+        <Editor example="# Remove the first instance of one array from another\n# The first array must be one rank lower than the second\nRemFirst ← ⍜↻(↘1)ꕕ:\nRemFirst 1_2 [3_5 1_2 0_2 1_2]"/>
         <p>"If both your binding code and your documentation are short, you can write them on the same line."</p>
         <Editor example="Avg ← ÷⧻⟜/+ # Average of an array\nAvg [1_2 3_4 5_9]"/>
         <p>"If you start a line in a comment with "<code>"?"</code>", subsequent words will be interpreted as argument names."</p>
