@@ -6,6 +6,7 @@ use std::{
 
 use ecow::{EcoString, EcoVec};
 use enum_iterator::Sequence;
+use paste::paste;
 use serde::*;
 
 use crate::{
@@ -18,28 +19,32 @@ use crate::{
 };
 
 macro_rules! instr {
-    ($(
-        $(#[$attr:meta])*
-        (
-            $num:literal,
-            $name:ident
-            $(($($tup_name:ident($tup_type:ty)),* $(,)?))?
-            $({$($field_name:ident : $field_type:ty),* $(,)?})?
-        )
-    ),* $(,)?) => {
+    (
+        $enum_name:ident,
+        $rep_name:literal,
+        $(
+            $(#[$attr:meta])*
+            (
+                $num:literal,
+                $name:ident
+                $(($($tup_name:ident($tup_type:ty)),* $(,)?))?
+                $({$($field_name:ident : $field_type:ty),* $(,)?})?
+            )
+        ),*
+    $(,)?) => {
         /// A Uiua bytecode instruction
         #[derive(Clone, Serialize, Deserialize)]
         #[repr(u8)]
         #[allow(missing_docs)]
-        #[serde(from = "InstrRep", into = "InstrRep")]
-        pub enum Instr {
+        #[serde(from = $rep_name, into = $rep_name)]
+        pub enum $enum_name {
             $(
                 $(#[$attr])*
                 $name $(($($tup_type),*))? $({$($field_name : $field_type),*})? = $num,
             )*
         }
 
-        impl PartialEq for Instr {
+        impl PartialEq for $enum_name {
             #[allow(unused_variables)]
             fn eq(&self, other: &Self) -> bool {
                 let mut hasher = DefaultHasher::new();
@@ -52,9 +57,9 @@ macro_rules! instr {
             }
         }
 
-        impl Eq for Instr {}
+        impl Eq for $enum_name {}
 
-        impl Hash for Instr {
+        impl Hash for $enum_name {
             #[allow(unused_variables)]
             fn hash<H: Hasher>(&self, state: &mut H) {
                 macro_rules! hash_field {
@@ -73,38 +78,41 @@ macro_rules! instr {
             }
         }
 
-        #[derive(Serialize, Deserialize)]
-        pub(crate) enum InstrRep {
-            $(
-                $name(
-                    $($($tup_type),*)?
-                    $($($field_type),*)?
-                ),
-            )*
-        }
+        paste! {
+            #[derive(Serialize, Deserialize)]
+            pub(crate) enum [<$enum_name Rep>] {
+                $(
+                    $name(
+                        $($($tup_type),*)?
+                        $($($field_type),*)?
+                    ),
+                )*
+            }
 
-        impl From<InstrRep> for Instr {
-            fn from(rep: InstrRep) -> Self {
-                match rep {
-                    $(
-                        InstrRep::$name (
-                            $($($tup_name,)*)?
-                            $($($field_name,)*)?
-                        ) => Self::$name $(($($tup_name),*))? $({$($field_name),*})?,
-                    )*
+            impl From<[<$enum_name Rep>]> for $enum_name {
+                fn from(rep: [<$enum_name Rep>]) -> Self {
+                    match rep {
+                        $(
+                            [<$enum_name Rep>]::$name (
+                                $($($tup_name,)*)?
+                                $($($field_name,)*)?
+                            ) => Self::$name $(($($tup_name),*))? $({$($field_name),*})?,
+                        )*
+                    }
                 }
             }
-        }
 
-        impl From<Instr> for InstrRep {
-            fn from(instr: Instr) -> Self {
-                match instr {
-                    $(
-                        Instr::$name $(($($tup_name),*))? $({$($field_name),*})? => InstrRep::$name (
-                            $($($tup_name),*)?
-                            $($($field_name),*)?
-                        ),
-                    )*
+            impl From<$enum_name> for [<$enum_name Rep>] {
+                fn from(instr: $enum_name) -> Self {
+                    match instr {
+                        $(
+                            $enum_name::$name $(($($tup_name),*))? $({$($field_name),*})? =>
+                                [<$enum_name Rep>]::$name (
+                                    $($($tup_name),*)?
+                                    $($($field_name),*)?
+                                ),
+                        )*
+                    }
                 }
             }
         }
@@ -112,6 +120,8 @@ macro_rules! instr {
 }
 
 instr!(
+    Instr,
+    "InstrRep",
     (0, Comment(text(Ident))),
     (1, Push(val(Value))),
     (
@@ -551,3 +561,119 @@ impl fmt::Display for Instr {
         }
     }
 }
+
+instr!(
+    Ir,
+    "IrRep",
+    (1, Push(val(Value))),
+    (
+        2,
+        CallGlobal {
+            index: usize,
+            call: bool,
+            sig: Signature,
+        }
+    ),
+    (
+        3,
+        BindGlobal {
+            index: usize,
+            span: usize,
+        }
+    ),
+    (4, BeginArray),
+    (
+        5,
+        EndArray {
+            boxed: bool,
+            span: usize,
+        }
+    ),
+    (6, Prim(prim(Primitive), span(usize))),
+    (7, ImplPrim(prim(ImplPrimitive), span(usize))),
+    (8, Call(span(usize))),
+    (11, PushFunc(func(Function))),
+    (
+        12,
+        Switch {
+            count: usize,
+            sig: Signature,
+            under_cond: bool,
+            span: usize,
+        }
+    ),
+    (
+        13,
+        Format {
+            parts: FmtParts,
+            span: usize,
+        }
+    ),
+    (
+        14,
+        MatchFormatPattern {
+            parts: FmtParts,
+            span: usize,
+        }
+    ),
+    (
+        15,
+        Label {
+            label: EcoString,
+            remove: bool,
+            span: usize,
+        }
+    ),
+    (
+        16,
+        ValidateType {
+            index: usize,
+            type_num: u8,
+            name: EcoString,
+            span: usize,
+        }
+    ),
+    (17, Dynamic(func(DynamicFunction))),
+    (
+        18,
+        Unpack {
+            count: usize,
+            unbox: bool,
+            span: usize,
+        }
+    ),
+    (
+        19,
+        TouchStack {
+            count: usize,
+            span: usize,
+        }
+    ),
+    (
+        20,
+        PushTemp {
+            stack: TempStack,
+            count: usize,
+            span: usize,
+        }
+    ),
+    (
+        21,
+        PopTemp {
+            stack: TempStack,
+            count: usize,
+            span: usize,
+        }
+    ),
+    (
+        22,
+        CopyToTemp {
+            stack: TempStack,
+            count: usize,
+            span: usize,
+        }
+    ),
+    (23, SetOutputComment { i: usize, n: usize }),
+    /// Call a function with a custom inverse
+    (24, CustomInverse(cust(CustomInverse), span(usize))),
+);
