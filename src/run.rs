@@ -65,6 +65,8 @@ pub(crate) struct Runtime {
     pub(crate) execution_start: f64,
     /// The recursion limit
     recursion_limit: usize,
+    /// The array memory limit
+    pub(crate) array_memory_limit: usize,
     /// Whether the program was interrupted
     pub(crate) interrupted: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Whether to print the time taken to execute each instruction
@@ -216,6 +218,11 @@ impl Default for Runtime {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(100),
+            array_memory_limit: (if cfg!(target_arch = "wasm32") {
+                256
+            } else {
+                4096
+            }) * 1024usize.pow(2),
             interrupted: None,
             thread: ThisThread::default(),
             output_comments: HashMap::new(),
@@ -1049,7 +1056,7 @@ code:
         } else {
             let elems: usize = values.iter().map(Value::element_count).sum();
             let elem_size = values.first().map_or(size_of::<f64>(), Value::elem_size);
-            validate_size_impl(elem_size, [elems]).map_err(|e| self.error(e))?;
+            validate_size_impl(elem_size, [elems], self).map_err(|e| self.error(e))?;
             Value::from_row_values(values, self)?
         };
         if let Some(init) = initial_value {
@@ -1437,6 +1444,7 @@ code:
                 execution_limit: self.rt.execution_limit,
                 execution_start: self.rt.execution_start,
                 recursion_limit: self.rt.recursion_limit,
+                array_memory_limit: self.rt.array_memory_limit,
                 interrupted: self.rt.interrupted.clone(),
                 output_comments: HashMap::new(),
                 memo: self.rt.memo.clone(),

@@ -881,7 +881,7 @@ impl Primitive {
                 } else {
                     let mut rows: Vec<Value> = arr.into_rows().collect();
                     rows.shuffle(&mut SmallRng::seed_from_u64(seed));
-                    env.push(Value::from_row_values_infallible(rows));
+                    env.push(Value::from_row_values(rows, env)?);
                 }
             }
             Primitive::Tag => {

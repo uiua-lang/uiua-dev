@@ -101,16 +101,20 @@ impl fmt::Display for FillShapeError {
 }
 
 pub fn validate_size<T>(sizes: impl IntoIterator<Item = usize>, env: &Uiua) -> UiuaResult<usize> {
-    validate_size_of::<T>(sizes).map_err(|e| env.error(e))
+    validate_size_of::<T>(sizes, env).map_err(|e| env.error(e))
 }
 
-pub fn validate_size_of<T>(sizes: impl IntoIterator<Item = usize>) -> Result<usize, SizeError> {
-    validate_size_impl(size_of::<T>(), sizes)
+pub fn validate_size_of<T>(
+    sizes: impl IntoIterator<Item = usize>,
+    env: &Uiua,
+) -> Result<usize, SizeError> {
+    validate_size_impl(size_of::<T>(), sizes, env)
 }
 
 pub(crate) fn validate_size_impl(
     elem_size: usize,
     sizes: impl IntoIterator<Item = usize>,
+    env: &Uiua,
 ) -> Result<usize, SizeError> {
     let mut elements = 1.0;
     for size in sizes {
@@ -120,12 +124,7 @@ pub(crate) fn validate_size_impl(
         elements *= size as f64;
     }
     let size = elements * elem_size as f64;
-    let max_mega = if cfg!(target_arch = "wasm32") {
-        256
-    } else {
-        4096
-    };
-    if size > (max_mega * 1024usize.pow(2)) as f64 {
+    if size > env.rt.array_memory_limit as f64 {
         return Err(SizeError(elements));
     }
     Ok(elements as usize)
@@ -280,40 +279,36 @@ pub(crate) fn shape_prefixes_match(a: &[usize], b: &[usize]) -> bool {
     a.iter().zip(b).all(|(a, b)| a == b)
 }
 
-fn fill_value_shape<C>(
+fn fill_value_shape(
     val: &mut Value,
     target: &Shape,
     expand_fixed: bool,
-    ctx: &C,
-) -> Result<(), FillShapeError>
-where
-    C: FillContext,
-{
-    val.match_fill(ctx);
+    env: &Uiua,
+) -> Result<(), FillShapeError> {
+    val.match_fill(env);
     match val {
-        Value::Num(arr) => fill_array_shape(arr, target, expand_fixed, ctx),
-        Value::Byte(arr) => fill_array_shape(arr, target, expand_fixed, ctx),
-        Value::Complex(arr) => fill_array_shape(arr, target, expand_fixed, ctx),
-        Value::Char(arr) => fill_array_shape(arr, target, expand_fixed, ctx),
-        Value::Box(arr) => fill_array_shape(arr, target, expand_fixed, ctx),
+        Value::Num(arr) => fill_array_shape(arr, target, expand_fixed, env),
+        Value::Byte(arr) => fill_array_shape(arr, target, expand_fixed, env),
+        Value::Complex(arr) => fill_array_shape(arr, target, expand_fixed, env),
+        Value::Char(arr) => fill_array_shape(arr, target, expand_fixed, env),
+        Value::Box(arr) => fill_array_shape(arr, target, expand_fixed, env),
     }
 }
 
 /// The error is a tuple of the size of an array that would be too large and the error message
-fn fill_array_shape<T, C>(
+fn fill_array_shape<T>(
     arr: &mut Array<T>,
     target: &Shape,
     expand_fixed: bool,
-    ctx: &C,
+    env: &Uiua,
 ) -> Result<(), FillShapeError>
 where
     T: ArrayValue,
-    C: FillContext,
 {
     if shape_prefixes_match(&arr.shape, target) {
         return Ok(());
     }
-    if expand_fixed && arr.row_count() == 1 && ctx.scalar_fill::<T>().is_err() {
+    if expand_fixed && arr.row_count() == 1 && env.scalar_fill::<T>().is_err() {
         let mut fixes = (arr.shape.iter()).take_while(|&&dim| dim == 1).count();
         if fixes == arr.rank() {
             fixes = (fixes - 1).max(1)
@@ -325,11 +320,11 @@ where
             arr.shape.drain(..fixes);
             if target.len() >= fixes {
                 for &dim in target.iter().take(fixes).rev() {
-                    arr.reshape_scalar_integer(dim)?;
+                    arr.reshape_scalar_integer(dim, env)?;
                 }
             } else if arr.shape() == target {
                 for &dim in target.iter().cycle().take(fixes) {
-                    arr.reshape_scalar_integer(dim)?;
+                    arr.reshape_scalar_integer(dim, env)?;
                 }
             }
         }
@@ -341,7 +336,7 @@ where
     let target_row_count = target.first().copied().unwrap_or(1);
     let mut res = Ok(());
     match arr.row_count().cmp(&target_row_count) {
-        Ordering::Less => match ctx.scalar_fill() {
+        Ordering::Less => match env.scalar_fill() {
             Ok(fill) => {
                 let mut target_shape = arr.shape().to_vec();
                 target_shape[0] = target_row_count;
@@ -357,7 +352,7 @@ where
     }
     // Fill in missing dimensions
     match arr.rank().cmp(&target.len()) {
-        Ordering::Less => match ctx.scalar_fill() {
+        Ordering::Less => match env.scalar_fill() {
             Ok(fill) => {
                 let mut target_shape = arr.shape.clone();
                 target_shape.insert(0, target_row_count);
@@ -370,7 +365,7 @@ where
         Ordering::Equal => {
             let target_shape = max_shape(arr.shape(), target);
             if arr.shape() != *target_shape {
-                match ctx.scalar_fill() {
+                match env.scalar_fill() {
                     Ok(fill) => {
                         arr.fill_to_shape(&target_shape, fill);
                         res = Ok(());
@@ -386,34 +381,33 @@ where
     res
 }
 
-pub(crate) fn fill_value_shapes<C>(
+pub(crate) fn fill_value_shapes(
     a: &mut Value,
     b: &mut Value,
     expand_fixed: bool,
-    ctx: &C,
-) -> Result<(), C::Error>
-where
-    C: FillContext,
-{
-    let a_err = fill_value_shape(a, b.shape(), expand_fixed, ctx).err();
-    let b_err = fill_value_shape(b, a.shape(), expand_fixed, ctx).err();
+    env: &Uiua,
+) -> UiuaResult {
+    let a_err = fill_value_shape(a, b.shape(), expand_fixed, env).err();
+    let b_err = fill_value_shape(b, a.shape(), expand_fixed, env).err();
 
     if shape_prefixes_match(a.shape(), b.shape())
         || !expand_fixed && (a.shape().starts_with(&[1]) || b.shape().starts_with(&[1]))
     {
         Ok(())
     } else {
-        Err(C::fill_error(ctx.error(match (a_err, b_err) {
-            (Some(FillShapeError::Size(e)), _) | (_, Some(FillShapeError::Size(e))) => {
-                e.to_string()
-            }
-            (Some(e), _) | (_, Some(e)) => {
-                format!("Shapes {} and {} do not match{e}", a.shape(), b.shape())
-            }
-            (None, None) => {
-                format!("Shapes {} and {} do not match", a.shape(), b.shape())
-            }
-        })))
+        Err(env
+            .error(match (a_err, b_err) {
+                (Some(FillShapeError::Size(e)), _) | (_, Some(FillShapeError::Size(e))) => {
+                    e.to_string()
+                }
+                (Some(e), _) | (_, Some(e)) => {
+                    format!("Shapes {} and {} do not match{e}", a.shape(), b.shape())
+                }
+                (None, None) => {
+                    format!("Shapes {} and {} do not match", a.shape(), b.shape())
+                }
+            })
+            .fill())
     }
 }
 

@@ -544,7 +544,7 @@ impl<T: ArrayValue> Array<T> {
                     for row in self.rows().take(abs_taking) {
                         new_rows.push(row.take(sub_index, env)?);
                     }
-                    let mut arr = Array::from_row_arrays_infallible(new_rows);
+                    let mut arr = Array::from_row_arrays(new_rows, env)?;
                     // Extend with fill values if necessary
                     if abs_taking > arr.row_count() {
                         match fill {
@@ -580,7 +580,7 @@ impl<T: ArrayValue> Array<T> {
                     for row in self.rows().skip(start) {
                         new_rows.push(row.take(sub_index, env)?);
                     }
-                    let mut arr = Array::from_row_arrays_infallible(new_rows);
+                    let mut arr = Array::from_row_arrays(new_rows, env)?;
                     // Prepend with fill values if necessary
                     if abs_taking > arr.row_count() {
                         match fill {
@@ -1309,7 +1309,7 @@ impl<T: ArrayValue> Array<T> {
                         rows.push(into_row);
                     }
                 }
-                into = Array::from_row_arrays_infallible(rows);
+                into = Array::from_row_arrays(rows, env)?;
                 if into_rank == 0 {
                     into.shape = Shape::SCALAR;
                 }

@@ -957,8 +957,9 @@ pub trait SysBackend: Any + Send + Sync + 'static {
         name: &str,
         arg_tys: &[FfiType],
         args: &[Value],
-    ) -> Result<Value, String> {
-        Err("FFI is not supported in this environment".into())
+        env: &Uiua,
+    ) -> UiuaResult<Value> {
+        Err(env.error("FFI is not supported in this environment"))
     }
     /// Copy the data from a pointer into an array
     fn mem_copy(&self, ty: FfiType, ptr: *const (), len: usize) -> Result<Value, String> {
@@ -1732,7 +1733,7 @@ impl SysOp {
                 let args = env.pop(2)?;
                 let args: Vec<Value> = args.into_rows().map(Value::unpacked).collect();
                 let result = (env.rt.backend)
-                    .ffi(&file_name, result_ty, &name, &arg_tys, &args)
+                    .ffi(&file_name, result_ty, &name, &arg_tys, &args, env)
                     .map_err(|e| env.error(e))?;
                 env.push(result);
             }

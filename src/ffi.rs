@@ -231,7 +231,7 @@ mod enabled {
     use libffi::middle::*;
 
     use super::*;
-    use crate::{Array, Boxed, MetaPtr, Value};
+    use crate::{Array, Boxed, MetaPtr, Uiua, UiuaResult, Value};
 
     macro_rules! dbgln {
         ($($arg:tt)*) => {
@@ -254,15 +254,16 @@ mod enabled {
             name: &str,
             arg_tys: &[FfiType],
             args: &[Value],
-        ) -> Result<Value, String> {
+            env: &Uiua,
+        ) -> UiuaResult<Value> {
             dbgln!("call FFI function {name}");
             if !self.libraries.contains_key(file) {
-                let lib = unsafe { libloading::Library::new(file) }.map_err(|e| e.to_string())?;
+                let lib = unsafe { libloading::Library::new(file) }.map_err(|e| env.error(e))?;
                 self.libraries.insert(file.to_string(), lib);
             }
             let lib = self.libraries.get(file).unwrap();
             let fptr: libloading::Symbol<unsafe extern "C" fn()> =
-                unsafe { lib.get(name.as_bytes()) }.map_err(|e| e.to_string())?;
+                unsafe { lib.get(name.as_bytes()) }.map_err(|e| env.error(e))?;
 
             let mut cif_arg_tys = Vec::new();
             let mut bindings = FfiBindings::default();
@@ -276,7 +277,7 @@ mod enabled {
                     let j = i - lengths[..i].iter().filter(|l| l.is_some()).count();
                     let len = lengths
                         .get_mut(*len_index)
-                        .ok_or_else(|| format!("Invalid length index: {len_index}"))?;
+                        .ok_or_else(|| env.error(format!("Invalid length index: {len_index}")))?;
                     let arg = args.get(j);
                     *len = if let FfiType::Struct { .. } = &**inner {
                         arg.map(Value::row_count)
@@ -309,21 +310,31 @@ mod enabled {
                                 bindings.alloc_and_push_ptr_to(len as c_ulonglong)
                             }
                             _ => {
-                                return Err(format!("{arg_ty} is not a valid FFI type for lengths"))
+                                return Err(env.error(format!(
+                                    "{arg_ty} is not a valid FFI type for lengths"
+                                )))
                             }
                         },
-                        ty => return Err(format!("{ty} is not a valid FFI type for lengths")),
+                        ty => {
+                            return Err(
+                                env.error(format!("{ty} is not a valid FFI type for lengths"))
+                            )
+                        }
                     };
                 } else {
                     // Bind normal argument
-                    let arg = args.next().ok_or("Not enough arguments")?;
+                    let arg = args
+                        .next()
+                        .ok_or_else(|| env.error("Not enough arguments"))?;
                     dbgln!("bind {i} arg: {arg:?}");
                     dbgln!("  as {arg_ty}");
-                    bindings.bind_arg(i, arg_ty, arg)?;
+                    bindings
+                        .bind_arg(i, arg_ty, arg)
+                        .map_err(|e| env.error(e))?;
                 }
             }
             if args.next().is_some() {
-                return Err("Too many arguments".into());
+                return Err(env.error("Too many arguments"));
             }
 
             // Call and get return value
@@ -388,14 +399,14 @@ mod enabled {
                 FfiType::Ptr { inner, .. } => match &**inner {
                     FfiType::Char => unsafe {
                         let ptr = cif.call::<*const c_char>(fptr, &bindings.args);
-                        let s = CStr::from_ptr(ptr).to_str().map_err(|e| e.to_string())?;
+                        let s = CStr::from_ptr(ptr).to_str().map_err(|e| env.error(e))?;
                         results.push(Value::from(s))
                     },
                     FfiType::Struct { fields } => unsafe {
                         let ptr = cif.call::<*const u8>(fptr, &bindings.args);
                         let (size, _) = struct_fields_size_align(fields);
                         let slice = slice::from_raw_parts(ptr, size);
-                        results.push(bindings.struct_repr_to_value(slice, fields)?);
+                        results.push(bindings.struct_repr_to_value(slice, fields, env)?);
                         // Clean up the pointer's memory
                         drop(Vec::from_raw_parts(ptr as *mut u8, size, size));
                     },
@@ -412,9 +423,9 @@ mod enabled {
                     FfiType::Float => ret_ptr!(c_float),
                     FfiType::Double => ret_ptr!(c_double),
                     _ => {
-                        return Err(format!(
+                        return Err(env.error(format!(
                             "Invalid or unsupported FFI return type {return_ty}"
-                        ))
+                        )))
                     }
                 },
                 FfiType::List {
@@ -433,9 +444,9 @@ mod enabled {
                     FfiType::Float => ret_list!(c_float, len_index),
                     FfiType::Double => ret_list!(c_double, len_index),
                     _ => {
-                        return Err(format!(
+                        return Err(env.error(format!(
                             "Invalid or unsupported FFI return type {return_ty}"
-                        ))
+                        )))
                     }
                 },
                 FfiType::Struct { fields } => {
@@ -446,6 +457,7 @@ mod enabled {
                             bindings.struct_repr_to_value(
                                 &unsafe { cif.call::<[u8; $n]>(fptr, args) },
                                 fields,
+                                env,
                             )
                         };
                     }
@@ -467,7 +479,7 @@ mod enabled {
                         256 => call_ret_struct!(256)?,
                         384 => call_ret_struct!(384)?,
                         512 => call_ret_struct!(512)?,
-                        n => return Err(format!("Unsupported return struct size: {n}")),
+                        n => return Err(env.error(format!("Unsupported return struct size: {n}"))),
                     };
                     results.push(val);
                 }
@@ -523,7 +535,7 @@ mod enabled {
                         match &**inner {
                             FfiType::Char => unsafe {
                                 let ptr = bindings.get::<c_char>(i);
-                                let s = CStr::from_ptr(ptr).to_str().map_err(|e| e.to_string())?;
+                                let s = CStr::from_ptr(ptr).to_str().map_err(|e| env.error(e))?;
                                 results.push(Value::from(s))
                             },
                             FfiType::UChar => out_param_scalar!(c_uchar, i, u8),
@@ -539,7 +551,7 @@ mod enabled {
                             FfiType::Double => out_param_scalar!(c_double, i, f64),
                             FfiType::Struct { fields } => {
                                 let repr = bindings.get_repr(i);
-                                results.push(bindings.struct_repr_to_value(repr, fields)?);
+                                results.push(bindings.struct_repr_to_value(repr, fields, env)?);
                             }
                             FfiType::Ptr { inner, .. } => match &**inner {
                                 FfiType::Char => unsafe {
@@ -554,7 +566,7 @@ mod enabled {
                                     } else {
                                         let s = CStr::from_ptr(ptr)
                                             .to_str()
-                                            .map_err(|e| e.to_string())?;
+                                            .map_err(|e| env.error(e))?;
                                         Value::from(s)
                                     })
                                 },
@@ -575,9 +587,9 @@ mod enabled {
                                 }
                             },
                             _ => {
-                                return Err(format!(
+                                return Err(env.error(format!(
                                     "Invalid or unsupported FFI out parameter type {ty}"
-                                ))
+                                )))
                             }
                         }
                     }
@@ -602,23 +614,23 @@ mod enabled {
                             let len = *bindings.get::<c_int>(*len_index) as usize;
                             let repr = bindings.get_repr(i);
                             if len > 0 && repr.len() % len != 0 {
-                                return Err(format!(
+                                return Err(env.error(format!(
                                     "Invalid length for FFI out parameter {i}: {len}"
-                                ));
+                                )));
                             }
                             let mut rows = Vec::new();
                             for chunk in repr.chunks_exact(repr.len() / len) {
-                                rows.push(bindings.struct_repr_to_value(chunk, fields)?);
+                                rows.push(bindings.struct_repr_to_value(chunk, fields, env)?);
                             }
-                            let value = Value::from_row_values_infallible(rows);
+                            let value = Value::from_row_values(rows, env)?;
                             results.push(value);
                         }
                         _ => {
-                            return Err(format!(
+                            return Err(env.error(format!(
                                 "FFI parameter {i} has type {ty}, which is \
                                 invalid/unsupported as an out parameter. \
                                 If this is not an out parameter, annotate it as `const`."
-                            ))
+                            )))
                         }
                     },
                     _ => {}
@@ -1096,7 +1108,12 @@ mod enabled {
         }
         /// Convert a C-ABI-compatiable struct byte representation to a [`Value`]
         #[allow(clippy::only_used_in_recursion)]
-        fn struct_repr_to_value(&self, repr: &[u8], fields: &[FfiType]) -> Result<Value, String> {
+        fn struct_repr_to_value(
+            &self,
+            repr: &[u8],
+            fields: &[FfiType],
+            env: &Uiua,
+        ) -> UiuaResult<Value> {
             let mut rows: Vec<Value> = Vec::new();
             let mut offset = 0;
             for (i, field) in fields.iter().enumerate() {
@@ -1126,7 +1143,11 @@ mod enabled {
                     FfiType::Double => scalar!(c_double),
                     // Structs
                     FfiType::Struct { fields } => {
-                        rows.push(self.struct_repr_to_value(&repr[offset..offset + size], fields)?);
+                        rows.push(self.struct_repr_to_value(
+                            &repr[offset..offset + size],
+                            fields,
+                            env,
+                        )?);
                     }
                     // Pointers
                     FfiType::Ptr { inner, .. } => match &**inner {
@@ -1139,7 +1160,7 @@ mod enabled {
                                 transmute::<[u8; size_of::<*const c_char>()], *const c_char>(bytes)
                             };
                             let c_str = unsafe { CStr::from_ptr(ptr) };
-                            let s = c_str.to_str().map_err(|e| e.to_string())?;
+                            let s = c_str.to_str().map_err(|e| env.error(e))?;
                             rows.push(Value::from(s));
                         }
                         FfiType::Struct { fields } => {
@@ -1150,7 +1171,7 @@ mod enabled {
                             };
                             let (size, _) = struct_fields_size_align(fields);
                             let inner_repr = unsafe { slice::from_raw_parts(ptr, size) };
-                            rows.push(self.struct_repr_to_value(inner_repr, fields)?);
+                            rows.push(self.struct_repr_to_value(inner_repr, fields, env)?);
                         }
                         inner => {
                             let mut bytes: [u8; size_of::<*const u8>()] = Default::default();
@@ -1161,7 +1182,7 @@ mod enabled {
                             let (size, _) = inner.size_align();
                             let inner_repr = unsafe { slice::from_raw_parts(ptr, size) };
                             let mut row = self
-                                .struct_repr_to_value(inner_repr, slice::from_ref(inner))?
+                                .struct_repr_to_value(inner_repr, slice::from_ref(inner), env)?
                                 .into_rows()
                                 .next()
                                 .unwrap();
@@ -1169,28 +1190,26 @@ mod enabled {
                             rows.push(row);
                         }
                     },
-                    FfiType::Void => return Err("Cannot have void fields in a struct".into()),
+                    FfiType::Void => return Err(env.error("Cannot have void fields in a struct")),
                     _ => {
-                        return Err(format!(
+                        return Err(env.error(format!(
                             "Invalid or unsupported struct field {i} type {field}"
-                        ))
+                        )))
                     }
                 }
                 offset += size;
             }
-            Ok(
-                if fields.iter().all(|f| f.is_scalar() && fields[0] == *f)
-                    && rows.iter().all(|r| r.shape() == rows[0].shape())
-                {
-                    Value::from_row_values_infallible(rows)
-                } else {
-                    Array::new(
-                        rows.len(),
-                        rows.into_iter().map(Boxed).collect::<EcoVec<_>>(),
-                    )
-                    .into()
-                },
-            )
+            if fields.iter().all(|f| f.is_scalar() && fields[0] == *f)
+                && rows.iter().all(|r| r.shape() == rows[0].shape())
+            {
+                Value::from_row_values(rows, env)
+            } else {
+                Ok(Array::new(
+                    rows.len(),
+                    rows.into_iter().map(Boxed).collect::<EcoVec<_>>(),
+                )
+                .into())
+            }
         }
     }
 

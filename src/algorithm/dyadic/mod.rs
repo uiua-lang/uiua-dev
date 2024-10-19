@@ -215,7 +215,7 @@ impl<T: Clone> Array<T> {
                 if count < 0 {
                     self.reverse();
                 }
-                self.reshape_scalar_integer(count.unsigned_abs())
+                self.reshape_scalar_integer(count.unsigned_abs(), env)
                     .map_err(|e| env.error(e))
             }
             Err(rev) => {
@@ -226,13 +226,17 @@ impl<T: Clone> Array<T> {
             }
         }
     }
-    pub(crate) fn reshape_scalar_integer(&mut self, count: usize) -> Result<(), SizeError> {
+    pub(crate) fn reshape_scalar_integer(
+        &mut self,
+        count: usize,
+        env: &Uiua,
+    ) -> Result<(), SizeError> {
         if count == 0 {
             self.data.clear();
             self.shape.insert(0, 0);
             return Ok(());
         }
-        let elem_count = validate_size_of::<T>([count - 1, self.data.len()])?;
+        let elem_count = validate_size_of::<T>([count - 1, self.data.len()], env)?;
         self.data.reserve(elem_count);
         let row = self.data.to_vec();
         for _ in 1..count {
@@ -783,7 +787,7 @@ impl<T: ArrayValue> Array<T> {
                         rows.extend(from_row.into_rows());
                     }
                 }
-                into = Array::from_row_arrays_infallible(rows);
+                into = Array::from_row_arrays(rows, env)?;
             }
         }
         Ok(into)

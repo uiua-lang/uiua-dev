@@ -91,39 +91,24 @@ impl Value {
     /// `join` the array with another
     ///
     /// `allow_ext` allows extending one of the arrays if they have different shapes
-    pub fn join(self, other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
-        self.join_impl(other, allow_ext, env)
-    }
-    /// `join` the array with another
-    ///
-    /// # Panics
-    /// Panics if the arrays have incompatible shapes
-    pub fn join_infallible(self, other: Self, allow_ext: bool) -> Self {
-        self.join_impl(other, allow_ext, &()).unwrap()
-    }
-    fn join_impl<C: FillContext>(
-        mut self,
-        mut other: Self,
-        ext: bool,
-        ctx: &C,
-    ) -> Result<Self, C::Error> {
-        self.match_fill(ctx);
-        other.match_fill(ctx);
+    pub fn join(mut self, mut other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
+        self.match_fill(env);
+        other.match_fill(env);
         Ok(match (self, other) {
-            (Value::Num(a), Value::Num(b)) => a.join_impl(b, ext, ctx)?.into(),
-            (Value::Byte(a), Value::Byte(b)) => a.join_impl(b, ext, ctx)?.into(),
-            (Value::Complex(a), Value::Complex(b)) => a.join_impl(b, ext, ctx)?.into(),
-            (Value::Char(a), Value::Char(b)) => a.join_impl(b, ext, ctx)?.into(),
-            (Value::Byte(a), Value::Num(b)) => a.convert().join_impl(b, ext, ctx)?.into(),
-            (Value::Num(a), Value::Byte(b)) => a.join_impl(b.convert(), ext, ctx)?.into(),
-            (Value::Complex(a), Value::Num(b)) => a.join_impl(b.convert(), ext, ctx)?.into(),
-            (Value::Num(a), Value::Complex(b)) => a.convert().join_impl(b, ext, ctx)?.into(),
-            (Value::Complex(a), Value::Byte(b)) => a.join_impl(b.convert(), ext, ctx)?.into(),
-            (Value::Byte(a), Value::Complex(b)) => a.convert().join_impl(b, ext, ctx)?.into(),
+            (Value::Num(a), Value::Num(b)) => a.join(b, allow_ext, env)?.into(),
+            (Value::Byte(a), Value::Byte(b)) => a.join(b, allow_ext, env)?.into(),
+            (Value::Complex(a), Value::Complex(b)) => a.join(b, allow_ext, env)?.into(),
+            (Value::Char(a), Value::Char(b)) => a.join(b, allow_ext, env)?.into(),
+            (Value::Byte(a), Value::Num(b)) => a.convert().join(b, allow_ext, env)?.into(),
+            (Value::Num(a), Value::Byte(b)) => a.join(b.convert(), allow_ext, env)?.into(),
+            (Value::Complex(a), Value::Num(b)) => a.join(b.convert(), allow_ext, env)?.into(),
+            (Value::Num(a), Value::Complex(b)) => a.convert().join(b, allow_ext, env)?.into(),
+            (Value::Complex(a), Value::Byte(b)) => a.join(b.convert(), allow_ext, env)?.into(),
+            (Value::Byte(a), Value::Complex(b)) => a.convert().join(b, allow_ext, env)?.into(),
             (a, b) => a.bin_coerce_to_boxes(
                 b,
-                ctx,
-                |a, b, env| Ok(a.join_impl(b, ext, env)?.into()),
+                env,
+                |a, b, env| Ok(a.join(b, allow_ext, env)?.into()),
                 |a, b| format!("Cannot join {a} array and {b} array"),
             )?,
         })
@@ -210,22 +195,7 @@ impl Value {
 
 impl<T: ArrayValue> Array<T> {
     /// `join` the array with another
-    pub fn join(self, other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
-        self.join_impl(other, allow_ext, env)
-    }
-    /// `join` the array with another
-    ///
-    /// # Panics
-    /// Panics if the arrays have incompatible shapes
-    pub fn join_infallible(self, other: Self, allow_ext: bool) -> Self {
-        self.join_impl(other, allow_ext, &()).unwrap()
-    }
-    fn join_impl<C: FillContext>(
-        mut self,
-        mut other: Self,
-        allow_ext: bool,
-        ctx: &C,
-    ) -> Result<Self, C::Error> {
+    pub fn join(mut self, mut other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
         crate::profile_function!();
         let res = match self.rank().cmp(&other.rank()) {
             Ordering::Less => {
@@ -233,7 +203,7 @@ impl<T: ArrayValue> Array<T> {
                 if self.shape() == [0] {
                     return Ok(other);
                 }
-                let target_shape = match ctx.scalar_fill::<T>() {
+                let target_shape = match env.scalar_fill::<T>() {
                     Ok(fill) => {
                         let target_shape = max_shape(&self.shape, &other.shape);
                         let row_shape = &target_shape[1..];
@@ -244,23 +214,27 @@ impl<T: ArrayValue> Array<T> {
                     Err(e) => {
                         if allow_ext && other.shape.ends_with(&self.shape) {
                             for &b_dim in other.shape[1..other.rank() - self.rank()].iter().rev() {
-                                self.reshape_scalar_integer(b_dim)
-                                    .map_err(|e| ctx.error(e))?;
+                                self.reshape_scalar_integer(b_dim, env)
+                                    .map_err(|e| env.error(e))?;
                             }
                         } else {
                             if other.rank() - self.rank() > 1 {
-                                return Err(C::fill_error(ctx.error(format!(
-                                    "Cannot join rank {} array with rank {} array{e}",
-                                    self.rank(),
-                                    other.rank()
-                                ))));
+                                return Err(env
+                                    .error(format!(
+                                        "Cannot join rank {} array with rank {} array{e}",
+                                        self.rank(),
+                                        other.rank()
+                                    ))
+                                    .fill());
                             }
                             if self.shape() != other.shape()[1..] {
-                                return Err(C::fill_error(ctx.error(format!(
-                                    "Cannot join arrays of shapes {} and {}{e}",
-                                    self.shape(),
-                                    other.shape()
-                                ))));
+                                return Err(env
+                                    .error(format!(
+                                        "Cannot join arrays of shapes {} and {}{e}",
+                                        self.shape(),
+                                        other.shape()
+                                    ))
+                                    .fill());
                             }
                         }
                         other.shape
@@ -277,7 +251,7 @@ impl<T: ArrayValue> Array<T> {
                 if other.shape() == 0 {
                     return Ok(self);
                 }
-                self.append(other, allow_ext, ctx)?;
+                self.append(other, allow_ext, env)?;
                 self
             }
             Ordering::Equal => {
@@ -292,10 +266,10 @@ impl<T: ArrayValue> Array<T> {
                 } else {
                     let map_keys = self.take_map_keys().zip(other.take_map_keys());
                     if self.shape[1..] != other.shape[1..] {
-                        match ctx.scalar_fill::<T>() {
+                        match env.scalar_fill::<T>() {
                             Ok(fill) => {
                                 if map_keys.is_some() {
-                                    return Err(ctx.error(format!(
+                                    return Err(env.error(format!(
                                         "Cannot {} {} map arrays",
                                         Primitive::Fill,
                                         Primitive::Join
@@ -310,11 +284,13 @@ impl<T: ArrayValue> Array<T> {
                                 }
                             }
                             Err(e) => {
-                                return Err(C::fill_error(ctx.error(format!(
-                                    "Cannot join arrays of shapes {} and {}. {e}",
-                                    self.shape(),
-                                    other.shape()
-                                ))));
+                                return Err(env
+                                    .error(format!(
+                                        "Cannot join arrays of shapes {} and {}. {e}",
+                                        self.shape(),
+                                        other.shape()
+                                    ))
+                                    .fill());
                             }
                         }
                     }
@@ -341,7 +317,7 @@ impl<T: ArrayValue> Array<T> {
                     }
 
                     if let Some((mut a, b)) = map_keys {
-                        let mut to_remove = a.join(b, ctx)?;
+                        let mut to_remove = a.join(b, env)?;
                         to_remove.sort_unstable();
                         for i in to_remove.into_iter().rev() {
                             self.remove_row(i);
@@ -611,58 +587,30 @@ impl<T: ArrayValue> Array<T> {
 
 impl Value {
     /// `couple` the value with another
-    pub fn couple(mut self, other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
-        self.couple_impl(other, allow_ext, env)?;
-        Ok(self)
-    }
-    /// `couple` the value with another
-    ///
-    /// # Panics
-    /// Panics if the values have incompatible shapes
-    pub fn couple_infallible(mut self, other: Self, allow_ext: bool) -> Self {
-        self.couple_impl(other, allow_ext, &()).unwrap();
-        self
-    }
-    pub(crate) fn couple_impl<C: FillContext>(
-        &mut self,
-        mut other: Self,
-        allow_ext: bool,
-        ctx: &C,
-    ) -> Result<(), C::Error> {
-        self.match_fill(ctx);
-        other.match_fill(ctx);
-        match (&mut *self, other) {
-            (Value::Num(a), Value::Num(b)) => a.couple_impl(b, allow_ext, ctx)?,
-            (Value::Byte(a), Value::Byte(b)) => a.couple_impl(b, allow_ext, ctx)?,
-            (Value::Complex(a), Value::Complex(b)) => a.couple_impl(b, allow_ext, ctx)?,
-            (Value::Char(a), Value::Char(b)) => a.couple_impl(b, allow_ext, ctx)?,
-            (Value::Box(a), Value::Box(b)) => a.couple_impl(b, allow_ext, ctx)?,
-            (Value::Num(a), Value::Byte(b)) => a.couple_impl(b.convert(), allow_ext, ctx)?,
-            (Value::Byte(a), Value::Num(b)) => {
-                let mut a = a.convert_ref();
-                a.couple_impl(b, allow_ext, ctx)?;
-                *self = a.into();
-            }
-            (Value::Complex(a), Value::Num(b)) => a.couple_impl(b.convert(), allow_ext, ctx)?,
-            (Value::Num(a), Value::Complex(b)) => {
-                let mut a = a.convert_ref();
-                a.couple_impl(b, allow_ext, ctx)?;
-                *self = a.into();
-            }
-            (Value::Complex(a), Value::Byte(b)) => a.couple_impl(b.convert(), allow_ext, ctx)?,
-            (Value::Byte(a), Value::Complex(b)) => {
-                let mut a = a.convert_ref();
-                a.couple_impl(b, allow_ext, ctx)?;
-                *self = a.into();
-            }
-            (a, b) => a.bin_coerce_to_boxes_mut(
-                b,
-                ctx,
-                |a, b, ctx| a.couple_impl(b, allow_ext, ctx),
-                |a, b| format!("Cannot couple {a} array with {b} array"),
-            )?,
-        }
-        Ok(())
+    pub fn couple(mut self, mut other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
+        self.match_fill(env);
+        other.match_fill(env);
+        Ok(match (self, other) {
+            (Value::Num(a), Value::Num(b)) => a.couple(b, allow_ext, env)?.into(),
+            (Value::Byte(a), Value::Byte(b)) => a.couple(b, allow_ext, env)?.into(),
+            (Value::Complex(a), Value::Complex(b)) => a.couple(b, allow_ext, env)?.into(),
+            (Value::Char(a), Value::Char(b)) => a.couple(b, allow_ext, env)?.into(),
+            (Value::Box(a), Value::Box(b)) => a.couple(b, allow_ext, env)?.into(),
+            (Value::Num(a), Value::Byte(b)) => a.couple(b.convert(), allow_ext, env)?.into(),
+            (Value::Byte(a), Value::Num(b)) => a.convert().couple(b, allow_ext, env)?.into(),
+            (Value::Complex(a), Value::Num(b)) => a.couple(b.convert(), allow_ext, env)?.into(),
+            (Value::Num(a), Value::Complex(b)) => a.convert().couple(b, allow_ext, env)?.into(),
+            (Value::Complex(a), Value::Byte(b)) => a.couple(b.convert(), allow_ext, env)?.into(),
+            (Value::Byte(a), Value::Complex(b)) => a.convert().couple(b, allow_ext, env)?.into(),
+            (a, b) => a
+                .bin_coerce_to_boxes(
+                    b,
+                    env,
+                    |a, b, env| a.couple(b, allow_ext, env),
+                    |a, b| format!("Cannot couple {a} array with {b} array"),
+                )?
+                .into(),
+        })
     }
     /// Uncouple the value into two values
     pub fn uncouple(self, env: &Uiua) -> UiuaResult<(Self, Self)> {
@@ -677,24 +625,7 @@ impl Value {
 
 impl<T: ArrayValue> Array<T> {
     /// `couple` the array with another
-    pub fn couple(mut self, other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
-        self.couple_impl(other, allow_ext, env)?;
-        Ok(self)
-    }
-    /// `couple` the array with another
-    ///
-    /// # Panics
-    /// Panics if the arrays have incompatible shapes
-    pub fn couple_infallible(mut self, other: Self, allow_ext: bool) -> Self {
-        self.couple_impl(other, allow_ext, &()).unwrap();
-        self
-    }
-    fn couple_impl<C: FillContext>(
-        &mut self,
-        mut other: Self,
-        allow_ext: bool,
-        ctx: &C,
-    ) -> Result<(), C::Error> {
+    pub fn couple(mut self, mut other: Self, allow_ext: bool, env: &Uiua) -> UiuaResult<Self> {
         crate::profile_function!();
         self.combine_meta(other.meta());
         match (self.take_label(), other.take_label()) {
@@ -706,7 +637,7 @@ impl<T: ArrayValue> Array<T> {
             (None, None) => {}
         }
         if self.shape != other.shape {
-            match ctx.scalar_fill::<T>() {
+            match env.scalar_fill::<T>() {
                 Ok(fill) => {
                     let new_shape = max_shape(&self.shape, &other.shape);
                     self.fill_to_shape(&new_shape, fill.clone());
@@ -714,23 +645,25 @@ impl<T: ArrayValue> Array<T> {
                 }
                 Err(e) => {
                     let err = || {
-                        Err(C::fill_error(ctx.error(format!(
-                            "Cannot couple arrays with shapes {} and {}{e}",
-                            self.shape(),
-                            other.shape()
-                        ))))
+                        Err(env
+                            .error(format!(
+                                "Cannot couple arrays with shapes {} and {}{e}",
+                                self.shape(),
+                                other.shape()
+                            ))
+                            .fill())
                     };
                     if allow_ext {
                         if self.shape.ends_with(&other.shape) {
                             for &a_dim in self.shape[0..self.rank() - other.rank()].iter().rev() {
                                 other
-                                    .reshape_scalar_integer(a_dim)
-                                    .map_err(|e| ctx.error(e))?;
+                                    .reshape_scalar_integer(a_dim, env)
+                                    .map_err(|e| env.error(e))?;
                             }
                         } else if other.shape.ends_with(&self.shape) {
                             for &b_dim in other.shape[0..other.rank() - self.rank()].iter().rev() {
-                                self.reshape_scalar_integer(b_dim)
-                                    .map_err(|e| ctx.error(e))?;
+                                self.reshape_scalar_integer(b_dim, env)
+                                    .map_err(|e| env.error(e))?;
                             }
                         } else {
                             return err();
@@ -744,7 +677,7 @@ impl<T: ArrayValue> Array<T> {
         self.data.extend_from_cowslice(other.data);
         self.shape.insert(0, 2);
         self.validate_shape();
-        Ok(())
+        Ok(self)
     }
     /// Uncouple the array into two arrays
     pub fn uncouple(self, env: &Uiua) -> UiuaResult<(Self, Self)> {
@@ -800,20 +733,9 @@ impl<T: ArrayValue> Array<T> {
 
 impl Value {
     /// Create a value from row values
-    ///
-    /// # Panics
-    /// Panics if the row values have incompatible shapes
-    pub fn from_row_values_infallible<V>(values: V) -> Self
+    pub fn from_row_values<V>(values: V, env: &Uiua) -> UiuaResult<Self>
     where
         V: Indexable<Item = Value>,
-    {
-        Self::from_row_values(values, &()).unwrap()
-    }
-    /// Create a value from row values
-    pub fn from_row_values<V, C>(values: V, ctx: &C) -> Result<Self, C::Error>
-    where
-        V: Indexable<Item = Value>,
-        C: FillContext,
     {
         fn max_shape(a: Shape, b: &Shape) -> Shape {
             if a.starts_with(b) {
@@ -853,7 +775,7 @@ impl Value {
                         Value::Complex(_) => has_complex = true,
                         Value::Box(arr) => box_rank = box_rank.max(Some(arr.rank())),
                         Value::Char(_) => {
-                            return Err(ctx.error("Cannot combine number and character arrays"))
+                            return Err(env.error("Cannot combine number and character arrays"))
                         }
                         _ => {}
                     }
@@ -881,7 +803,7 @@ impl Value {
                         Value::Complex(_) => has_complex = true,
                         Value::Box(arr) => box_rank = box_rank.max(Some(arr.rank())),
                         Value::Char(_) => {
-                            return Err(ctx.error("Cannot combine number and character arrays"))
+                            return Err(env.error("Cannot combine number and character arrays"))
                         }
                         _ => {}
                     }
@@ -907,7 +829,7 @@ impl Value {
                     match b {
                         Value::Box(arr) => box_rank = box_rank.max(Some(arr.rank())),
                         Value::Char(_) => {
-                            return Err(ctx.error("Cannot combine complex and character arrays"))
+                            return Err(env.error("Cannot combine complex and character arrays"))
                         }
                         _ => {}
                     }
@@ -929,10 +851,10 @@ impl Value {
                     match b {
                         Value::Box(arr) => box_rank = box_rank.max(Some(arr.rank())),
                         Value::Num(_) | Value::Byte(_) => {
-                            return Err(ctx.error("Cannot combine character and number arrays"))
+                            return Err(env.error("Cannot combine character and number arrays"))
                         }
                         Value::Complex(_) => {
-                            return Err(ctx.error("Cannot combine character and complex arrays"))
+                            return Err(env.error("Cannot combine character and complex arrays"))
                         }
                         _ => {}
                     }
@@ -955,52 +877,62 @@ impl Value {
         };
 
         // Fill value
-        value.match_fill(ctx);
+        value.match_fill(env);
         if value.shape() != &max_shape {
             match &mut value {
-                Value::Num(arr) => match ctx.scalar_fill::<f64>() {
+                Value::Num(arr) => match env.scalar_fill::<f64>() {
                     Ok(fill) => arr.fill_to_shape(&max_shape, fill),
                     Err(e) => {
-                        return Err(C::fill_error(ctx.error(format!(
-                            "Cannot combine arrays with shapes {} and {max_shape}{e}",
-                            arr.shape()
-                        ))))
+                        return Err(env
+                            .error(format!(
+                                "Cannot combine arrays with shapes {} and {max_shape}{e}",
+                                arr.shape()
+                            ))
+                            .fill())
                     }
                 },
-                Value::Byte(arr) => match ctx.scalar_fill::<u8>() {
+                Value::Byte(arr) => match env.scalar_fill::<u8>() {
                     Ok(fill) => arr.fill_to_shape(&max_shape, fill),
                     Err(e) => {
-                        return Err(C::fill_error(ctx.error(format!(
-                            "Cannot combine arrays with shapes {} and {max_shape}{e}",
-                            arr.shape()
-                        ))))
+                        return Err(env
+                            .error(format!(
+                                "Cannot combine arrays with shapes {} and {max_shape}{e}",
+                                arr.shape()
+                            ))
+                            .fill())
                     }
                 },
-                Value::Complex(arr) => match ctx.scalar_fill::<Complex>() {
+                Value::Complex(arr) => match env.scalar_fill::<Complex>() {
                     Ok(fill) => arr.fill_to_shape(&max_shape, fill),
                     Err(e) => {
-                        return Err(C::fill_error(ctx.error(format!(
-                            "Cannot combine arrays with shapes {} and {max_shape}{e}",
-                            arr.shape()
-                        ))))
+                        return Err(env
+                            .error(format!(
+                                "Cannot combine arrays with shapes {} and {max_shape}{e}",
+                                arr.shape()
+                            ))
+                            .fill())
                     }
                 },
-                Value::Char(arr) => match ctx.scalar_fill::<char>() {
+                Value::Char(arr) => match env.scalar_fill::<char>() {
                     Ok(fill) => arr.fill_to_shape(&max_shape, fill),
                     Err(e) => {
-                        return Err(C::fill_error(ctx.error(format!(
-                            "Cannot combine arrays with shapes {} and {max_shape}{e}",
-                            arr.shape()
-                        ))))
+                        return Err(env
+                            .error(format!(
+                                "Cannot combine arrays with shapes {} and {max_shape}{e}",
+                                arr.shape()
+                            ))
+                            .fill())
                     }
                 },
-                Value::Box(arr) => match ctx.scalar_fill::<Boxed>() {
+                Value::Box(arr) => match env.scalar_fill::<Boxed>() {
                     Ok(fill) => arr.fill_to_shape(&max_shape, fill),
                     Err(e) => {
-                        return Err(C::fill_error(ctx.error(format!(
-                            "Cannot combine arrays with shapes {} and {max_shape}{e}",
-                            arr.shape()
-                        ))))
+                        return Err(env
+                            .error(format!(
+                                "Cannot combine arrays with shapes {} and {max_shape}{e}",
+                                arr.shape()
+                            ))
+                            .fill())
                     }
                 },
             }
@@ -1010,8 +942,9 @@ impl Value {
         let total_elements = validate_size_impl(
             value.elem_size(),
             value.shape().iter().copied().chain([to_reserve]),
+            env,
         )
-        .map_err(|e| ctx.error(e))?;
+        .map_err(|e| env.error(e))?;
         value.reserve_min(total_elements);
 
         // Combine the arrays
@@ -1020,8 +953,8 @@ impl Value {
             Value::Num(mut a) => {
                 for val in row_values {
                     match val {
-                        Value::Num(b) => a.append(b, false, ctx)?,
-                        Value::Byte(b) => a.append(b.convert(), false, ctx)?,
+                        Value::Num(b) => a.append(b, false, env)?,
+                        Value::Byte(b) => a.append(b.convert(), false, env)?,
                         _ => unreachable!(),
                     }
                 }
@@ -1030,7 +963,7 @@ impl Value {
             Value::Byte(mut a) => {
                 for val in row_values {
                     match val {
-                        Value::Byte(b) => a.append(b, false, ctx)?,
+                        Value::Byte(b) => a.append(b, false, env)?,
                         _ => unreachable!(),
                     }
                 }
@@ -1039,9 +972,9 @@ impl Value {
             Value::Complex(mut a) => {
                 for val in row_values {
                     match val {
-                        Value::Num(b) => a.append(b.convert(), false, ctx)?,
-                        Value::Byte(b) => a.append(b.convert(), false, ctx)?,
-                        Value::Complex(b) => a.append(b, false, ctx)?,
+                        Value::Num(b) => a.append(b.convert(), false, env)?,
+                        Value::Byte(b) => a.append(b.convert(), false, env)?,
+                        Value::Complex(b) => a.append(b, false, env)?,
                         _ => unreachable!(),
                     }
                 }
@@ -1050,7 +983,7 @@ impl Value {
             Value::Char(mut a) => {
                 for val in row_values {
                     match val {
-                        Value::Char(b) => a.append(b, false, ctx)?,
+                        Value::Char(b) => a.append(b, false, env)?,
                         _ => unreachable!(),
                     }
                 }
@@ -1059,8 +992,8 @@ impl Value {
             Value::Box(mut a) => {
                 for val in row_values {
                     match val {
-                        Value::Box(b) => a.append(b, false, ctx)?,
-                        val => a.append(val.box_depth(a.rank()), false, ctx)?,
+                        Value::Box(b) => a.append(b, false, env)?,
+                        val => a.append(val.box_depth(a.rank()), false, env)?,
                     }
                 }
                 a.into()
@@ -1077,27 +1010,6 @@ impl<T: ArrayValue> Array<T> {
         V: IntoIterator<Item = Self>,
         V::IntoIter: ExactSizeIterator,
     {
-        Self::from_row_arrays_impl(values, env)
-    }
-    #[track_caller]
-    /// Create an array from row arrays
-    ///
-    /// # Panics
-    /// Panics if the row arrays have incompatible shapes
-    pub fn from_row_arrays_infallible<V>(values: V) -> Self
-    where
-        V: IntoIterator<Item = Self>,
-        V::IntoIter: ExactSizeIterator,
-    {
-        Self::from_row_arrays_impl(values, &()).unwrap()
-    }
-    #[track_caller]
-    fn from_row_arrays_impl<V, C>(values: V, ctx: &C) -> Result<Self, C::Error>
-    where
-        V: IntoIterator<Item = Self>,
-        V::IntoIter: ExactSizeIterator,
-        C: FillContext,
-    {
         let mut row_values = values.into_iter();
         let total_rows = row_values.len();
         let Some(mut arr) = row_values.next() else {
@@ -1106,9 +1018,9 @@ impl<T: ArrayValue> Array<T> {
         if let Some(row) = row_values.next() {
             let total_elements = total_rows * arr.shape().iter().product::<usize>();
             arr.data.reserve_min(total_elements);
-            arr.couple_impl(row, false, ctx)?;
+            arr = arr.couple(row, false, env)?;
             for row in row_values {
-                arr.append(row, false, ctx)?;
+                arr.append(row, false, env)?;
             }
         } else {
             arr.shape.insert(0, 1);

@@ -1021,10 +1021,11 @@ impl SysBackend for NativeSys {
         name: &str,
         arg_tys: &[crate::FfiType],
         arg_values: &[crate::Value],
-    ) -> Result<crate::Value, String> {
+        env: &crate::Uiua,
+    ) -> crate::UiuaResult<crate::Value> {
         NATIVE_SYS
             .ffi
-            .do_ffi(file, return_ty, name, arg_tys, arg_values)
+            .do_ffi(file, return_ty, name, arg_tys, arg_values, env)
     }
     #[cfg(feature = "ffi")]
     fn mem_copy(

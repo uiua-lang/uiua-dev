@@ -192,7 +192,7 @@ fn repeat_impl(f: Function, inv: Option<Function>, n: f64, env: &mut Uiua) -> Ui
         let n = n as usize;
         if sig.outputs > sig.args {
             let delta = sig.outputs - sig.args;
-            if validate_size_impl(size_of::<Value>(), [n, delta]).is_err() {
+            if validate_size_impl(size_of::<Value>(), [n, delta], env).is_err() {
                 return Err(env.error(format!(
                     "{} would create too many values on the stack",
                     Primitive::Repeat.format()

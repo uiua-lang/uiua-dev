@@ -1358,8 +1358,8 @@ impl<'a> From<&'a str> for Value {
 
 impl<'a> From<&'a [&str]> for Value {
     fn from(s: &'a [&str]) -> Self {
-        Value::from(Array::<Boxed>::from_row_arrays_infallible(
-            s.iter().map(|&s| Boxed(Value::from(s)).into()),
+        Value::from(Array::<Boxed>::from_iter(
+            s.iter().map(|&s| Boxed(Value::from(s))),
         ))
     }
 }
