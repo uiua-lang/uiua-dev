@@ -7,6 +7,7 @@ use std::{
     cmp::Ordering,
     collections::{hash_map::DefaultHasher, BTreeSet, HashMap, HashSet, VecDeque},
     env::current_dir,
+    f64::consts::E,
     fmt, fs,
     hash::{Hash, Hasher},
     iter::{once, repeat},
@@ -1675,13 +1676,20 @@ code:
             }
         } else if let Some(local) = self.find_name(&r.name.value, r.in_macro_arg) {
             Ok(Some((Vec::new(), local)))
-        } else if r.path.is_empty() && CONSTANTS.iter().any(|def| def.name == r.name.value) {
-            Ok(None)
         } else {
-            Err(self.fatal_error(
-                r.name.span.clone(),
-                format!("Unknown identifier `{}`", r.name.value),
-            ))
+            match r.path.as_slice() {
+                [] if CONSTANTS.iter().any(|def| def.name == r.name.value) => Ok(None),
+                [m] if CONSTANTS.iter().any(|def| def.name == m.value) => {
+                    let m = CONSTANTS.iter().find(|def| def.name == m.value).unwrap();
+                    match m.value.resolve(self.scope_file_path(), &*self.backend()) {
+                        Ok(_val) => return E,
+                    }
+                }
+                _ => Err(self.fatal_error(
+                    r.name.span.clone(),
+                    format!("Unknown identifier `{}`", r.name.value),
+                )),
+            }
         }
     }
     fn find_name(&self, name: &str, skip_local: bool) -> Option<LocalName> {
@@ -1853,11 +1861,16 @@ code:
             self.global_index(local.index, span, call);
         } else if let Some(constant) = CONSTANTS.iter().find(|c| c.name == ident) {
             // Name is a built-in constant
-            let instr = Instr::push(
-                constant
-                    .value
-                    .resolve(self.scope_file_path(), &*self.backend()),
-            );
+            let val = constant
+                .value
+                .resolve(self.scope_file_path(), &*self.backend());
+            let val = match val {
+                Ok(val) => val,
+                Err(_module) => {
+                    return Err(self.fatal_error(span, "A constant module cannot be called"))
+                }
+            };
+            let instr = Instr::push(val);
             self.code_meta
                 .constant_references
                 .insert(span.clone().sp(ident));

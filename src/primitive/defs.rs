@@ -33,6 +33,8 @@ impl ConstantDef {
 pub enum ConstantValue {
     /// A static value that is always the same
     Static(Value),
+    /// A constant module
+    Module(&'static [ConstantDef]),
     /// The music constant
     Music,
     /// The path of the current source file relative to the current working directory
@@ -51,7 +53,7 @@ impl ConstantValue {
         &self,
         current_file_path: Option<&Path>,
         backend: &dyn SysBackend,
-    ) -> Value {
+    ) -> Result<Value, &'static [ConstantDef]> {
         let current_file_path = current_file_path.map(|p| {
             let mut path = PathBuf::new();
             for comp in p.components() {
@@ -59,8 +61,9 @@ impl ConstantValue {
             }
             path
         });
-        match self {
+        Ok(match self {
             ConstantValue::Static(val) => val.clone(),
+            ConstantValue::Module(defs) => return Err(defs),
             ConstantValue::Music => {
                 static MUSIC: OnceLock<Value> = OnceLock::new();
                 MUSIC.get_or_init(|| music_constant(backend)).clone()
@@ -81,7 +84,7 @@ impl ConstantValue {
                 .display()
                 .to_string()
                 .into(),
-        }
+        })
     }
 }
 
@@ -95,25 +98,29 @@ where
 }
 
 macro_rules! constant {
-    ($($(#[doc = $doc:literal])+ ($(#[$attr:meta])* $name:literal, $class:ident, $value:expr)),* $(,)?) => {
-        const COUNT: usize = {
-            let mut count = 0;
-            $(
-                $(#[$attr])*
-                {
-                    _ = $name;
-                    count += 1;
-                }
-            )*
-            count
-        };
+    (
+        $list_name:ident,
+        $(
+            $(#[doc = $doc:literal])+
+            (
+                $(#[$attr:meta])*
+                $name:literal,
+                $class:ident,
+                $(($module_items:expr))?
+                $($value:expr)?
+            )
+        ),*
+    $(,)?) => {
         /// The list of all shadowable constants
-        pub static CONSTANTS: [ConstantDef; COUNT] =
+        pub static $list_name: [ConstantDef; 0 $(+ {stringify!($($attr)*); 1})*] =
             [$(
                 $(#[$attr])*
                 ConstantDef {
                     name: $name,
-                    value: Lazy::new(|| {$value.into()}),
+                    value: Lazy::new(|| {
+                        $({$value.into()})?
+                        $({ConstantValue::Module($module_items)})?
+                    }),
                     class: ConstClass::$class,
                     doc: Lazy::new(|| {
                         let mut s = String::new();
@@ -141,9 +148,12 @@ pub enum ConstClass {
     Color,
     Flags,
     Fun,
+    Module,
+    ModuleItem,
 }
 
 constant!(
+    CONSTANTS,
     /// Euler's constant
     ("e", Math, std::f64::consts::E),
     /// The imaginary unit
@@ -362,6 +372,14 @@ constant!(
             .map(|def| def.name.to_string())
             .collect::<Value>()
     }),
+    /// Chemical Elements
+    ("Element", Module, ConstantValue::Module(&ELEM_CONSTANTS)),
+);
+
+constant!(
+    ELEM_CONSTANTS,
+    /// The names of the chemical elements
+    ("Names", ModuleItem, ["Hydrogen", "Helium", "Lithium", "Beryllium", "Boron", "Carbon", "Nitrogen", "Oxygen", "Fluorine", "Neon", "Sodium", "Magnesium", "Aluminum", "Silicon", "Phosphorus", "Sulfur", "Chlorine", "Argon", "Potassium", "Calcium", "Scandium", "Titanium", "Vanadium", "Chromium", "Manganese", "Iron", "Cobalt", "Nickel", "Copper", "Zinc", "Gallium", "Germanium", "Arsenic", "Selenium", "Bromine", "Krypton", "Rubidium", "Strontium", "Yttrium", "Zirconium", "Niobium", "Molybdenum", "Technetium", "Ruthenium", "Rhodium", "Palladium", "Silver", "Cadmium", "Indium", "Tin", "Antimony", "Tellurium", "Iodine", "Xenon", "Cesium", "Barium", "Lanthanum", "Cerium", "Praseodymium", "Neodymium", "Promethium", "Samarium", "Europium", "Gadolinium", "Terbium", "Dysprosium", "Holmium", "Erbium", "Thulium", "Ytterbium", "Lutetium", "Hafnium", "Tantalum", "Tungsten", "Rhenium", "Osmium", "Iridium", "Platinum", "Gold", "Mercury", "Thallium", "Lead", "Bismuth", "Polonium", "Astatine", "Radon", "Francium", "Radium", "Actinium", "Thorium", "Protactinium", "Uranium", "Neptunium", "Plutonium", "Americium", "Curium", "Berkelium", "Californium", "Einsteinium", "Fermium", "Mendelevium", "Nobelium", "Lawrencium", "Rutherfordium", "Dubnium", "Seaborgium", "Bohrium", "Hassium", "Meitnerium", "Darmstadtium", "Roentgenium", "Copernicium", "Nihonium", "Flerovium", "Moscovium", "Livermorium", "Tennessine", "Oganesson"].as_slice())
 );
 
 fn music_constant(backend: &dyn SysBackend) -> Value {

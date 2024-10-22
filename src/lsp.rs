@@ -425,14 +425,18 @@ impl Spanner {
             let sys = &crate::NativeSys;
             #[cfg(not(feature = "native_sys"))]
             let sys = &crate::SafeSys::new();
-            let val = constant.value.resolve(path, sys);
-            return Some(BindingDocs {
-                src_span: span.clone(),
-                comment: Some(constant.doc().into()),
-                is_public: true,
-                kind: BindingDocsKind::Constant(Some(val)),
-                escape: None,
-            });
+            match constant.value.resolve(path, sys) {
+                Ok(val) => {
+                    return Some(BindingDocs {
+                        src_span: span.clone(),
+                        comment: Some(constant.doc().into()),
+                        is_public: true,
+                        kind: BindingDocsKind::Constant(Some(val)),
+                        escape: None,
+                    })
+                }
+                Err(module) => {}
+            }
         }
         None
     }
