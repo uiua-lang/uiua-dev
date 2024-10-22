@@ -4,109 +4,149 @@ use ecow::EcoVec;
 
 use crate::{Assembly, Function, Instr, Primitive};
 
+#[derive(Default)]
+struct Inliner {
+    inlined: EcoVec<Instr>,
+    mapping: Vec<usize>,
+}
+
+impl Inliner {
+    fn push(&mut self, instr: Instr) {
+        self.inlined.push(instr);
+    }
+    fn push_inline(&mut self, count: usize, span: usize) {
+        if count > 0 {
+            self.push(Instr::push_inline(count, span));
+        }
+    }
+    fn pop_inline(&mut self, count: usize, span: usize) {
+        if count > 0 {
+            self.push(Instr::pop_inline(count, span));
+        }
+    }
+    fn copy_inline(&mut self, count: usize, span: usize) {
+        if count > 0 {
+            self.push(Instr::copy_inline(count, span));
+        }
+    }
+    fn touch_stack(&mut self, count: usize, span: usize) {
+        if count > 0 {
+            self.push(Instr::TouchStack { count, span });
+        }
+    }
+    fn func_instrs(&mut self, f: &Function, span: usize) {
+        if f.flags.track_caller() || f.flags.no_inline() {
+            let mut f = f.clone();
+            let end = f.slice.end();
+            f.slice.start = self.mapping[f.slice.start];
+            f.slice.len = self.mapping[end] - f.slice.start;
+            self.push(Instr::PushFunc(f));
+            self.push(Instr::Call(span));
+        } else {
+            let start = self.mapping[f.slice.start];
+            let end = self.mapping[f.slice.end()];
+            for i in start..end {
+                self.push(self.inlined[i].clone());
+            }
+        }
+    }
+}
+
 pub fn inline_assembly(asm: &mut Assembly) {
     use Instr::*;
     use Primitive::*;
-    let input = asm.instrs.clone();
-    let mut input = input.as_slice();
-    let mut inlined = EcoVec::new();
-    let mut mapping = Vec::new();
+    let mut input = asm.instrs.as_slice();
+    let mut inliner = Inliner::default();
     loop {
-        let start_inlined_len = inlined.len();
+        let start_inlined_len = inliner.inlined.len();
         let new_input = match input {
             [] => break,
             [PushFunc(f), Prim(Dip, span), inp @ ..] => {
-                push_inline(&mut inlined, 1, *span);
-                push_func_instrs(&mut inlined, f, asm);
-                pop_inline(&mut inlined, 1, *span);
+                inliner.push_inline(1, *span);
+                inliner.func_instrs(f, *span);
+                inliner.pop_inline(1, *span);
                 inp
             }
             [PushFunc(f), Prim(Gap, span), inp @ ..] => {
-                inlined.push(Prim(Pop, *span));
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.push(Prim(Pop, *span));
+                inliner.func_instrs(f, *span);
                 inp
             }
             [PushFunc(f), Prim(Both, span), inp @ ..] => {
-                push_inline(&mut inlined, f.signature().args, *span);
-                push_func_instrs(&mut inlined, f, asm);
-                pop_inline(&mut inlined, f.signature().args, *span);
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.push_inline(f.signature().args, *span);
+                inliner.func_instrs(f, *span);
+                inliner.pop_inline(f.signature().args, *span);
+                inliner.func_instrs(f, *span);
                 inp
             }
             [PushFunc(g), PushFunc(f), Prim(Fork, span), inp @ ..] => {
-                copy_inline(&mut inlined, f.signature().args, *span);
-                push_func_instrs(&mut inlined, g, asm);
-                pop_inline(&mut inlined, f.signature().args, *span);
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.copy_inline(f.signature().args, *span);
+                inliner.func_instrs(g, *span);
+                inliner.pop_inline(f.signature().args, *span);
+                inliner.func_instrs(f, *span);
                 inp
             }
             [PushFunc(g), PushFunc(f), Prim(Bracket, span), inp @ ..] => {
-                push_inline(&mut inlined, f.signature().args, *span);
-                push_func_instrs(&mut inlined, g, asm);
-                pop_inline(&mut inlined, f.signature().args, *span);
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.push_inline(f.signature().args, *span);
+                inliner.func_instrs(g, *span);
+                inliner.pop_inline(f.signature().args, *span);
+                inliner.func_instrs(f, *span);
                 inp
             }
             [PushFunc(f), Prim(On, span), inp @ ..] => {
                 if f.signature().args == 0 {
-                    push_inline(&mut inlined, 1, *span);
+                    inliner.push_inline(1, *span);
                 } else {
-                    copy_inline(&mut inlined, 1, *span);
+                    inliner.copy_inline(1, *span);
                 }
-                push_func_instrs(&mut inlined, f, asm);
-                pop_inline(&mut inlined, 1, *span);
+                inliner.func_instrs(f, *span);
+                inliner.pop_inline(1, *span);
                 inp
             }
             [PushFunc(f), Prim(By, span), inp @ ..] => {
-                push_inline(&mut inlined, f.signature().args.saturating_sub(1), *span);
+                inliner.push_inline(f.signature().args.saturating_sub(1), *span);
                 if f.signature().args > 0 {
-                    inlined.push(Prim(Dup, *span));
+                    inliner.push(Prim(Dup, *span));
                 }
-                pop_inline(&mut inlined, f.signature().args.saturating_sub(1), *span);
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.pop_inline(f.signature().args.saturating_sub(1), *span);
+                inliner.func_instrs(f, *span);
                 inp
             }
             [PushFunc(f), Prim(With, span), inp @ ..] => {
                 let mut sig = f.signature();
                 if sig.args < 2 {
-                    inlined.push(Instr::TouchStack {
-                        count: 2,
-                        span: *span,
-                    });
+                    inliner.touch_stack(2, *span);
                     sig.outputs += 2 - sig.args;
                     sig.args = 2;
                 }
-                push_inline(&mut inlined, sig.args - 1, *span);
-                inlined.push(Prim(Dup, *span));
-                pop_inline(&mut inlined, sig.args - 1, *span);
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.push_inline(sig.args - 1, *span);
+                inliner.push(Prim(Dup, *span));
+                inliner.pop_inline(sig.args - 1, *span);
+                inliner.func_instrs(f, *span);
                 if sig.outputs >= 2 {
-                    push_inline(&mut inlined, sig.outputs - 1, *span);
+                    inliner.push_inline(sig.outputs - 1, *span);
                     for _ in 0..sig.outputs - 1 {
-                        inlined.push(Prim(Flip, *span));
-                        pop_inline(&mut inlined, 1, *span);
+                        inliner.push(Prim(Flip, *span));
+                        inliner.pop_inline(1, *span);
                     }
                 }
-                inlined.push(Prim(Flip, *span));
+                inliner.push(Prim(Flip, *span));
                 inp
             }
             [PushFunc(f), Prim(Off, span), inp @ ..] => {
                 let mut sig = f.signature();
                 if sig.args < 2 {
-                    inlined.push(Instr::TouchStack {
-                        count: 2,
-                        span: *span,
-                    });
+                    inliner.touch_stack(2, *span);
                     sig.outputs += 2 - sig.args;
                     sig.args = 2;
                 }
-                inlined.push(Instr::Prim(Dup, *span));
+                inliner.push(Instr::Prim(Dup, *span));
                 for _ in 0..sig.args - 1 {
-                    push_inline(&mut inlined, 1, *span);
-                    inlined.push(Instr::Prim(Flip, *span));
+                    inliner.push_inline(1, *span);
+                    inliner.push(Instr::Prim(Flip, *span));
                 }
-                pop_inline(&mut inlined, sig.args - 1, *span);
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.pop_inline(sig.args - 1, *span);
+                inliner.func_instrs(f, *span);
                 inp
             }
             [PushFunc(f), Prim(Below, span), inp @ ..] => {
@@ -115,9 +155,9 @@ pub fn inline_assembly(asm: &mut Assembly) {
                     sig.args += 1;
                     sig.outputs += 1;
                 }
-                copy_inline(&mut inlined, sig.args, *span);
-                pop_inline(&mut inlined, sig.args, *span);
-                push_func_instrs(&mut inlined, f, asm);
+                inliner.copy_inline(sig.args, *span);
+                inliner.pop_inline(sig.args, *span);
+                inliner.func_instrs(f, *span);
                 inp
             }
             [PushFunc(f), Prim(Above, span), inp @ ..] => {
@@ -126,23 +166,28 @@ pub fn inline_assembly(asm: &mut Assembly) {
                     sig.args += 1;
                     sig.outputs += 1;
                 }
-                copy_inline(&mut inlined, sig.args, *span);
-                push_func_instrs(&mut inlined, f, asm);
-                pop_inline(&mut inlined, sig.args, *span);
+                inliner.copy_inline(sig.args, *span);
+                inliner.func_instrs(f, *span);
+                inliner.pop_inline(sig.args, *span);
                 inp
             }
             [Comment(_), inp @ ..] => inp,
             [instr, inp @ ..] => {
-                inlined.push(instr.clone());
+                inliner.push(instr.clone());
                 inp
             }
         };
         let consumed_len = input.len() - new_input.len();
         for _ in 0..consumed_len {
-            mapping.push(start_inlined_len);
+            inliner.mapping.push(start_inlined_len);
         }
         input = new_input;
     }
+
+    let Inliner {
+        inlined,
+        mut mapping,
+    } = inliner;
     mapping.push(inlined.len());
 
     // Update top slices
@@ -154,30 +199,4 @@ pub fn inline_assembly(asm: &mut Assembly) {
         top_slice.len = len;
     }
     asm.instrs = inlined;
-}
-
-fn push_func_instrs(inlined: &mut EcoVec<Instr>, func: &Function, asm: &Assembly) {
-    if func.flags.track_caller() || func.flags.no_inline() {
-        todo!()
-    } else {
-        inlined.extend(func.instrs(asm).iter().cloned());
-    }
-}
-
-fn push_inline(inlined: &mut EcoVec<Instr>, count: usize, span: usize) {
-    if count > 0 {
-        inlined.push(Instr::push_inline(count, span));
-    }
-}
-
-fn pop_inline(inlined: &mut EcoVec<Instr>, count: usize, span: usize) {
-    if count > 0 {
-        inlined.push(Instr::pop_inline(count, span));
-    }
-}
-
-fn copy_inline(inlined: &mut EcoVec<Instr>, count: usize, span: usize) {
-    if count > 0 {
-        inlined.push(Instr::copy_inline(count, span));
-    }
 }
