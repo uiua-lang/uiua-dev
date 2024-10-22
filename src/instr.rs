@@ -311,10 +311,10 @@ impl Instr {
             span,
         }
     }
-    pub(crate) fn copy_inline(span: usize) -> Self {
+    pub(crate) fn copy_inline(count: usize, span: usize) -> Self {
         Self::CopyToTemp {
             stack: TempStack::Inline,
-            count: 1,
+            count,
             span,
         }
     }

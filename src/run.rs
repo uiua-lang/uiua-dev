@@ -23,6 +23,7 @@ use crate::{
     check::instrs_temp_signatures,
     fill::Fill,
     function::*,
+    inline::inline_assembly,
     instr::*,
     lex::Span,
     Array, Assembly, BindingKind, Boxed, CodeSpan, Compiler, Ident, ImplPrimitive, Inputs,
@@ -370,7 +371,8 @@ impl Uiua {
     }
     /// Run a Uiua assembly
     pub fn run_asm(&mut self, asm: impl Into<Assembly>) -> UiuaResult {
-        fn run_asm(env: &mut Uiua, asm: Assembly) -> UiuaResult {
+        fn run_asm(env: &mut Uiua, mut asm: Assembly) -> UiuaResult {
+            inline_assembly(&mut asm);
             env.asm = asm;
             env.rt.execution_start = env.rt.backend.now();
             let mut res = env.run_top_slices();

@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     algorithm::{
-        invert::{anti_instrs, invert_instrs, under_instrs, CustomInverse},
+        invert::{invert_instrs, CustomInverse},
         IgnoreError,
     },
     ast::*,
@@ -34,7 +34,7 @@ use crate::{
     ident_modifier_args,
     instr::*,
     lex::{CodeSpan, Sp, Span},
-    lsp::{CodeMeta, ImportSrc, SigDecl},
+    lsp::{CodeMeta, ImportSrc, SetInverses, SigDecl},
     optimize::{optimize_instrs, optimize_instrs_mut},
     parse::{count_placeholders, flip_unsplit_lines, parse, split_words},
     Array, Assembly, BindingKind, Boxed, Diagnostic, DiagnosticKind, DocComment, DocCommentSig,

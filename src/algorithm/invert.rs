@@ -552,7 +552,7 @@ pub(crate) fn anti_instrs(instrs: &[Instr], comp: &mut Compiler) -> InversionRes
     if sig.args >= 2 {
         let mut instrs = instrs.to_vec();
         let span = instrs.iter().find_map(|instr| instr.span()).unwrap_or(0);
-        instrs.insert(0, Instr::copy_inline(span));
+        instrs.insert(0, Instr::copy_inline(1, span));
         instrs.push(Instr::pop_inline(1, span));
         let mut inverse = invert_instrs(&instrs, comp)?;
         inverse.push(Instr::Prim(Primitive::Pop, span));
@@ -1811,7 +1811,7 @@ fn under_custom_pattern<'a>(
     } else if let Some(anti) = cust.anti.clone() {
         let to_save = anti.signature().args - f.signature().outputs;
         let mut befores = EcoVec::from(f.instrs(&comp.asm));
-        befores.insert(0, Instr::copy_inline(*span));
+        befores.insert(0, Instr::copy_inline(1, *span));
         befores.push(Instr::pop_inline(1, *span));
         let afters = EcoVec::from(anti.instrs(&comp.asm));
         (befores, afters, to_save)

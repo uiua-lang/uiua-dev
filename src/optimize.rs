@@ -276,7 +276,7 @@ pub(crate) fn optimize_instrs_mut(
             let span = *span;
             instrs.pop();
             instrs.pop();
-            instrs.push(Instr::copy_inline(span));
+            instrs.push(Instr::copy_inline(1, span));
             instrs.push(Instr::ImplPrim(ReplaceRand, span));
             instrs.push(Instr::pop_inline(1, pop_span));
         }

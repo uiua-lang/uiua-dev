@@ -503,6 +503,48 @@ impl VirtualEnv {
                 Dump => {
                     self.pop_func()?;
                 }
+                Dip => {
+                    let f = self.pop_func()?;
+                    self.handle_args_outputs(f.args + 1, f.outputs + 1);
+                }
+                Gap => {
+                    let f = self.pop_func()?;
+                    self.handle_args_outputs(f.args + 1, f.outputs);
+                }
+                Both => {
+                    let f = self.pop_func()?;
+                    self.handle_args_outputs(f.args * 2, f.outputs * 2);
+                }
+                Fork => {
+                    let f = self.pop_func()?;
+                    let g = self.pop_func()?;
+                    self.handle_args_outputs(f.args.max(g.args), f.outputs + g.outputs);
+                }
+                Bracket => {
+                    let f = self.pop_func()?;
+                    let g = self.pop_func()?;
+                    self.handle_args_outputs(f.args + g.args, f.outputs + g.outputs);
+                }
+                On | By => {
+                    let f = self.pop_func()?;
+                    self.handle_args_outputs(f.args, f.outputs + 1);
+                }
+                With | Off => {
+                    let mut f = self.pop_func()?;
+                    if f.args < 2 {
+                        f.outputs += 2 - f.args;
+                        f.args = 2;
+                    }
+                    self.handle_sig(f);
+                }
+                Below | Above => {
+                    let mut f = self.pop_func()?;
+                    if f.args < 2 {
+                        f.args += 1;
+                        f.outputs += 1;
+                    }
+                    self.handle_args_outputs(f.args, f.args + f.outputs);
+                }
                 prim => {
                     let args = prim
                         .args()

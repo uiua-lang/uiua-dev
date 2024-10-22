@@ -158,6 +158,7 @@ mod fill;
 pub mod format;
 mod function;
 mod grid_fmt;
+mod inline;
 mod instr;
 mod lex;
 pub mod lsp;
