@@ -5,10 +5,9 @@ mod modifier;
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::{hash_map::DefaultHasher, BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     env::current_dir,
     fmt, fs,
-    hash::{Hash, Hasher},
     iter::{once, repeat},
     mem::{replace, swap, take},
     panic::{catch_unwind, AssertUnwindSafe},
@@ -24,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     algorithm::{
-        invert::{invert_instrs, CustomInverse},
+        invert::{anti_instrs, invert_instrs, under_instrs, CustomInverse},
         IgnoreError,
     },
     ast::*,
@@ -86,10 +85,6 @@ pub struct Compiler {
     in_inverse: bool,
     /// Whether the compiler is in a try
     in_try: bool,
-    /// Map of instructions to undered functions that created them
-    ///
-    /// This is used to under functions that have already been inlined
-    pub(crate) undered_funcs: HashMap<EcoVec<Instr>, UnderedFunctions>,
     /// Accumulated errors
     errors: Vec<UiuaError>,
     /// Primitives that have emitted errors because they are deprecated
@@ -124,7 +119,6 @@ impl Default for Compiler {
             macro_depth: 0,
             in_inverse: false,
             in_try: false,
-            undered_funcs: HashMap::new(),
             errors: Vec::new(),
             deprecated_prim_errors: HashSet::new(),
             diagnostics: BTreeSet::new(),
@@ -216,15 +210,6 @@ struct CurrentBinding {
     signature: Option<Signature>,
     referenced: bool,
     global_index: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct UnderedFunctions {
-    pub f: EcoVec<Instr>,
-    pub f_sig: Signature,
-    pub g: EcoVec<Instr>,
-    pub g_sig: Signature,
-    pub span: usize,
 }
 
 /// A scope where names are defined
@@ -815,20 +800,7 @@ code:
     ) -> Function {
         let (new_func, errors) = self.pre_eval_instrs(new_func);
         self.errors.extend(errors);
-        let len = new_func.instrs.len();
-        (self.asm.instrs).push(Instr::Comment(format!("({id}").into()));
-        let start = if len == 0 { 0 } else { self.asm.instrs.len() };
-        let mut hasher = DefaultHasher::new();
-        new_func.instrs.hash(&mut hasher);
-        let hash = hasher.finish();
-        self.asm.instrs.extend(new_func.instrs);
-        (self.asm.instrs).push(Instr::Comment(format!("{id})").into()));
-        let slice = FuncSlice { start, len };
-        // println!(
-        //     "make function: {id} {sig} {slice:?} {:?}",
-        //     self.asm.instrs(slice)
-        // );
-        Function::new(id, sig, slice, hash).with_flags(new_func.flags)
+        self.asm.make_function(id, sig, new_func)
     }
     fn compile_bind_function(
         &mut self,
@@ -1914,7 +1886,7 @@ code:
                 );
                 self.push_instr(Instr::PushFunc(f));
             }
-            BindingKind::Func(f) if self.inlinable(f.instrs(&self.asm), f.flags) => {
+            BindingKind::Func(f) if self.asm.inlinable(f.instrs(&self.asm), f.flags) => {
                 if call {
                     // Inline instructions
                     self.push_all_instrs(EcoVec::from(f.instrs(&self.asm)));
@@ -2392,29 +2364,6 @@ code:
         }
         Ok(())
     }
-    pub(crate) fn inlinable(&self, instrs: &[Instr], flags: FunctionFlags) -> bool {
-        use ImplPrimitive::*;
-        use Primitive::*;
-        if flags.track_caller() || flags.no_inline() || flags.no_pre_eval() {
-            return false;
-        }
-        if instrs.len() > 10 {
-            return false;
-        }
-        for instr in instrs {
-            match instr {
-                Instr::Prim(Trace | Dump | Stack | Assert, _) => return false,
-                Instr::ImplPrim(UnDump | UnStack | TraceN { .. }, _) => return false,
-                Instr::PushFunc(f)
-                    if !self.inlinable(f.instrs(&self.asm), FunctionFlags::default()) =>
-                {
-                    return false
-                }
-                _ => {}
-            }
-        }
-        true
-    }
     /// Get all diagnostics
     pub fn diagnostics(&self) -> &BTreeSet<Diagnostic> {
         &self.diagnostics
@@ -2504,7 +2453,7 @@ code:
     }
     /// Get a span by its index
     pub fn get_span(&self, span: usize) -> Span {
-        self.asm.spans[span].clone()
+        self.asm.get_span(span)
     }
     /// Register a span
     pub fn add_span(&mut self, span: impl Into<Span>) -> usize {

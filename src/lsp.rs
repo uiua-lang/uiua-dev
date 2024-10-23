@@ -104,7 +104,7 @@ pub fn spans_with_compiler(input: &str, compiler: &Compiler) -> (Vec<Sp<SpanKind
         code_meta: compiler.code_meta,
         errors: Vec::new(),
         diagnostics: Vec::new(),
-        inversion_compiler: ThreadLocal::new(),
+        inversion_asm: ThreadLocal::new(),
     };
     (spanner.items_spans(&items), spanner.asm.inputs.clone())
 }
@@ -230,7 +230,7 @@ struct Spanner {
     errors: Vec<UiuaError>,
     #[allow(dead_code)]
     diagnostics: Vec<crate::Diagnostic>,
-    inversion_compiler: ThreadLocal<RefCell<Compiler>>,
+    inversion_asm: ThreadLocal<RefCell<Assembly>>,
 }
 
 impl Spanner {
@@ -248,7 +248,7 @@ impl Spanner {
             code_meta: compiler.code_meta,
             errors,
             diagnostics,
-            inversion_compiler: ThreadLocal::new(),
+            inversion_asm: ThreadLocal::new(),
         }
     }
     fn inputs(&self) -> &Inputs {
@@ -468,27 +468,23 @@ impl Spanner {
                 sig: f.signature(),
                 invertible: {
                     let instrs = f.instrs(&self.asm);
-                    let compiler = self
-                        .inversion_compiler
-                        .get_or(|| Compiler::new().with_assembly(self.asm.clone()).into());
-                    let mut compiler = compiler.borrow_mut();
-                    let instr_count = compiler.asm.instrs.len();
-                    let invertible = instrs_are_invertible(instrs, &mut compiler);
-                    if compiler.asm.instrs.len() > instr_count {
-                        compiler.asm.instrs.truncate(instr_count);
+                    let asm = self.inversion_asm.get_or(|| self.asm.clone().into());
+                    let mut asm = asm.borrow_mut();
+                    let instr_count = asm.instrs.len();
+                    let invertible = instrs_are_invertible(instrs, &mut asm);
+                    if asm.instrs.len() > instr_count {
+                        asm.instrs.truncate(instr_count);
                     }
                     invertible
                 },
                 underable: {
                     let instrs = f.instrs(&self.asm);
-                    let compiler = self
-                        .inversion_compiler
-                        .get_or(|| Compiler::new().with_assembly(self.asm.clone()).into());
-                    let mut compiler = compiler.borrow_mut();
-                    let instr_count = compiler.asm.instrs.len();
-                    let underable = under_instrs(instrs, (1, 1).into(), &mut compiler).is_ok();
-                    if compiler.asm.instrs.len() > instr_count {
-                        compiler.asm.instrs.truncate(instr_count);
+                    let asm = self.inversion_asm.get_or(|| self.asm.clone().into());
+                    let mut asm = asm.borrow_mut();
+                    let instr_count = asm.instrs.len();
+                    let underable = under_instrs(instrs, (1, 1).into(), &mut asm).is_ok();
+                    if asm.instrs.len() > instr_count {
+                        asm.instrs.truncate(instr_count);
                     }
                     underable
                 },

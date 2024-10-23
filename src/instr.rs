@@ -323,19 +323,34 @@ impl Instr {
 pub(crate) struct FmtInstrs<'a>(pub &'a [Instr], pub &'a Assembly);
 impl<'a> fmt::Debug for FmtInstrs<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(")?;
+        if !f.alternate() {
+            write!(f, "(")?;
+        }
         for (i, instr) in self.0.iter().enumerate() {
             if i > 0 {
-                write!(f, ", ")?;
+                if f.alternate() {
+                    writeln!(f)?;
+                } else {
+                    write!(f, ", ")?;
+                }
+            }
+            if f.alternate() {
+                write!(f, "{i}: ")?;
             }
             match instr {
-                Instr::PushFunc(func) => {
-                    FmtInstrs(func.instrs(self.1), self.1).fmt(f)?;
-                }
+                Instr::PushFunc(func) => write!(
+                    f,
+                    "{:?}:{}-{}",
+                    FmtInstrs(func.instrs(self.1), self.1),
+                    func.slice.start,
+                    func.slice.end()
+                )?,
                 instr => instr.fmt(f)?,
             }
         }
-        write!(f, ")")?;
+        if !f.alternate() {
+            write!(f, ")")?;
+        }
         Ok(())
     }
 }
@@ -490,7 +505,9 @@ impl fmt::Display for Instr {
             Instr::Prim(prim, _) => write!(f, "{prim}"),
             Instr::ImplPrim(prim, _) => write!(f, "{prim}"),
             Instr::Call(_) => write!(f, "call"),
-            Instr::PushFunc(func) => write!(f, "push({func})"),
+            Instr::PushFunc(func) => {
+                write!(f, "push({func} {}-{})", func.slice.start, func.slice.end())
+            }
             Instr::Switch { count, .. } => write!(f, "<switch {count}>"),
             Instr::Format { parts, .. } => {
                 write!(f, "$\"")?;

@@ -1,12 +1,19 @@
-use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    fmt,
+    hash::{DefaultHasher, Hash, Hasher},
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+};
 
 use dashmap::DashMap;
 use ecow::{eco_vec, EcoString, EcoVec};
 use serde::*;
 
 use crate::{
-    is_ident_char, CodeSpan, FuncSlice, Function, InputSrc, Instr, IntoInputSrc, LocalName, Module,
-    Signature, Span, Uiua, UiuaResult, Value,
+    is_ident_char, CodeSpan, FuncSlice, Function, FunctionFlags, FunctionId, ImplPrimitive,
+    InputSrc, Instr, IntoInputSrc, LocalName, Module, NewFunction, Primitive, Signature, Span,
+    Uiua, UiuaResult, Value,
 };
 
 /// A compiled Uiua assembly
@@ -65,6 +72,53 @@ impl Assembly {
     /// Get the mutable instructions of a function slice
     pub fn instrs_mut(&mut self, slice: FuncSlice) -> &mut [Instr] {
         &mut self.instrs.make_mut()[slice.start..slice.end()]
+    }
+    #[must_use]
+    pub(crate) fn make_function(
+        &mut self,
+        id: FunctionId,
+        sig: Signature,
+        new_func: NewFunction,
+    ) -> Function {
+        let len = new_func.instrs.len();
+        (self.instrs).push(Instr::Comment(format!("({id}").into()));
+        let start = if len == 0 { 0 } else { self.instrs.len() };
+        let mut hasher = DefaultHasher::new();
+        new_func.instrs.hash(&mut hasher);
+        let hash = hasher.finish();
+        self.instrs.extend(new_func.instrs);
+        (self.instrs).push(Instr::Comment(format!("{id})").into()));
+        let slice = FuncSlice { start, len };
+        // println!(
+        //     "make function: {id} {sig} {slice:?} {:?}",
+        //     self.instrs(slice)
+        // );
+        Function::new(id, sig, slice, hash).with_flags(new_func.flags)
+    }
+    pub(crate) fn inlinable(&self, instrs: &[Instr], flags: FunctionFlags) -> bool {
+        use ImplPrimitive::*;
+        use Primitive::*;
+        if flags.track_caller() || flags.no_inline() || flags.no_pre_eval() {
+            return false;
+        }
+        if instrs.len() > 10 {
+            return false;
+        }
+        for instr in instrs {
+            match instr {
+                Instr::Prim(Trace | Dump | Stack | Assert, _) => return false,
+                Instr::ImplPrim(UnDump | UnStack | TraceN { .. }, _) => return false,
+                Instr::PushFunc(f) if !self.inlinable(f.instrs(self), FunctionFlags::default()) => {
+                    return false
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+    /// Get a span by its index
+    pub fn get_span(&self, span: usize) -> Span {
+        self.spans[span].clone()
     }
     pub(crate) fn bind_function(
         &mut self,

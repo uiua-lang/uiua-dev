@@ -1,8 +1,6 @@
 //! Compiler code for modifiers
 #![allow(clippy::redundant_closure_call)]
 
-use crate::algorithm::invert::{anti_instrs, under_instrs};
-
 use super::*;
 
 impl Compiler {
@@ -563,7 +561,7 @@ impl Compiler {
             }};
             ($new_func:expr, $sig:expr, $span:expr) => {{
                 let new_func = $new_func;
-                if call && self.inlinable(&new_func.instrs, new_func.flags) {
+                if call && self.asm.inlinable(&new_func.instrs, new_func.flags) {
                     self.push_all_instrs(new_func);
                 } else {
                     let func = self.make_function(
@@ -651,7 +649,7 @@ impl Compiler {
                             }
                         }
                     }
-                    if let Some((inverse, inv_sig)) = invert_instrs(&new_func.instrs, self)
+                    if let Some((inverse, inv_sig)) = invert_instrs(&new_func.instrs, &mut self.asm)
                         .ok()
                         .and_then(|inv| instrs_signature(&inv).ok().map(|sig| (inv, sig)))
                         .filter(|(_, inv_sig)| sig.is_compatible_with(*inv_sig))
@@ -710,7 +708,7 @@ impl Compiler {
                 let (mut new_func, _) = f_res?;
 
                 let spandex = self.add_span(span.clone());
-                match invert_instrs(&new_func.instrs, self) {
+                match invert_instrs(&new_func.instrs, &mut self.asm) {
                     Ok(inverted) => {
                         let sig = self.sig_of(&inverted, &span)?;
                         new_func.instrs = inverted;
@@ -741,7 +739,7 @@ impl Compiler {
                     );
                 }
 
-                match anti_instrs(&new_func.instrs, self) {
+                match anti_instrs(&new_func.instrs, &mut self.asm) {
                     Ok(inverted) => {
                         let sig = self.sig_of(&inverted, &span)?;
                         new_func.instrs = inverted;
@@ -750,20 +748,21 @@ impl Compiler {
                     Err(e) => return Err(self.fatal_error(span, e)),
                 }
             }),
-            Under if !self.in_inverse => wrap!(|| {
+            Under if !self.in_inverse => wrap!(|| -> UiuaResult<bool> {
                 let mut operands = modified.code_operands().cloned();
                 let f = operands.next().unwrap();
                 let f_span = f.span.clone();
                 let g = operands.next().unwrap();
 
                 // The not inverted function
-                let (g_new_func, g_sig) = self.compile_operand_word(g)?;
+                // let (g_new_func, g_sig) = self.compile_operand_word(g)?;
+                let (_, g_sig) = self.compile_operand_word(g)?;
 
                 // The inverted function
                 self.in_inverse = !self.in_inverse;
                 let f_res = self.compile_operand_word(f);
                 self.in_inverse = !self.in_inverse;
-                let (f_new_func, f_new_sig) = f_res?;
+                let (f_new_func, _) = f_res?;
 
                 // Under pop diagnostic
                 if let [Instr::Prim(Pop, _)] = f_new_func.instrs.as_slice() {
@@ -774,41 +773,29 @@ impl Compiler {
                     );
                 }
 
-                match under_instrs(&f_new_func.instrs, g_sig, self) {
-                    Ok((f_before, f_after)) => {
-                        let mut instrs = f_before;
-                        instrs.extend(g_new_func.instrs.iter().cloned());
-                        instrs.extend(f_after);
+                match under_instrs(&f_new_func.instrs, g_sig, &mut self.asm) {
+                    Ok(_) => return Ok(false),
+                    // Ok((f_before, f_after)) => {
+                    //     let mut instrs = f_before;
+                    //     instrs.extend(g_new_func.instrs.iter().cloned());
+                    //     instrs.extend(f_after);
 
-                        // Register undered functions
-                        let span = self.add_span(modified.modifier.span.clone());
-                        self.undered_funcs.insert(
-                            instrs.clone(),
-                            UnderedFunctions {
-                                f: f_new_func.instrs,
-                                f_sig: f_new_sig,
-                                g: g_new_func.instrs,
-                                g_sig,
-                                span,
-                            },
-                        );
-
-                        let new_func = NewFunction {
-                            instrs,
-                            flags: f_new_func.flags | g_new_func.flags,
-                        };
-                        if call {
-                            self.push_all_instrs(new_func);
-                        } else {
-                            let sig = self.sig_of(&new_func.instrs, &modified.modifier.span)?;
-                            let func = self.make_function(
-                                modified.modifier.span.clone().into(),
-                                sig,
-                                new_func,
-                            );
-                            self.push_instr(Instr::PushFunc(func));
-                        }
-                    }
+                    //     let new_func = NewFunction {
+                    //         instrs,
+                    //         flags: f_new_func.flags | g_new_func.flags,
+                    //     };
+                    //     if call {
+                    //         self.push_all_instrs(new_func);
+                    //     } else {
+                    //         let sig = self.sig_of(&new_func.instrs, &modified.modifier.span)?;
+                    //         let func = self.make_function(
+                    //             modified.modifier.span.clone().into(),
+                    //             sig,
+                    //             new_func,
+                    //         );
+                    //         self.push_instr(Instr::PushFunc(func));
+                    //     }
+                    // }
                     Err(e) => return Err(self.fatal_error(f_span, e)),
                 }
             }),

@@ -238,7 +238,7 @@ impl Compiler {
             }
             // Add validator
             if let Some((va_instrs, validation_only, va_span)) = field.validator.take() {
-                let inverse = invert_instrs(&va_instrs, self);
+                let inverse = invert_instrs(&va_instrs, &mut self.asm);
                 let id = FunctionId::Anonymous(va_span);
                 let sig = Signature::new(1, 1);
                 let make_new_func = |instrs: EcoVec<Instr>| NewFunction {

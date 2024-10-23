@@ -12,15 +12,11 @@ use regex::Regex;
 use serde::*;
 
 use crate::{
-    check::{
-        instrs_all_signatures, instrs_clean_signature, instrs_signature, naive_under_sig,
-        SigCheckError,
-    },
+    check::{instrs_all_signatures, instrs_clean_signature, instrs_signature, SigCheckError},
     instrs_are_pure,
     primitive::{ImplPrimitive, Primitive},
-    Array, Assembly, BindingKind, Compiler, Complex, FmtInstrs, Function, FunctionFlags,
-    FunctionId, Instr, NewFunction, Purity, Signature, Span, SysOp, TempStack, Uiua, UiuaResult,
-    UnderedFunctions, Value,
+    Array, Assembly, BindingKind, Complex, FmtInstrs, Function, FunctionFlags, FunctionId, Instr,
+    NewFunction, Purity, Signature, Span, SysOp, TempStack, Uiua, UiuaResult, Value,
 };
 
 use super::IgnoreError;
@@ -45,9 +41,6 @@ pub enum InversionError {
     TooManyInstructions,
     Signature(SigCheckError),
     InnerFunc(Vec<FunctionId>, Box<Self>),
-    AsymmetricUnderSig(Signature),
-    ComplexInvertedUnder,
-    UnderExperimental,
 }
 
 type InversionResult<T = ()> = Result<T, InversionError>;
@@ -67,24 +60,6 @@ impl fmt::Display for InversionError {
                 }
                 let inner = inner.to_string().to_lowercase();
                 write!(f, " {inner}")
-            }
-            InversionError::AsymmetricUnderSig(sig) => {
-                write!(
-                    f,
-                    "Cannot invert under with asymmetric \
-                    second function signature {sig}"
-                )
-            }
-            InversionError::ComplexInvertedUnder => {
-                write!(f, "This under itself is too complex to invert")
-            }
-            InversionError::UnderExperimental => {
-                write!(
-                    f,
-                    "Inversion of {} is experimental. To enable it, \
-                    add `# Experimental!` to the top of the file.",
-                    Primitive::Under.format()
-                )
             }
         }
     }
@@ -302,7 +277,6 @@ static INVERT_PATTERNS: &[&dyn InvertPattern] = {
     use ImplPrimitive::*;
     use Primitive::*;
     &[
-        &InvertPatternFn(invert_under_pattern, "under"),
         &InvertPatternFn(invert_join_pattern, "join"),
         &InvertPatternFn(invert_flip_pattern, "flip"),
         &InvertPatternFn(invert_call_pattern, "call"),
@@ -426,25 +400,25 @@ static BY_INVERT_PATTERNS: &[&dyn InvertPattern] = {
 
 pub(crate) fn invert_instrs(
     instrs: &[Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<EcoVec<Instr>> {
-    invert_instrs_cache(instrs, comp, false)
+    invert_instrs_cache(instrs, asm, false)
 }
 
-pub(crate) fn instrs_are_invertible(instrs: &[Instr], comp: &mut Compiler) -> bool {
-    invert_instrs_cache(instrs, comp, true).is_ok()
+pub(crate) fn instrs_are_invertible(instrs: &[Instr], asm: &mut Assembly) -> bool {
+    invert_instrs_cache(instrs, asm, true).is_ok()
 }
 
 /// Invert a sequence of instructions
 pub(crate) fn invert_instrs_cache(
     instrs: &[Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
     cache: bool,
 ) -> InversionResult<EcoVec<Instr>> {
     if instrs.is_empty() {
         return Ok(EcoVec::new());
     }
-    dbgln!("inverting {:?}", FmtInstrs(instrs, &comp.asm));
+    dbgln!("inverting {:?}", FmtInstrs(instrs, asm));
 
     type InverseCache = HashMap<EcoVec<Instr>, InversionResult<EcoVec<Instr>>>;
     thread_local! {
@@ -461,23 +435,23 @@ pub(crate) fn invert_instrs_cache(
     let mut error = Generic;
     'find_pattern: loop {
         for pattern in INVERT_PATTERNS {
-            match pattern.invert_extract(curr_instrs, comp) {
+            match pattern.invert_extract(curr_instrs, asm) {
                 Ok((input, mut inv)) => {
                     dbgln!(
                         "matched pattern {:?} on {:?} to {:?}",
                         pattern,
-                        FmtInstrs(&curr_instrs[..curr_instrs.len() - input.len()], &comp.asm),
-                        FmtInstrs(&inv, &comp.asm)
+                        FmtInstrs(&curr_instrs[..curr_instrs.len() - input.len()], asm),
+                        FmtInstrs(&inv, asm)
                     );
                     inv.extend(inverted);
                     inverted = inv;
                     if input.is_empty() {
                         dbgln!(
                             "inverted {:?} to {:?}",
-                            FmtInstrs(instrs, &comp.asm),
-                            FmtInstrs(&inverted, &comp.asm)
+                            FmtInstrs(instrs, asm),
+                            FmtInstrs(&inverted, asm)
                         );
-                        let inverse = resolve_uns(inverted, comp);
+                        let inverse = resolve_uns(inverted, asm);
                         if cache {
                             INVERT_CACHE.with(|cache| {
                                 cache.borrow_mut().insert(instrs.into(), inverse.clone())
@@ -496,8 +470,8 @@ pub(crate) fn invert_instrs_cache(
 
     dbgln!(
         "inverting {:?} failed with remaining {:?}",
-        FmtInstrs(instrs, &comp.asm),
-        FmtInstrs(curr_instrs, &comp.asm)
+        FmtInstrs(instrs, asm),
+        FmtInstrs(curr_instrs, asm)
     );
 
     if cache {
@@ -507,34 +481,34 @@ pub(crate) fn invert_instrs_cache(
 }
 
 /// Invert a sequence of instructions with anti
-pub(crate) fn anti_instrs(instrs: &[Instr], comp: &mut Compiler) -> InversionResult<EcoVec<Instr>> {
+pub(crate) fn anti_instrs(instrs: &[Instr], asm: &mut Assembly) -> InversionResult<EcoVec<Instr>> {
     if instrs.is_empty() {
         return Ok(EcoVec::new());
     }
-    dbgln!("anti-inverting {:?}", FmtInstrs(instrs, &comp.asm));
+    dbgln!("anti-inverting {:?}", FmtInstrs(instrs, asm));
 
     let mut inverted = EcoVec::new();
     let mut curr_instrs = instrs;
     let mut error = Generic;
     'find_pattern: loop {
         for pattern in ON_INVERT_PATTERNS {
-            match pattern.invert_extract(curr_instrs, comp) {
+            match pattern.invert_extract(curr_instrs, asm) {
                 Ok((input, mut inv)) => {
                     dbgln!(
                         "matched pattern {:?} on {:?} to {:?}",
                         pattern,
-                        FmtInstrs(&curr_instrs[..curr_instrs.len() - input.len()], &comp.asm),
-                        FmtInstrs(&inv, &comp.asm)
+                        FmtInstrs(&curr_instrs[..curr_instrs.len() - input.len()], asm),
+                        FmtInstrs(&inv, asm)
                     );
                     inv.extend(inverted);
                     inverted = inv;
                     if input.is_empty() {
                         dbgln!(
                             "inverted {:?} to {:?}",
-                            FmtInstrs(instrs, &comp.asm),
-                            FmtInstrs(&inverted, &comp.asm)
+                            FmtInstrs(instrs, asm),
+                            FmtInstrs(&inverted, asm)
                         );
-                        return resolve_uns(inverted, comp);
+                        return resolve_uns(inverted, asm);
                     }
                     curr_instrs = input;
                     continue 'find_pattern;
@@ -547,8 +521,8 @@ pub(crate) fn anti_instrs(instrs: &[Instr], comp: &mut Compiler) -> InversionRes
 
     dbgln!(
         "anti-inverting {:?} failed with remaining {:?}",
-        FmtInstrs(instrs, &comp.asm),
-        FmtInstrs(curr_instrs, &comp.asm)
+        FmtInstrs(instrs, asm),
+        FmtInstrs(curr_instrs, asm)
     );
 
     let sig = instrs_signature(instrs)?;
@@ -557,11 +531,11 @@ pub(crate) fn anti_instrs(instrs: &[Instr], comp: &mut Compiler) -> InversionRes
         let span = instrs.iter().find_map(|instr| instr.span()).unwrap_or(0);
         instrs.insert(0, Instr::copy_inline(1, span));
         instrs.push(Instr::pop_inline(1, span));
-        let mut inverse = invert_instrs(&instrs, comp)?;
+        let mut inverse = invert_instrs(&instrs, asm)?;
         inverse.push(Instr::Prim(Primitive::Pop, span));
         Ok(inverse)
     } else {
-        invert_instrs(instrs, comp).map_err(|e| e.max(error))
+        invert_instrs(instrs, asm).map_err(|e| e.max(error))
     }
 }
 
@@ -573,7 +547,7 @@ type Under = (EcoVec<Instr>, EcoVec<Instr>);
 pub(crate) fn under_instrs(
     instrs: &[Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(EcoVec<Instr>, EcoVec<Instr>)> {
     use ImplPrimitive::*;
     use Primitive::*;
@@ -663,7 +637,6 @@ pub(crate) fn under_instrs(
 
     let patterns: &[&dyn UnderPattern] = &[
         // Hand-written patterns
-        &UnderPatternFn(under_under_pattern, "under"),
         &maybe_val!(UnderPatternFn(under_fill_pattern, "fill")),
         &UnderPatternFn(under_call_pattern, "call"),
         &UnderPatternFn(under_dump_pattern, "dump"),
@@ -886,7 +859,7 @@ pub(crate) fn under_instrs(
 
     dbgln!("undering {:?}", instrs);
 
-    let comp_instrs_backup = comp.asm.instrs.clone();
+    let asm_instrs_backup = asm.instrs.clone();
 
     let mut befores = EcoVec::new();
     let mut afters = EcoVec::new();
@@ -894,7 +867,7 @@ pub(crate) fn under_instrs(
     let mut error = Generic;
     'find_pattern: loop {
         for pattern in patterns {
-            match pattern.under_extract(curr_instrs, g_sig, comp) {
+            match pattern.under_extract(curr_instrs, g_sig, asm) {
                 Ok((input, (bef, aft))) => {
                     dbgln!(
                         "matched pattern {:?} on {:?} to {bef:?} {aft:?}",
@@ -904,8 +877,8 @@ pub(crate) fn under_instrs(
                     befores.extend(bef);
                     afters = aft.into_iter().chain(afters).collect();
                     if input.is_empty() {
-                        let befores = resolve_uns(befores, comp)?;
-                        let afters = resolve_uns(afters, comp)?;
+                        let befores = resolve_uns(befores, asm)?;
+                        let afters = resolve_uns(afters, asm)?;
                         if DEBUG {
                             dbgln!("undered {:?} to {:?} {:?}", instrs, befores, afters);
                         }
@@ -920,13 +893,13 @@ pub(crate) fn under_instrs(
         break;
     }
 
-    comp.asm.instrs = comp_instrs_backup;
+    asm.instrs = asm_instrs_backup;
     // dbgln!("under {:?} failed with remaining {:?}", instrs, curr_instrs);
 
     Err(error)
 }
 
-fn resolve_uns(instrs: EcoVec<Instr>, comp: &mut Compiler) -> InversionResult<EcoVec<Instr>> {
+fn resolve_uns(instrs: EcoVec<Instr>, asm: &mut Assembly) -> InversionResult<EcoVec<Instr>> {
     fn contains_un(instrs: &[Instr], asm: &Assembly) -> bool {
         instrs.iter().any(|instr| match instr {
             Instr::PushFunc(f) => contains_un(f.instrs(asm), asm),
@@ -934,10 +907,10 @@ fn resolve_uns(instrs: EcoVec<Instr>, comp: &mut Compiler) -> InversionResult<Ec
             _ => false,
         })
     }
-    if !contains_un(&instrs, &comp.asm) {
+    if !contains_un(&instrs, asm) {
         return Ok(instrs);
     }
-    fn resolve_uns(instrs: EcoVec<Instr>, comp: &mut Compiler) -> InversionResult<EcoVec<Instr>> {
+    fn resolve_uns(instrs: EcoVec<Instr>, asm: &mut Assembly) -> InversionResult<EcoVec<Instr>> {
         let mut resolved = EcoVec::new();
         let mut instrs = instrs.into_iter().peekable();
         while let Some(instr) = instrs.next() {
@@ -947,8 +920,8 @@ fn resolve_uns(instrs: EcoVec<Instr>, comp: &mut Compiler) -> InversionResult<Ec
                         .is_some_and(|instr| matches!(instr, Instr::Prim(Primitive::Un, _))) =>
                 {
                     instrs.next();
-                    let instrs = f.instrs(&comp.asm).to_vec();
-                    let inverse = invert_instrs(&instrs, comp).map_err(|e| e.func(&f))?;
+                    let instrs = f.instrs(asm).to_vec();
+                    let inverse = invert_instrs(&instrs, asm).map_err(|e| e.func(&f))?;
                     resolved.extend(inverse);
                 }
                 Instr::PushFunc(f)
@@ -956,25 +929,25 @@ fn resolve_uns(instrs: EcoVec<Instr>, comp: &mut Compiler) -> InversionResult<Ec
                         .is_some_and(|instr| matches!(instr, Instr::Prim(Primitive::Anti, _))) =>
                 {
                     instrs.next();
-                    let instrs = f.instrs(&comp.asm).to_vec();
-                    let inverse = anti_instrs(&instrs, comp).map_err(|e| e.func(&f))?;
+                    let instrs = f.instrs(asm).to_vec();
+                    let inverse = anti_instrs(&instrs, asm).map_err(|e| e.func(&f))?;
                     resolved.extend(inverse);
                 }
                 Instr::PushFunc(f) => {
-                    let instrs = f.instrs(&comp.asm);
-                    if !contains_un(instrs, &comp.asm) {
+                    let instrs = f.instrs(asm);
+                    if !contains_un(instrs, asm) {
                         resolved.push(Instr::PushFunc(f));
                         continue;
                     }
                     let instrs = EcoVec::from(instrs);
                     let id = f.id.clone();
-                    let resolved_f = resolve_uns(instrs, comp)?;
+                    let resolved_f = resolve_uns(instrs, asm)?;
                     let sig = instrs_signature(&resolved_f)?;
                     let new_func = NewFunction {
                         instrs: resolved_f,
                         flags: f.flags,
                     };
-                    let func = comp.make_function(id, sig, new_func);
+                    let func = asm.make_function(id, sig, new_func);
                     resolved.push(Instr::PushFunc(func));
                 }
                 instr => resolved.push(instr.clone()),
@@ -982,14 +955,14 @@ fn resolve_uns(instrs: EcoVec<Instr>, comp: &mut Compiler) -> InversionResult<Ec
         }
         Ok(resolved)
     }
-    resolve_uns(instrs, comp)
+    resolve_uns(instrs, asm)
 }
 
 trait InvertPattern: fmt::Debug + Sync {
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)>;
 }
 
@@ -998,15 +971,15 @@ trait UnderPattern: fmt::Debug {
         &self,
         input: &'a [Instr],
         g_sig: Signature,
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)>;
 }
 
 macro_rules! invert_pat {
-    ($name:ident, ($($pat:pat),*), |$input:ident, $comp:ident| $body:expr) => {
+    ($name:ident, ($($pat:pat),*), |$input:ident, $asm:ident| $body:expr) => {
         fn $name<'a>(
             $input: &'a [Instr],
-            $comp: &mut Compiler,
+            $asm: &mut Assembly,
         ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
             let [$($pat,)* $input @ ..] = $input else {
                 return generic();
@@ -1022,9 +995,9 @@ macro_rules! invert_pat {
 invert_pat!(
     invert_call_pattern,
     (Instr::PushFunc(f), Instr::Call(_)),
-    |input, comp| {
-        let instrs = f.instrs(&comp.asm).to_vec();
-        let inverse = invert_instrs(&instrs, comp)?;
+    |input, asm| {
+        let instrs = f.instrs(asm).to_vec();
+        let inverse = invert_instrs(&instrs, asm)?;
         (input, inverse)
     }
 );
@@ -1032,9 +1005,9 @@ invert_pat!(
 invert_pat!(
     anti_call_pattern,
     (Instr::PushFunc(f), Instr::Call(_)),
-    |input, comp| {
-        let instrs = f.instrs(&comp.asm).to_vec();
-        let inverse = anti_instrs(&instrs, comp)?;
+    |input, asm| {
+        let instrs = f.instrs(asm).to_vec();
+        let inverse = anti_instrs(&instrs, asm)?;
         (input, inverse)
     }
 );
@@ -1042,141 +1015,35 @@ invert_pat!(
 invert_pat!(
     invert_un_pattern,
     (Instr::PushFunc(f), Instr::Prim(Primitive::Un, _)),
-    |input, comp| (input, EcoVec::from(f.instrs(&comp.asm)))
+    |input, asm| (input, EcoVec::from(f.instrs(asm)))
 );
 
 invert_pat!(
     anti_anti_pattern,
     (Instr::PushFunc(f), Instr::Prim(Primitive::Anti, _)),
-    |input, comp| (input, EcoVec::from(f.instrs(&comp.asm)))
+    |input, asm| (input, EcoVec::from(f.instrs(asm)))
 );
-
-fn get_undered<'a>(
-    input: &'a [Instr],
-    comp: &mut Compiler,
-) -> InversionResult<(UnderedFunctions, &'a [Instr])> {
-    let res = if let [Instr::PushFunc(g), Instr::PushFunc(f), Instr::Prim(Primitive::Under, span), input @ ..] =
-        input
-    {
-        Ok((
-            UnderedFunctions {
-                f: EcoVec::from(f.instrs(&comp.asm)),
-                f_sig: f.signature(),
-                g: EcoVec::from(g.instrs(&comp.asm)),
-                g_sig: g.signature(),
-                span: *span,
-            },
-            input,
-        ))
-    } else if input.len() < 3 {
-        generic()
-    } else {
-        (1..=input.len())
-            .rev()
-            .find_map(|i| {
-                comp.undered_funcs
-                    .get(&input[..i])
-                    .map(|u| (u.clone(), &input[i..]))
-            })
-            .ok_or(Generic)
-    };
-    if res.is_ok() && !comp.scope.experimental {
-        return Err(InversionError::UnderExperimental);
-    }
-    res
-}
-
-fn invert_under_pattern<'a>(
-    input: &'a [Instr],
-    comp: &mut Compiler,
-) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-    let (u, input) = get_undered(input, comp)?;
-    let UnderedFunctions {
-        f, f_sig, g, g_sig, ..
-    } = u;
-    if g_sig.args != g_sig.outputs {
-        return Err(InversionError::AsymmetricUnderSig(g_sig));
-    }
-    let (f_before, f_after) = under_instrs(&f, g_sig, comp)?;
-    let g_inv = invert_instrs(&g, comp)?;
-    let mut inverse = f_before;
-    inverse.extend(g_inv);
-    inverse.extend(f_after);
-    if instrs_signature(&inverse)? != naive_under_sig(f_sig, g_sig) {
-        return Err(InversionError::ComplexInvertedUnder);
-    }
-    Ok((input, inverse))
-}
-
-fn under_under_pattern<'a>(
-    input: &'a [Instr],
-    outer_g_sig: Signature,
-    comp: &mut Compiler,
-) -> InversionResult<(&'a [Instr], Under)> {
-    let (u, input) = get_undered(input, comp)?;
-    let UnderedFunctions {
-        f,
-        f_sig,
-        g,
-        g_sig,
-        span,
-    } = u;
-    if g_sig.args != g_sig.outputs {
-        return Err(InversionError::AsymmetricUnderSig(g_sig));
-    }
-    let (f_before, f_after) = under_instrs(&f, g_sig, comp)?;
-    let (g_before, g_after) = under_instrs(&g, outer_g_sig, comp)?;
-    let context_size = f_sig.args.saturating_sub(f_sig.outputs);
-
-    let mut before = EcoVec::new();
-    if context_size > 0 {
-        before.push(Instr::CopyToTemp {
-            stack: TempStack::Under,
-            count: context_size,
-            span,
-        });
-    }
-    before.extend(f_before.iter().cloned());
-    before.extend(g_before);
-    before.extend(f_after.iter().cloned());
-    if instrs_signature(&before)? != naive_under_sig(f_sig, g_sig) {
-        return Err(InversionError::ComplexInvertedUnder);
-    }
-
-    let mut after = EcoVec::new();
-    if context_size > 0 {
-        after.push(Instr::PopTemp {
-            stack: TempStack::Under,
-            count: context_size,
-            span,
-        });
-    }
-    after.extend(f_before);
-    after.extend(g_after);
-    after.extend(f_after);
-    Ok((input, (before, after)))
-}
 
 fn under_un_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::Un, _), input @ ..] = input else {
         return generic();
     };
-    let instrs = EcoVec::from(f.instrs(&comp.asm));
-    let befores = invert_instrs(&instrs, comp).map_err(|e| e.func(f))?;
+    let instrs = EcoVec::from(f.instrs(asm));
+    let befores = invert_instrs(&instrs, asm).map_err(|e| e.func(f))?;
     if let [Instr::PushFunc(_), Instr::PushFunc(_), Instr::Prim(Primitive::SetInverse, _)] =
         befores.as_slice()
     {
-        if let Ok(under) = under_instrs(&befores, g_sig, comp) {
+        if let Ok(under) = under_instrs(&befores, g_sig, asm) {
             return Ok((input, under));
         }
     }
     Ok((
         input,
-        if let Ok((befores, afters)) = under_instrs(&befores, g_sig, comp) {
+        if let Ok((befores, afters)) = under_instrs(&befores, g_sig, asm) {
             (befores, afters)
         } else {
             (befores, instrs)
@@ -1187,23 +1054,23 @@ fn under_un_pattern<'a>(
 fn under_anti_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::Anti, _), input @ ..] = input else {
         return generic();
     };
-    let instrs = EcoVec::from(f.instrs(&comp.asm));
-    let befores = anti_instrs(&instrs, comp).map_err(|e| e.func(f))?;
+    let instrs = EcoVec::from(f.instrs(asm));
+    let befores = anti_instrs(&instrs, asm).map_err(|e| e.func(f))?;
     if let [Instr::PushFunc(_), Instr::PushFunc(_), Instr::Prim(Primitive::SetInverse, _)] =
         befores.as_slice()
     {
-        if let Ok(under) = under_instrs(&befores, g_sig, comp) {
+        if let Ok(under) = under_instrs(&befores, g_sig, asm) {
             return Ok((input, under));
         }
     }
     Ok((
         input,
-        if let Ok((befores, afters)) = under_instrs(&befores, g_sig, comp) {
+        if let Ok((befores, afters)) = under_instrs(&befores, g_sig, asm) {
             (befores, afters)
         } else {
             (befores, instrs)
@@ -1214,21 +1081,21 @@ fn under_anti_pattern<'a>(
 fn under_call_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::Call(span), input @ ..] = input else {
         return generic();
     };
     let span = *span;
-    let instrs = f.instrs(&comp.asm).to_vec();
-    let (befores, afters) = under_instrs(&instrs, g_sig, comp)?;
+    let instrs = f.instrs(asm).to_vec();
+    let (befores, afters) = under_instrs(&instrs, g_sig, asm)?;
     Ok((
         input,
-        if comp.inlinable(&instrs, f.flags) {
+        if asm.inlinable(&instrs, f.flags) {
             (befores, afters)
         } else {
-            let mut before = make_fn(befores, f.flags, span, comp)?;
-            let mut after = make_fn(afters, f.flags, span, comp)?;
+            let mut before = make_fn(befores, f.flags, span, asm)?;
+            let mut after = make_fn(afters, f.flags, span, asm)?;
             before.flags |= FunctionFlags::NO_PRE_EVAL;
             after.flags |= FunctionFlags::NO_PRE_EVAL;
             (
@@ -1241,7 +1108,7 @@ fn under_call_pattern<'a>(
 
 fn invert_trivial_pattern<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     use Instr::*;
     match input {
@@ -1280,14 +1147,14 @@ fn invert_trivial_pattern<'a>(
 
 fn invert_dip_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::Dip, span), input @ ..] = input else {
         return generic();
     };
-    let inner = f.instrs(&comp.asm).to_vec();
-    let inverse = invert_instrs(&inner, comp)?;
-    let inv_func = make_fn(inverse, f.flags, *span, comp)?;
+    let inner = f.instrs(asm).to_vec();
+    let inverse = invert_instrs(&inner, asm)?;
+    let inv_func = make_fn(inverse, f.flags, *span, asm)?;
     let instrs = eco_vec![
         Instr::PushFunc(inv_func),
         Instr::Prim(Primitive::Dip, *span),
@@ -1297,27 +1164,27 @@ fn invert_dip_pattern<'a>(
 
 fn invert_on_inv_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     if let [Instr::PushFunc(f), Instr::Prim(Primitive::Dip, span), input @ ..] = input {
-        let inner = f.instrs(&comp.asm).to_vec();
-        let (inp_after_val, mut instrs) = Val.invert_extract(&inner, comp)?;
+        let inner = f.instrs(asm).to_vec();
+        let (inp_after_val, mut instrs) = Val.invert_extract(&inner, asm)?;
         if !inp_after_val.is_empty() {
             return generic();
         }
         let mut temp_input = input.to_vec();
         temp_input.insert(0, Instr::Prim(Primitive::Flip, *span));
         for pattern in ON_INVERT_PATTERNS {
-            if let Ok((temp_inp, inv)) = pattern.invert_extract(&temp_input, comp) {
+            if let Ok((temp_inp, inv)) = pattern.invert_extract(&temp_input, asm) {
                 instrs.extend(inv);
                 return Ok((&input[temp_input.len() - 1 - temp_inp.len()..], instrs));
             }
         }
     }
 
-    let (input, mut instrs) = Val.invert_extract(input, comp)?;
+    let (input, mut instrs) = Val.invert_extract(input, asm)?;
     for pattern in ON_INVERT_PATTERNS {
-        if let Ok((input, inv)) = pattern.invert_extract(input, comp) {
+        if let Ok((input, inv)) = pattern.invert_extract(input, asm) {
             instrs.extend(inv);
             return Ok((input, instrs));
         }
@@ -1328,12 +1195,12 @@ fn invert_on_inv_pattern<'a>(
 
 fn invert_on_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::On, span), input @ ..] = input else {
         return generic();
     };
-    let inner = f.instrs(&comp.asm).to_vec();
+    let inner = f.instrs(asm).to_vec();
 
     for mid in 0..inner.len() {
         let (before, after) = inner.split_at(mid);
@@ -1344,17 +1211,17 @@ fn invert_on_pattern<'a>(
             continue;
         }
         for pat in ON_INVERT_PATTERNS {
-            if let Ok((after, on_inv)) = pat.invert_extract(after, comp) {
-                if let Ok(after_inv) = invert_instrs(after, comp) {
+            if let Ok((after, on_inv)) = pat.invert_extract(after, asm) {
+                if let Ok(after_inv) = invert_instrs(after, asm) {
                     let mut instrs = EcoVec::new();
                     if !after_inv.is_empty() {
-                        instrs.push(Instr::PushFunc(make_fn(after_inv, f.flags, *span, comp)?));
+                        instrs.push(Instr::PushFunc(make_fn(after_inv, f.flags, *span, asm)?));
                         instrs.push(Instr::Prim(Primitive::On, *span));
                     }
                     instrs.extend_from_slice(before);
                     instrs.extend(on_inv);
                     let instrs = eco_vec![
-                        Instr::PushFunc(make_fn(instrs, f.flags, *span, comp)?),
+                        Instr::PushFunc(make_fn(instrs, f.flags, *span, asm)?),
                         Instr::Prim(Primitive::On, *span)
                     ];
                     return Ok((input, instrs));
@@ -1363,9 +1230,9 @@ fn invert_on_pattern<'a>(
         }
     }
     // Pattern matching
-    let inverse = invert_instrs(&inner, comp)?;
+    let inverse = invert_instrs(&inner, asm)?;
     let instrs = eco_vec![
-        Instr::PushFunc(make_fn(inverse, f.flags, *span, comp)?),
+        Instr::PushFunc(make_fn(inverse, f.flags, *span, asm)?),
         Instr::Prim(Primitive::On, *span),
         Instr::Prim(Primitive::Over, *span),
         Instr::ImplPrim(ImplPrimitive::MatchPattern, *span),
@@ -1376,7 +1243,7 @@ fn invert_on_pattern<'a>(
 fn under_trivial_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     use Instr::*;
     match input {
@@ -1390,7 +1257,7 @@ fn under_trivial_pattern<'a>(
 
 fn invert_by_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::By, span), input @ ..] = input else {
         return generic();
@@ -1398,19 +1265,19 @@ fn invert_by_pattern<'a>(
     if f.signature().args != 1 {
         return generic();
     }
-    let instrs = f.instrs(&comp.asm).to_vec();
-    let (mut before, mut after) = under_instrs(&instrs, Signature::new(1, 1), comp)?;
+    let instrs = f.instrs(asm).to_vec();
+    let (mut before, mut after) = under_instrs(&instrs, Signature::new(1, 1), asm)?;
     let mut instrs = instrs.as_slice();
     while let [Instr::PushFunc(f), Instr::Call(_)] = after.as_slice() {
-        after = EcoVec::from(f.instrs(&comp.asm));
+        after = EcoVec::from(f.instrs(asm));
     }
     while let [Instr::PushFunc(f), Instr::Call(_)] = instrs {
-        instrs = f.instrs(&comp.asm);
+        instrs = f.instrs(asm);
     }
     (0..f.signature().outputs).for_each(|_| before.push(Instr::Prim(Primitive::Pop, *span)));
     let mut new_instrs = before;
     for _ in 0..f.signature().outputs {
-        let before_func = make_fn(new_instrs, f.flags, *span, comp)?;
+        let before_func = make_fn(new_instrs, f.flags, *span, asm)?;
         new_instrs = eco_vec![
             Instr::PushFunc(before_func),
             Instr::Prim(Primitive::Dip, *span),
@@ -1422,7 +1289,7 @@ fn invert_by_pattern<'a>(
 
 fn invert_dup_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::Prim(Primitive::Dup, dup_span), input @ ..] = input else {
         return generic();
@@ -1458,7 +1325,7 @@ fn invert_dup_pattern<'a>(
     let dyadic_part = &dyadic_whole[monadic_i..];
     dbgln!("inverse monadic part: {monadic_part:?}");
     dbgln!("inverse dyadic part: {dyadic_part:?}");
-    let monadic_inv = invert_instrs(monadic_part, comp)?;
+    let monadic_inv = invert_instrs(monadic_part, asm)?;
     let inverse = match *dyadic_part {
         [Instr::Prim(Primitive::Add, span)] => {
             let mut inv = monadic_inv;
@@ -1477,7 +1344,7 @@ fn invert_dup_pattern<'a>(
         }
         _ => {
             let mut inv = monadic_inv;
-            inv.extend(invert_instrs(dyadic_part, comp)?);
+            inv.extend(invert_instrs(dyadic_part, asm)?);
             inv.push(Instr::Prim(Primitive::Over, *dup_span));
             inv.push(Instr::ImplPrim(ImplPrimitive::MatchPattern, *dup_span));
             inv
@@ -1489,7 +1356,7 @@ fn invert_dup_pattern<'a>(
 fn under_dup_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::Prim(Primitive::Dup, dup_span), input @ ..] = input else {
         return generic();
@@ -1508,7 +1375,7 @@ fn under_dup_pattern<'a>(
     let dyadic_part = &dyadic_whole[monadic_i..];
     dbgln!("under monadic part: {monadic_part:?}");
     dbgln!("under dyadic part: {dyadic_part:?}");
-    let (monadic_befores, monadic_afters) = under_instrs(monadic_part, g_sig, comp)?;
+    let (monadic_befores, monadic_afters) = under_instrs(monadic_part, g_sig, asm)?;
 
     let mut befores = eco_vec![Instr::Prim(Primitive::Dup, *dup_span),];
     let mut afters = EcoVec::new();
@@ -1567,7 +1434,7 @@ fn under_dup_pattern<'a>(
 
 fn invert_select_pattern<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     Ok(match input {
         [Instr::Push(val), sel @ Instr::Prim(Primitive::Select, _), input @ ..] => {
@@ -1600,16 +1467,16 @@ fn invert_select_pattern<'a>(
 
 fn invert_push_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-    let (mut instrs, input) = if let Ok((input, instrs)) = Val.invert_extract(input, comp) {
+    let (mut instrs, input) = if let Ok((input, instrs)) = Val.invert_extract(input, asm) {
         (instrs, input)
     } else {
         match input {
             [instr @ Instr::Push(_), input @ ..] => (eco_vec![instr.clone()], input),
             [instr @ Instr::CallGlobal { index, .. }, input @ ..]
                 if matches!(
-                    comp.asm.bindings.get(*index).map(|b| &b.kind),
+                    asm.bindings.get(*index).map(|b| &b.kind),
                     Some(BindingKind::Const(_))
                 ) =>
             {
@@ -1623,14 +1490,14 @@ fn invert_push_pattern<'a>(
     }
     instrs.push(Instr::ImplPrim(
         ImplPrimitive::MatchPattern,
-        comp.asm.spans.len() - 1,
+        asm.spans.len() - 1,
     ));
     Ok((input, instrs))
 }
 
 fn invert_format_pattern<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     Ok(match input {
         [Instr::Format { parts, span }, input @ ..] => (
@@ -1653,7 +1520,7 @@ fn invert_format_pattern<'a>(
 
 fn invert_join_pattern<'a>(
     mut input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     use ImplPrimitive::*;
     use Instr::*;
@@ -1670,12 +1537,12 @@ fn invert_join_pattern<'a>(
     };
     let mut dipped = false;
     let instrs = if let Some((inp, mut instrs)) =
-        Val.invert_extract(input, comp).ok().or_else(|| {
+        Val.invert_extract(input, asm).ok().or_else(|| {
             try_push_temp_wrap(input).and_then(|(input, _, inner, _, depth)| {
                 if depth != 1 {
                     return None;
                 }
-                let Ok(([], val)) = Val.invert_extract(inner, comp) else {
+                let Ok(([], val)) = Val.invert_extract(inner, asm) else {
                     return None;
                 };
                 dipped = true;
@@ -1687,7 +1554,7 @@ fn invert_join_pattern<'a>(
             .rev()
             .find(|&i| instrs_clean_signature(&input[..i]).is_some_and(|sig| sig == (0, 0)))
         {
-            instrs.extend(invert_instrs(&input[..i], comp)?);
+            instrs.extend(invert_instrs(&input[..i], asm)?);
             input = &input[i..];
         }
         let (prim, span) = match *input {
@@ -1721,19 +1588,16 @@ fn invert_join_pattern<'a>(
         .find(|&i| instrs_clean_signature(&input[i..join_index]).is_some_and(|sig| sig == (0, 1)))
     {
         let mut instrs = eco_vec![Instr::ImplPrim(ImplPrimitive::UnJoin, join_span)];
-        instrs.extend(invert_instrs(&input[i..join_index], comp)?);
-        instrs.extend(invert_instrs(&input[..i], comp)?);
+        instrs.extend(invert_instrs(&input[i..join_index], asm)?);
+        instrs.extend(invert_instrs(&input[..i], asm)?);
         input = &input[join_index + 1..];
         instrs
     } else {
-        fn invert_inner(
-            mut input: &[Instr],
-            comp: &mut Compiler,
-        ) -> InversionResult<EcoVec<Instr>> {
+        fn invert_inner(mut input: &[Instr], asm: &mut Assembly) -> InversionResult<EcoVec<Instr>> {
             let mut instrs = EcoVec::new();
             while !input.is_empty() {
                 if let Some((inp, _, inner, ..)) = try_push_temp_wrap(input) {
-                    instrs.extend(invert_inner(inner, comp)?);
+                    instrs.extend(invert_inner(inner, asm)?);
                     input = inp;
                     continue;
                 }
@@ -1747,11 +1611,11 @@ fn invert_join_pattern<'a>(
                             }
                         )
                 }) {
-                    instrs.extend(invert_instrs(&input[..i], comp)?);
+                    instrs.extend(invert_instrs(&input[..i], asm)?);
                     input = &input[i..];
                     continue;
                 }
-                instrs.extend(invert_instrs(input, comp)?);
+                instrs.extend(invert_instrs(input, asm)?);
                 break;
             }
             Ok(instrs)
@@ -1762,7 +1626,7 @@ fn invert_join_pattern<'a>(
         let flip = flip_before ^ flip_after;
         let before = &input[flip_before as usize..join_index - flip_after as usize];
         input = &input[join_index + 1..];
-        let before_inv = invert_inner(before, comp)?;
+        let before_inv = invert_inner(before, asm)?;
         let before_sig = instrs_clean_signature(&before_inv).ok_or(Generic)?;
         let mut instrs = EcoVec::new();
         let count = before_sig.outputs.saturating_sub(before_sig.args) + 1;
@@ -1794,10 +1658,10 @@ fn invert_join_pattern<'a>(
 
 fn invert_insert_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-    let (input, first) = Val.invert_extract(input, comp)?;
-    let second = Val.invert_extract(input, comp);
+    let (input, first) = Val.invert_extract(input, asm)?;
+    let second = Val.invert_extract(input, asm);
     let &[Instr::Prim(Primitive::Insert, span), ref input @ ..] = input else {
         return generic();
     };
@@ -1833,7 +1697,7 @@ fn invert_insert_pattern<'a>(
 
 fn invert_custom_pattern<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), Instr::CustomInverse(cust, span), input @ ..] = input else {
         return generic();
@@ -1849,7 +1713,7 @@ fn invert_custom_pattern<'a>(
 
 fn anti_custom_pattern<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), Instr::CustomInverse(cust, span), input @ ..] = input else {
         return generic();
@@ -1866,7 +1730,7 @@ fn anti_custom_pattern<'a>(
 fn under_custom_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::CustomInverse(cust, span), input @ ..] = input else {
         return generic();
@@ -1875,16 +1739,16 @@ fn under_custom_pattern<'a>(
         if before.signature().outputs < f.signature().outputs {
             return generic();
         }
-        let befores = EcoVec::from(before.instrs(&comp.asm));
-        let afters = EcoVec::from(after.instrs(&comp.asm));
+        let befores = EcoVec::from(before.instrs(asm));
+        let afters = EcoVec::from(after.instrs(asm));
         let to_save = before.signature().outputs - f.signature().outputs;
         (befores, afters, to_save)
     } else if let Some(anti) = cust.anti.clone() {
         let to_save = anti.signature().args - f.signature().outputs;
-        let mut befores = EcoVec::from(f.instrs(&comp.asm));
+        let mut befores = EcoVec::from(f.instrs(asm));
         befores.insert(0, Instr::copy_inline(1, *span));
         befores.push(Instr::pop_inline(1, *span));
-        let afters = EcoVec::from(anti.instrs(&comp.asm));
+        let afters = EcoVec::from(anti.instrs(asm));
         (befores, afters, to_save)
     } else {
         return generic();
@@ -1909,7 +1773,7 @@ fn under_custom_pattern<'a>(
 
 fn invert_setinv_pattern<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [inv @ Instr::PushFunc(_), normal @ Instr::PushFunc(_), set @ Instr::Prim(Primitive::SetInverse, _), input @ ..] =
         input
@@ -1921,7 +1785,7 @@ fn invert_setinv_pattern<'a>(
 
 fn invert_setund_setinv_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(_), Instr::PushFunc(_), Instr::PushFunc(normal), Instr::Prim(Primitive::SetUnder, _), input @ ..] =
         input
@@ -1929,16 +1793,16 @@ fn invert_setund_setinv_pattern<'a>(
         return generic();
     };
     let [Instr::PushFunc(inv), Instr::PushFunc(_), Instr::Prim(Primitive::SetInverse, _)] =
-        normal.instrs(&comp.asm)
+        normal.instrs(asm)
     else {
         return generic();
     };
-    Ok((input, inv.instrs(&comp.asm).into()))
+    Ok((input, inv.instrs(asm).into()))
 }
 
 fn invert_dump_pattern<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     match input {
         [f @ Instr::PushFunc(_), Instr::Prim(Primitive::Dump, span), input @ ..] => Ok((
@@ -1956,7 +1820,7 @@ fn invert_dump_pattern<'a>(
 fn under_dump_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     match input {
         [f @ Instr::PushFunc(_), Instr::Prim(Primitive::Dump, span), input @ ..] => Ok((
@@ -1980,7 +1844,7 @@ fn under_dump_pattern<'a>(
 fn under_from_inverse_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     if input.is_empty() {
         return generic();
@@ -1988,7 +1852,7 @@ fn under_from_inverse_pattern<'a>(
     let mut end = input.len();
     loop {
         for pattern in INVERT_PATTERNS {
-            if let Ok((inp, after)) = pattern.invert_extract(&input[..end], comp) {
+            if let Ok((inp, after)) = pattern.invert_extract(&input[..end], asm) {
                 let input_pattern_match_count = input[..end]
                     .iter()
                     .filter(|instr| {
@@ -2019,24 +1883,21 @@ fn under_from_inverse_pattern<'a>(
 fn under_setinv_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(inv), Instr::PushFunc(normal), Instr::Prim(Primitive::SetInverse, _), input @ ..] =
         input
     else {
         return generic();
     };
-    let under = (
-        normal.instrs(&comp.asm).into(),
-        inv.instrs(&comp.asm).into(),
-    );
+    let under = (normal.instrs(asm).into(), inv.instrs(asm).into());
     Ok((input, under))
 }
 
 fn under_setund_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(after), Instr::PushFunc(before), Instr::PushFunc(normal), Instr::Prim(Primitive::SetUnder, span), input @ ..] =
         input
@@ -2047,8 +1908,8 @@ fn under_setund_pattern<'a>(
         return generic();
     }
     let to_save = before.signature().outputs - normal.signature().outputs;
-    let mut befores = EcoVec::from(before.instrs(&comp.asm));
-    let mut afters = EcoVec::from(after.instrs(&comp.asm));
+    let mut befores = EcoVec::from(before.instrs(asm));
+    let mut afters = EcoVec::from(after.instrs(asm));
     if to_save > 0 {
         befores.push(Instr::PushTemp {
             stack: TempStack::Under,
@@ -2070,7 +1931,7 @@ fn under_setund_pattern<'a>(
 fn under_setinv_setund_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(_), Instr::PushFunc(normal), Instr::Prim(Primitive::SetInverse, _), input @ ..] =
         input
@@ -2078,17 +1939,11 @@ fn under_setinv_setund_pattern<'a>(
         return generic();
     };
     let [Instr::PushFunc(after), Instr::PushFunc(before), Instr::PushFunc(_), Instr::Prim(Primitive::SetUnder, _)] =
-        normal.instrs(&comp.asm)
+        normal.instrs(asm)
     else {
         return generic();
     };
-    Ok((
-        input,
-        (
-            before.instrs(&comp.asm).into(),
-            after.instrs(&comp.asm).into(),
-        ),
-    ))
+    Ok((input, (before.instrs(asm).into(), after.instrs(asm).into())))
 }
 
 type TempWrap<'a> = (&'a [Instr], &'a Instr, &'a [Instr], &'a Instr, usize);
@@ -2146,7 +2001,7 @@ fn temp_wrap_impl(input: &[Instr], f: impl Fn(&Instr) -> Option<usize>) -> Optio
 
 fn invert_push_temp_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let (input, instr, inner, end_instr, depth) = try_push_temp_wrap(input).ok_or(Generic)?;
     // By-inverse
@@ -2166,7 +2021,7 @@ fn invert_push_temp_pattern<'a>(
                     continue;
                 }
                 for pat in BY_INVERT_PATTERNS {
-                    if let Ok((after, by_inv)) = pat.invert_extract(instrs, comp) {
+                    if let Ok((after, by_inv)) = pat.invert_extract(instrs, asm) {
                         if after.is_empty() {
                             let mut instrs = eco_vec![
                                 instr.clone(),
@@ -2184,7 +2039,7 @@ fn invert_push_temp_pattern<'a>(
     } else if instrs_signature(inner).is_ok_and(|sig| sig == (0, 1)) {
         // Dip constant
         for pat in BY_INVERT_PATTERNS {
-            if let Ok((input, by_inv)) = pat.invert_extract(input, comp) {
+            if let Ok((input, by_inv)) = pat.invert_extract(input, asm) {
                 let mut instrs = eco_vec![instr.clone()];
                 instrs.extend_from_slice(inner);
                 instrs.push(end_instr.clone());
@@ -2194,7 +2049,7 @@ fn invert_push_temp_pattern<'a>(
         }
     }
     // Normal inverse
-    let mut instrs = invert_instrs(inner, comp)?;
+    let mut instrs = invert_instrs(inner, asm)?;
     instrs.insert(0, instr.clone());
     instrs.push(end_instr.clone());
     Ok((input, instrs))
@@ -2202,16 +2057,16 @@ fn invert_push_temp_pattern<'a>(
 
 fn invert_flip_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-    let Ok((input, mut instrs)) = Val.invert_extract(input, comp) else {
+    let Ok((input, mut instrs)) = Val.invert_extract(input, asm) else {
         return generic();
     };
     let [Instr::Prim(Primitive::Flip, span), input @ ..] = input else {
         return generic();
     };
     for pat in BY_INVERT_PATTERNS {
-        if let Ok((input, mut by_inv)) = pat.invert_extract(input, comp) {
+        if let Ok((input, mut by_inv)) = pat.invert_extract(input, asm) {
             if instrs
                 .first()
                 .is_some_and(|instr| matches!(instr, Instr::Prim(Primitive::Flip, _)))
@@ -2230,13 +2085,13 @@ fn invert_flip_pattern<'a>(
 fn under_flip_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::Prim(Primitive::Flip, span), input @ ..] = input else {
         return generic();
     };
     let befores = eco_vec![Instr::Prim(Primitive::Flip, *span)];
-    let (rest_befores, rest_afters) = under_instrs(input, g_sig, &mut comp.clone())?;
+    let (rest_befores, rest_afters) = under_instrs(input, g_sig, &mut asm.clone())?;
     let rest_befores_sig = instrs_signature(&rest_befores)?;
     let rest_afters_sig = instrs_signature(&rest_afters)?;
     let total_args = g_sig.args + rest_befores_sig.args + rest_afters_sig.args;
@@ -2252,19 +2107,19 @@ fn under_flip_pattern<'a>(
 fn under_dip_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::Dip, span), rest @ ..] = input else {
         return generic();
     };
     let span = *span;
-    let instrs = f.instrs(&comp.asm).to_vec();
+    let instrs = f.instrs(asm).to_vec();
     let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
-    let (f_before, f_after) = under_instrs(&instrs, inner_g_sig, comp).map_err(|e| e.func(f))?;
-    let (rest_before, rest_after) = under_instrs(rest, g_sig, comp)?;
+    let (f_before, f_after) = under_instrs(&instrs, inner_g_sig, asm).map_err(|e| e.func(f))?;
+    let (rest_before, rest_after) = under_instrs(rest, g_sig, asm)?;
     let rest_before_sig = instrs_signature(&rest_before)?;
     let rest_after_sig = instrs_signature(&rest_after)?;
-    let before_func = make_fn(f_before, f.flags, span, comp)?;
+    let before_func = make_fn(f_before, f.flags, span, asm)?;
     let mut befores = eco_vec![
         Instr::PushFunc(before_func),
         Instr::Prim(Primitive::Dip, span),
@@ -2274,7 +2129,7 @@ fn under_dip_pattern<'a>(
     if g_sig.args + rest_before_sig.args > g_sig.outputs + rest_after_sig.outputs {
         afters.extend(f_after);
     } else {
-        let after_func = make_fn(f_after, f.flags, span, comp)?;
+        let after_func = make_fn(f_after, f.flags, span, asm)?;
         afters.extend([
             Instr::PushFunc(after_func),
             Instr::Prim(Primitive::Dip, span),
@@ -2286,17 +2141,16 @@ fn under_dip_pattern<'a>(
 fn under_both_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::Both, span), input @ ..] = input else {
         return generic();
     };
     let span = *span;
-    let instrs = f.instrs(&comp.asm).to_vec();
+    let instrs = f.instrs(asm).to_vec();
     let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
-    let (f_before, mut f_after) =
-        under_instrs(&instrs, inner_g_sig, comp).map_err(|e| e.func(f))?;
-    let before_func = make_fn(f_before, f.flags, span, comp)?;
+    let (f_before, mut f_after) = under_instrs(&instrs, inner_g_sig, asm).map_err(|e| e.func(f))?;
+    let before_func = make_fn(f_before, f.flags, span, asm)?;
     let befores = eco_vec![
         Instr::PushFunc(before_func),
         Instr::Prim(Primitive::Both, span),
@@ -2314,28 +2168,28 @@ fn under_both_pattern<'a>(
         }
         f_after
     } else {
-        let after_func = make_fn(f_after, f.flags, span, comp)?;
+        let after_func = make_fn(f_after, f.flags, span, asm)?;
         eco_vec![
             Instr::PushFunc(after_func),
             Instr::ImplPrim(ImplPrimitive::UnBoth, span),
         ]
     };
-    // println!("befores: {}", crate::FmtInstrs(&befores, &comp.asm));
-    // println!("afters: {}", crate::FmtInstrs(&afters, &comp.asm));
+    // println!("befores: {}", crate::FmtInstrs(&befores, asm));
+    // println!("afters: {}", crate::FmtInstrs(&afters, asm));
     Ok((input, (befores, afters)))
 }
 
 fn under_on_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::On, span), input @ ..] = input else {
         return generic();
     };
-    let instrs = f.instrs(&comp.asm).to_vec();
-    let (f_before, f_after) = under_instrs(&instrs, g_sig, comp).map_err(|e| e.func(f))?;
-    let before_func = make_fn(f_before, f.flags, *span, comp)?;
+    let instrs = f.instrs(asm).to_vec();
+    let (f_before, f_after) = under_instrs(&instrs, g_sig, asm).map_err(|e| e.func(f))?;
+    let before_func = make_fn(f_before, f.flags, *span, asm)?;
     let befores = eco_vec![
         Instr::PushFunc(before_func),
         Instr::Prim(Primitive::On, *span),
@@ -2343,7 +2197,7 @@ fn under_on_pattern<'a>(
     let afters = if g_sig.args > f.signature().outputs {
         f_after
     } else {
-        let f_after_func = make_fn(f_after, f.flags, *span, comp)?;
+        let f_after_func = make_fn(f_after, f.flags, *span, asm)?;
         eco_vec![
             Instr::PushFunc(f_after_func),
             Instr::Prim(Primitive::Dip, *span),
@@ -2356,33 +2210,33 @@ fn make_fn(
     instrs: EcoVec<Instr>,
     flags: FunctionFlags,
     span: usize,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<Function> {
     let sig = instrs_signature(&instrs)?;
-    let Span::Code(span) = comp.get_span(span) else {
+    let Span::Code(span) = asm.get_span(span) else {
         return generic();
     };
     let id = FunctionId::Anonymous(span);
-    Ok(comp.make_function(id, sig, NewFunction { instrs, flags }))
+    Ok(asm.make_function(id, sig, NewFunction { instrs, flags }))
 }
 
 fn under_each_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let &[Instr::PushFunc(ref f), Instr::Prim(Primitive::Each, span), ref input @ ..] = input
     else {
         return generic();
     };
-    let instrs = f.instrs(&comp.asm).to_vec();
-    let (f_before, f_after) = under_instrs(&instrs, g_sig, comp).map_err(|e| e.func(f))?;
+    let instrs = f.instrs(asm).to_vec();
+    let (f_before, f_after) = under_instrs(&instrs, g_sig, asm).map_err(|e| e.func(f))?;
     let befores = eco_vec![
-        Instr::PushFunc(make_fn(f_before, f.flags, span, comp)?),
+        Instr::PushFunc(make_fn(f_before, f.flags, span, asm)?),
         Instr::Prim(Primitive::Each, span),
     ];
     let afters = eco_vec![
-        Instr::PushFunc(make_fn(f_after, f.flags, span, comp)?),
+        Instr::PushFunc(make_fn(f_after, f.flags, span, asm)?),
         Instr::Prim(Primitive::Each, span),
     ];
     Ok((input, (befores, afters)))
@@ -2390,34 +2244,34 @@ fn under_each_pattern<'a>(
 
 fn invert_rows_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), instr @ Instr::Prim(Primitive::Rows, span), input @ ..] = input else {
         return generic();
     };
-    let instrs = f.instrs(&comp.asm).to_vec();
-    let inverse = invert_instrs(&instrs, comp).map_err(|e| e.func(f))?;
-    let f = make_fn(inverse, f.flags, *span, comp)?;
+    let instrs = f.instrs(asm).to_vec();
+    let inverse = invert_instrs(&instrs, asm).map_err(|e| e.func(f))?;
+    let f = make_fn(inverse, f.flags, *span, asm)?;
     Ok((input, eco_vec![Instr::PushFunc(f), instr.clone()]))
 }
 
 fn under_rows_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let &[Instr::PushFunc(ref f), Instr::Prim(prim @ (Primitive::Rows | Primitive::Inventory), span), ref input @ ..] =
         input
     else {
         return generic();
     };
-    let instrs = f.instrs(&comp.asm).to_vec();
-    let (f_before, f_after) = under_instrs(&instrs, g_sig, comp).map_err(|e| e.func(f))?;
+    let instrs = f.instrs(asm).to_vec();
+    let (f_before, f_after) = under_instrs(&instrs, g_sig, asm).map_err(|e| e.func(f))?;
     let befores = eco_vec![
-        Instr::PushFunc(make_fn(f_before, f.flags, span, comp)?),
+        Instr::PushFunc(make_fn(f_before, f.flags, span, asm)?),
         Instr::Prim(prim, span),
     ];
-    let after_fn = make_fn(f_after, f.flags, span, comp)?;
+    let after_fn = make_fn(f_after, f.flags, span, asm)?;
     let after_sig = after_fn.signature();
     let mut afters = eco_vec![
         Instr::PushFunc(after_fn),
@@ -2446,7 +2300,7 @@ fn under_rows_pattern<'a>(
 fn under_reverse_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     if g_sig.outputs == 1 {
         return generic();
@@ -2470,7 +2324,7 @@ fn under_reverse_pattern<'a>(
 fn under_transpose_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     if g_sig.outputs == 1 {
         return generic();
@@ -2497,7 +2351,7 @@ fn under_transpose_pattern<'a>(
 fn under_rotate_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::Prim(Primitive::Rotate, span), input @ ..] = input else {
         return generic();
@@ -2529,7 +2383,7 @@ fn under_rotate_pattern<'a>(
 
 fn invert_fill_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), Instr::PushFunc(get_fill), Instr::Prim(Primitive::Fill, span), input @ ..] =
         input
@@ -2539,9 +2393,9 @@ fn invert_fill_pattern<'a>(
     if get_fill.signature() != (0, 1) {
         return generic();
     }
-    let f_instrs = f.instrs(&comp.asm).to_vec();
-    let f_inv = invert_instrs(&f_instrs, comp).map_err(|e| e.func(f))?;
-    let inverse = make_fn(f_inv, f.flags, *span, comp)?;
+    let f_instrs = f.instrs(asm).to_vec();
+    let f_inv = invert_instrs(&f_instrs, asm).map_err(|e| e.func(f))?;
+    let inverse = make_fn(f_inv, f.flags, *span, asm)?;
     let instrs = eco_vec![
         Instr::PushFunc(inverse),
         Instr::PushFunc(get_fill.clone()),
@@ -2553,7 +2407,7 @@ fn invert_fill_pattern<'a>(
 fn under_fill_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), Instr::PushFunc(get_fill), Instr::Prim(Primitive::Fill, span), input @ ..] =
         input
@@ -2564,10 +2418,10 @@ fn under_fill_pattern<'a>(
     if get_fill.signature() != (0, 1) {
         return generic();
     }
-    let f_instrs = f.instrs(&comp.asm).to_vec();
-    let (f_before, f_after) = under_instrs(&f_instrs, g_sig, comp).map_err(|e| e.func(f))?;
-    let f_before = make_fn(f_before, f.flags, span, comp)?;
-    let f_after = make_fn(f_after, f.flags, span, comp)?;
+    let f_instrs = f.instrs(asm).to_vec();
+    let (f_before, f_after) = under_instrs(&f_instrs, g_sig, asm).map_err(|e| e.func(f))?;
+    let f_before = make_fn(f_before, f.flags, span, asm)?;
+    let f_after = make_fn(f_after, f.flags, span, asm)?;
     let befores = eco_vec![
         Instr::PushFunc(f_before),
         Instr::PushFunc(get_fill.clone()),
@@ -2584,7 +2438,7 @@ fn under_fill_pattern<'a>(
 fn under_switch_pattern<'a>(
     mut input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let mut funcs = Vec::new();
     while let (Instr::PushFunc(f), rest) = input.split_first().ok_or(Generic)? {
@@ -2611,10 +2465,10 @@ fn under_switch_pattern<'a>(
     let mut undo_sig: Option<Signature> = None;
     for f in &funcs {
         // Calc under f
-        let f_instrs = f.instrs(&comp.asm).to_vec();
-        let (before, after) = under_instrs(&f_instrs, g_sig, comp).map_err(|e| e.func(f))?;
-        f_befores.push(make_fn(before, f.flags, *span, comp)?);
-        let f_after = make_fn(after, f.flags, *span, comp)?;
+        let f_instrs = f.instrs(asm).to_vec();
+        let (before, after) = under_instrs(&f_instrs, g_sig, asm).map_err(|e| e.func(f))?;
+        f_befores.push(make_fn(before, f.flags, *span, asm)?);
+        let f_after = make_fn(after, f.flags, *span, asm)?;
         let f_after_sig = f_after.signature();
         f_afters.push(f_after);
         // Aggregate sigs
@@ -2660,26 +2514,26 @@ macro_rules! partition_group {
         fn $name<'a>(
             input: &'a [Instr],
             g_sig: Signature,
-            comp: &mut Compiler,
+            asm: &mut Assembly,
         ) -> InversionResult<(&'a [Instr], Under)> {
             let &[Instr::PushFunc(ref f), Instr::Prim(Primitive::$prim, span), ref input @ ..] =
                 input
             else {
                 return generic();
             };
-            let instrs = f.instrs(&comp.asm).to_vec();
-            let (f_before, f_after) = under_instrs(&instrs, g_sig, comp).map_err(|e| e.func(f))?;
+            let instrs = f.instrs(asm).to_vec();
+            let (f_before, f_after) = under_instrs(&instrs, g_sig, asm).map_err(|e| e.func(f))?;
             let befores = eco_vec![
                 Instr::CopyToTemp {
                     stack: TempStack::Under,
                     count: 2,
                     span,
                 },
-                Instr::PushFunc(make_fn(f_before, f.flags, span, comp)?),
+                Instr::PushFunc(make_fn(f_before, f.flags, span, asm)?),
                 Instr::Prim(Primitive::$prim, span),
             ];
             let afters = eco_vec![
-                Instr::PushFunc(make_fn(f_after, f.flags, span, comp)?),
+                Instr::PushFunc(make_fn(f_after, f.flags, span, asm)?),
                 Instr::ImplPrim(ImplPrimitive::$impl_prim1, span),
                 Instr::push_inline(1, span),
                 Instr::PopTemp {
@@ -2705,7 +2559,7 @@ partition_group!(under_group_pattern, Group, UndoGroup1, UndoGroup2);
 
 fn try_array_wrap<'a>(
     input: &'a [Instr],
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> Option<(&'a [Instr], &'a [Instr], usize, bool)> {
     let [Instr::BeginArray, input @ ..] = input else {
         return None;
@@ -2730,11 +2584,11 @@ fn try_array_wrap<'a>(
 
 fn invert_array_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-    let (input, inner, span, unbox) = try_array_wrap(input, comp).ok_or(Generic)?;
+    let (input, inner, span, unbox) = try_array_wrap(input, asm).ok_or(Generic)?;
     let count = instrs_signature(inner)?.outputs;
-    let mut instrs = invert_instrs(inner, comp)?;
+    let mut instrs = invert_instrs(inner, asm)?;
     instrs.insert(0, Instr::Unpack { count, span, unbox });
     Ok((input, instrs))
 }
@@ -2742,10 +2596,10 @@ fn invert_array_pattern<'a>(
 fn under_array_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
-    let (input, inner, span, unbox) = try_array_wrap(input, comp).ok_or(Generic)?;
-    let (mut befores, mut afters) = under_instrs(inner, g_sig, comp)?;
+    let (input, inner, span, unbox) = try_array_wrap(input, asm).ok_or(Generic)?;
+    let (mut befores, mut afters) = under_instrs(inner, g_sig, asm)?;
     let count = instrs_signature(&befores)?.outputs;
     befores.insert(0, Instr::BeginArray);
     befores.push(Instr::EndArray { span, boxed: unbox });
@@ -2755,12 +2609,12 @@ fn under_array_pattern<'a>(
 
 fn invert_unpack_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::Unpack { count, span, unbox }, input @ ..] = input else {
         return generic();
     };
-    let mut instrs = invert_instrs(input, comp)?;
+    let mut instrs = invert_instrs(input, asm)?;
     instrs.insert(0, Instr::BeginArray);
     if *count > 0 {
         instrs.push(Instr::TouchStack {
@@ -2778,12 +2632,12 @@ fn invert_unpack_pattern<'a>(
 fn under_unpack_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [unpack @ Instr::Unpack { count, span, unbox }, input @ ..] = input else {
         return generic();
     };
-    let (mut befores, mut afters) = under_instrs(input, g_sig, comp)?;
+    let (mut befores, mut afters) = under_instrs(input, g_sig, asm)?;
     befores.insert(0, unpack.clone());
     afters.insert(0, Instr::BeginArray);
     afters.extend([
@@ -2802,7 +2656,7 @@ fn under_unpack_pattern<'a>(
 fn under_touch_pattern<'a>(
     input: &'a [Instr],
     _: Signature,
-    _: &mut Compiler,
+    _: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [instr @ Instr::TouchStack { .. }, input @ ..] = input else {
         return generic();
@@ -2812,7 +2666,7 @@ fn under_touch_pattern<'a>(
 
 fn invert_scan_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), instr, input @ ..] = input else {
         return generic();
@@ -2822,7 +2676,7 @@ fn invert_scan_pattern<'a>(
         return generic();
     };
     let un = matches!(instr, Instr::ImplPrim(ImplPrimitive::UnScan, _));
-    let inverse = match f.as_flipped_primitive(&comp.asm) {
+    let inverse = match f.as_flipped_primitive(asm) {
         Some((Primitive::Add, false)) if !un => eco_vec![Instr::Prim(Primitive::Sub, *span)],
         Some((Primitive::Mul, false)) if !un => eco_vec![Instr::Prim(Primitive::Div, *span)],
         Some((Primitive::Sub, false)) if un => eco_vec![Instr::Prim(Primitive::Add, *span)],
@@ -2830,11 +2684,11 @@ fn invert_scan_pattern<'a>(
         Some((Primitive::Eq, false)) => eco_vec![Instr::Prim(Primitive::Eq, *span)],
         Some((Primitive::Ne, false)) => eco_vec![Instr::Prim(Primitive::Ne, *span)],
         _ => {
-            let instrs = f.instrs(&comp.asm).to_vec();
-            invert_instrs(&instrs, comp).map_err(|e| e.func(f))?
+            let instrs = f.instrs(asm).to_vec();
+            invert_instrs(&instrs, asm).map_err(|e| e.func(f))?
         }
     };
-    let inverse = make_fn(inverse, f.flags, *span, comp)?;
+    let inverse = make_fn(inverse, f.flags, *span, asm)?;
     Ok((
         input,
         eco_vec![
@@ -2850,13 +2704,13 @@ fn invert_scan_pattern<'a>(
 
 fn anti_repeat_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     match input {
         [Instr::PushFunc(f), repeat @ Instr::Prim(Primitive::Repeat, span), input @ ..] => {
-            let f_instrs = f.instrs(&comp.asm).to_vec();
-            let instrs = invert_instrs(&f_instrs, comp).map_err(|e| e.func(f))?;
-            let inverse = make_fn(instrs, f.flags, *span, comp)?;
+            let f_instrs = f.instrs(asm).to_vec();
+            let instrs = invert_instrs(&f_instrs, asm).map_err(|e| e.func(f))?;
+            let inverse = make_fn(instrs, f.flags, *span, asm)?;
             Ok((input, eco_vec![Instr::PushFunc(inverse), repeat.clone()]))
         }
         [Instr::PushFunc(inv), Instr::PushFunc(f), Instr::ImplPrim(ImplPrimitive::RepeatWithInverse, span), input @ ..] =>
@@ -2875,7 +2729,7 @@ fn anti_repeat_pattern<'a>(
 fn under_repeat_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     use ImplPrimitive::*;
     use Instr::*;
@@ -2883,15 +2737,15 @@ fn under_repeat_pattern<'a>(
     Ok(match input {
         [PushFunc(f), Prim(Repeat, span), input @ ..]
         | [PushFunc(_), PushFunc(f), ImplPrim(RepeatWithInverse, span), input @ ..] => {
-            let instrs = f.instrs(&comp.asm).to_vec();
-            let (befores, afters) = under_instrs(&instrs, g_sig, comp).map_err(|e| e.func(f))?;
+            let instrs = f.instrs(asm).to_vec();
+            let (befores, afters) = under_instrs(&instrs, g_sig, asm).map_err(|e| e.func(f))?;
             let befores = eco_vec![
                 CopyToTemp {
                     stack: TempStack::Under,
                     count: 1,
                     span: *span
                 },
-                PushFunc(make_fn(befores, f.flags, *span, comp)?),
+                PushFunc(make_fn(befores, f.flags, *span, asm)?),
                 Prim(Repeat, *span)
             ];
             let afters = eco_vec![
@@ -2900,7 +2754,7 @@ fn under_repeat_pattern<'a>(
                     count: 1,
                     span: *span,
                 },
-                PushFunc(make_fn(afters, f.flags, *span, comp)?),
+                PushFunc(make_fn(afters, f.flags, *span, asm)?),
                 Prim(Repeat, *span)
             ];
             (input, (befores, afters))
@@ -2908,16 +2762,16 @@ fn under_repeat_pattern<'a>(
         [push @ Push(_), PushFunc(f), Prim(Repeat, span), input @ ..]
         | [push @ Push(_), PushFunc(_), PushFunc(f), ImplPrim(RepeatWithInverse, span), input @ ..] =>
         {
-            let instrs = f.instrs(&comp.asm).to_vec();
-            let (befores, afters) = under_instrs(&instrs, g_sig, comp).map_err(|e| e.func(f))?;
+            let instrs = f.instrs(asm).to_vec();
+            let (befores, afters) = under_instrs(&instrs, g_sig, asm).map_err(|e| e.func(f))?;
             let befores = eco_vec![
                 push.clone(),
-                PushFunc(make_fn(befores, f.flags, *span, comp)?),
+                PushFunc(make_fn(befores, f.flags, *span, asm)?),
                 Prim(Repeat, *span)
             ];
             let afters = eco_vec![
                 push.clone(),
-                PushFunc(make_fn(afters, f.flags, *span, comp)?),
+                PushFunc(make_fn(afters, f.flags, *span, asm)?),
                 Prim(Repeat, *span)
             ];
             (input, (befores, afters))
@@ -2929,14 +2783,14 @@ fn under_repeat_pattern<'a>(
 fn under_fold_pattern<'a>(
     input: &'a [Instr],
     g_sig: Signature,
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], Under)> {
     let [Instr::PushFunc(f), fold @ Instr::Prim(Primitive::Fold, span), input @ ..] = input else {
         return generic();
     };
     let span = *span;
-    let inner = f.instrs(&comp.asm).to_vec();
-    let (inner_befores, inner_afters) = under_instrs(&inner, g_sig, comp).map_err(|e| e.func(f))?;
+    let inner = f.instrs(asm).to_vec();
+    let (inner_befores, inner_afters) = under_instrs(&inner, g_sig, asm).map_err(|e| e.func(f))?;
     let inner_befores_sig = instrs_signature(&inner_befores)?;
     let inner_afters_sig = instrs_signature(&inner_afters)?;
     if inner_befores_sig.outputs > inner_befores_sig.args
@@ -2944,8 +2798,8 @@ fn under_fold_pattern<'a>(
     {
         return generic();
     }
-    let befores_func = make_fn(inner_befores, f.flags, span, comp)?;
-    let afters_func = make_fn(inner_afters, f.flags, span, comp)?;
+    let befores_func = make_fn(inner_befores, f.flags, span, asm)?;
+    let afters_func = make_fn(inner_afters, f.flags, span, asm)?;
     let befores = eco_vec![
         Instr::Prim(Primitive::Dup, span),
         Instr::Prim(Primitive::Len, span),
@@ -2967,12 +2821,12 @@ fn under_fold_pattern<'a>(
 
 fn invert_reduce_mul_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::PushFunc(f), Instr::Prim(Primitive::Reduce, span), input @ ..] = input else {
         return generic();
     };
-    let Some((Primitive::Mul, _)) = f.as_flipped_primitive(&comp.asm) else {
+    let Some((Primitive::Mul, _)) = f.as_flipped_primitive(asm) else {
         return generic();
     };
     let instrs = eco_vec![Instr::ImplPrim(ImplPrimitive::Primes, *span)];
@@ -2981,7 +2835,7 @@ fn invert_reduce_mul_pattern<'a>(
 
 fn invert_primes_pattern<'a>(
     input: &'a [Instr],
-    comp: &mut Compiler,
+    asm: &mut Assembly,
 ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
     let [Instr::ImplPrim(ImplPrimitive::Primes, span), input @ ..] = input else {
         return generic();
@@ -2990,7 +2844,7 @@ fn invert_primes_pattern<'a>(
         eco_vec![Instr::Prim(Primitive::Mul, *span)],
         FunctionFlags::default(),
         *span,
-        comp,
+        asm,
     )?;
     Ok((
         input,
@@ -3002,11 +2856,11 @@ impl<A: InvertPattern, B: InvertPattern> InvertPattern for (A, B) {
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         let (a, b) = self;
-        let (input, mut a) = a.invert_extract(input, comp)?;
-        let (input, b) = b.invert_extract(input, comp)?;
+        let (input, mut a) = a.invert_extract(input, asm)?;
+        let (input, b) = b.invert_extract(input, asm)?;
         a.extend(b);
         Ok((input, a))
     }
@@ -3019,11 +2873,11 @@ impl<A: UnderPattern, B: UnderPattern> UnderPattern for Either<A, B> {
         &self,
         input: &'a [Instr],
         g_sig: Signature,
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
         let Either(a, b) = self;
-        a.under_extract(input, g_sig, comp)
-            .or_else(|a| b.under_extract(input, g_sig, comp).map_err(|b| a.max(b)))
+        a.under_extract(input, g_sig, asm)
+            .or_else(|a| b.under_extract(input, g_sig, asm).map_err(|b| a.max(b)))
     }
 }
 
@@ -3032,11 +2886,11 @@ impl<A: UnderPattern, B: UnderPattern> UnderPattern for (A, B) {
         &self,
         input: &'a [Instr],
         g_sig: Signature,
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
         let (a, b) = self;
-        let (input, (mut a_before, a_after)) = a.under_extract(input, g_sig, comp)?;
-        let (input, (b_before, mut b_after)) = b.under_extract(input, g_sig, comp)?;
+        let (input, (mut a_before, a_after)) = a.under_extract(input, g_sig, asm)?;
+        let (input, (b_before, mut b_after)) = b.under_extract(input, g_sig, asm)?;
         a_before.extend(b_before);
         b_after.extend(a_after);
         Ok((input, (a_before, b_after)))
@@ -3047,14 +2901,14 @@ impl<A: InvertPattern, B: InvertPattern, C: InvertPattern> InvertPattern for (A,
     fn invert_extract<'a>(
         &self,
         mut input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         let (a, b, c) = self;
-        let (inp, mut a) = a.invert_extract(input, comp)?;
+        let (inp, mut a) = a.invert_extract(input, asm)?;
         input = inp;
-        let (inp, b) = b.invert_extract(input, comp)?;
+        let (inp, b) = b.invert_extract(input, asm)?;
         input = inp;
-        let (inp, c) = c.invert_extract(input, comp)?;
+        let (inp, c) = c.invert_extract(input, asm)?;
         a.extend(b);
         a.extend(c);
         Ok((inp, a))
@@ -3067,9 +2921,9 @@ impl<T: InvertPattern> InvertPattern for IgnoreMany<T> {
     fn invert_extract<'a>(
         &self,
         mut input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-        while let Ok((inp, _)) = self.0.invert_extract(input, comp) {
+        while let Ok((inp, _)) = self.0.invert_extract(input, asm) {
             input = inp;
         }
         Ok((input, EcoVec::new()))
@@ -3080,7 +2934,7 @@ impl InvertPattern for Primitive {
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        _: &mut Compiler,
+        _: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         let next = input.first().ok_or(Generic)?;
         match next {
@@ -3099,7 +2953,7 @@ where
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        _: &mut Compiler,
+        _: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         let (a, b) = *self;
         if a.len() > input.len() {
@@ -3129,7 +2983,7 @@ where
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        _: &mut Compiler,
+        _: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         let (a, b) = *self;
         if a.len() > input.len() {
@@ -3161,7 +3015,7 @@ where
         &self,
         input: &'a [Instr],
         _: Signature,
-        _: &mut Compiler,
+        _: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
         let (a, b, c) = *self;
         if a.len() > input.len() {
@@ -3199,7 +3053,7 @@ where
         &self,
         input: &'a [Instr],
         _: Signature,
-        _: &mut Compiler,
+        _: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
         let (a, b, c) = *self;
         if a.len() > input.len() {
@@ -3235,10 +3089,10 @@ where
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         let (a, b) = self;
-        (a.as_ref(), b.as_ref()).invert_extract(input, comp)
+        (a.as_ref(), b.as_ref()).invert_extract(input, asm)
     }
 }
 
@@ -3249,10 +3103,10 @@ where
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         let (a, b) = self;
-        (a.as_ref(), b.as_ref()).invert_extract(input, comp)
+        (a.as_ref(), b.as_ref()).invert_extract(input, asm)
     }
 }
 
@@ -3266,10 +3120,10 @@ where
         &self,
         input: &'a [Instr],
         g_sig: Signature,
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
         let (a, b, c) = self;
-        (a.as_ref(), b.as_ref(), c.as_ref()).under_extract(input, g_sig, comp)
+        (a.as_ref(), b.as_ref(), c.as_ref()).under_extract(input, g_sig, asm)
     }
 }
 
@@ -3283,10 +3137,10 @@ where
         &self,
         input: &'a [Instr],
         g_sig: Signature,
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
         let (a, b, c) = self;
-        (a.as_ref(), b.as_ref(), c.as_ref()).under_extract(input, g_sig, comp)
+        (a.as_ref(), b.as_ref(), c.as_ref()).under_extract(input, g_sig, asm)
     }
 }
 
@@ -3298,15 +3152,15 @@ impl<F> fmt::Debug for InvertPatternFn<F> {
 }
 impl<F> InvertPattern for InvertPatternFn<F>
 where
-    F: for<'a> Fn(&'a [Instr], &mut Compiler) -> InversionResult<(&'a [Instr], EcoVec<Instr>)>
+    F: for<'a> Fn(&'a [Instr], &mut Assembly) -> InversionResult<(&'a [Instr], EcoVec<Instr>)>
         + Sync,
 {
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-        (self.0)(input, comp)
+        (self.0)(input, asm)
     }
 }
 
@@ -3318,15 +3172,15 @@ impl<F> fmt::Debug for UnderPatternFn<F> {
 }
 impl<F> UnderPattern for UnderPatternFn<F>
 where
-    F: for<'a> Fn(&'a [Instr], Signature, &mut Compiler) -> InversionResult<(&'a [Instr], Under)>,
+    F: for<'a> Fn(&'a [Instr], Signature, &mut Assembly) -> InversionResult<(&'a [Instr], Under)>,
 {
     fn under_extract<'a>(
         &self,
         input: &'a [Instr],
         g_sig: Signature,
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
-        (self.0)(input, g_sig, comp)
+        (self.0)(input, g_sig, asm)
     }
 }
 
@@ -3336,7 +3190,7 @@ impl InvertPattern for Val {
     fn invert_extract<'a>(
         &self,
         input: &'a [Instr],
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
         if input.is_empty() {
             return generic();
@@ -3344,7 +3198,7 @@ impl InvertPattern for Val {
         for len in (1..=input.len()).rev() {
             let chunk = &input[..len];
             if let Some(sig) = instrs_clean_signature(chunk) {
-                if sig == (0, 1) && instrs_are_pure(chunk, &comp.asm, Purity::Pure) {
+                if sig == (0, 1) && instrs_are_pure(chunk, asm, Purity::Pure) {
                     return Ok((&input[len..], chunk.into()));
                 }
             }
@@ -3384,9 +3238,9 @@ impl UnderPattern for Val {
         &self,
         input: &'a [Instr],
         _: Signature,
-        comp: &mut Compiler,
+        asm: &mut Assembly,
     ) -> InversionResult<(&'a [Instr], Under)> {
-        let (input, inverted) = self.invert_extract(input, comp)?;
+        let (input, inverted) = self.invert_extract(input, asm)?;
         Ok((input, (inverted, EcoVec::new())))
     }
 }
