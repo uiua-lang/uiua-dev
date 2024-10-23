@@ -1408,11 +1408,14 @@ fn invert_by_pattern<'a>(
         instrs = f.instrs(&comp.asm);
     }
     (0..f.signature().outputs).for_each(|_| before.push(Instr::Prim(Primitive::Pop, *span)));
-    let before_func = make_fn(before, f.flags, *span, comp)?;
-    let mut new_instrs = eco_vec![
-        Instr::PushFunc(before_func),
-        Instr::Prim(Primitive::Dip, *span),
-    ];
+    let mut new_instrs = before;
+    for _ in 0..f.signature().outputs {
+        let before_func = make_fn(new_instrs, f.flags, *span, comp)?;
+        new_instrs = eco_vec![
+            Instr::PushFunc(before_func),
+            Instr::Prim(Primitive::Dip, *span),
+        ];
+    }
     new_instrs.extend(after);
     Ok((input, new_instrs))
 }
@@ -2251,28 +2254,33 @@ fn under_dip_pattern<'a>(
     g_sig: Signature,
     comp: &mut Compiler,
 ) -> InversionResult<(&'a [Instr], Under)> {
-    let [Instr::PushFunc(f), Instr::Prim(Primitive::Dip, span), input @ ..] = input else {
+    let [Instr::PushFunc(f), Instr::Prim(Primitive::Dip, span), rest @ ..] = input else {
         return generic();
     };
     let span = *span;
     let instrs = f.instrs(&comp.asm).to_vec();
     let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
     let (f_before, f_after) = under_instrs(&instrs, inner_g_sig, comp).map_err(|e| e.func(f))?;
+    let (rest_before, rest_after) = under_instrs(rest, g_sig, comp)?;
+    let rest_before_sig = instrs_signature(&rest_before)?;
+    let rest_after_sig = instrs_signature(&rest_after)?;
     let before_func = make_fn(f_before, f.flags, span, comp)?;
-    let befores = eco_vec![
+    let mut befores = eco_vec![
         Instr::PushFunc(before_func),
         Instr::Prim(Primitive::Dip, span),
     ];
-    let afters = if g_sig.args > g_sig.outputs {
-        f_after
+    befores.extend(rest_before);
+    let mut afters = rest_after;
+    if g_sig.args + rest_before_sig.args > g_sig.outputs + rest_after_sig.outputs {
+        afters.extend(f_after);
     } else {
         let after_func = make_fn(f_after, f.flags, span, comp)?;
-        eco_vec![
+        afters.extend([
             Instr::PushFunc(after_func),
             Instr::Prim(Primitive::Dip, span),
-        ]
+        ]);
     };
-    Ok((input, (befores, afters)))
+    Ok((&[], (befores, afters)))
 }
 
 fn under_both_pattern<'a>(
