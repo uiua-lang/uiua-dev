@@ -579,6 +579,31 @@ impl Compiler {
             }};
         }
         match prim {
+            Dip => wrap!(|| {
+                let operand = modified.code_operands().next().unwrap().clone();
+                let (new_func, sig) = self.compile_operand_word(operand)?;
+                let span = self.add_span(modified.modifier.span.clone());
+                let instrs = match new_func.instrs.as_slice() {
+                    [Instr::Prim(Primitive::Identity, _)] => {
+                        eco_vec![Instr::TouchStack { count: 2, span }]
+                    }
+                    [Instr::TouchStack { count, .. }] => eco_vec![Instr::TouchStack {
+                        count: count + 1,
+                        span
+                    }],
+                    [] => eco_vec![Instr::TouchStack { count: 1, span }],
+                    _ => {
+                        let func = self.make_function(
+                            FunctionId::Anonymous(modified.modifier.span.clone()),
+                            sig,
+                            new_func,
+                        );
+                        eco_vec![Instr::PushFunc(func), Instr::Prim(Dip, span)]
+                    }
+                };
+                let sig = self.sig_of(&instrs, &modified.modifier.span)?;
+                finish!(instrs, sig);
+            }),
             Backward => wrap!(|| {
                 let operand = modified.code_operands().next().unwrap().clone();
                 let (mut new_func, sig) = self.compile_operand_word(operand)?;
@@ -932,50 +957,6 @@ impl Compiler {
                 modified.modifier.span.clone(),
                 call,
             )?,
-            // Both => wrap!(|| {
-            //     let n = subscript.unwrap_or(2);
-            //     let operand = modified.code_operands().next().unwrap().clone();
-            //     let (mut new_func, sig) = self.compile_operand_word(operand)?;
-            //     if let [Instr::Prim(Trace, span)] = new_func.instrs.as_slice() {
-            //         finish!(
-            //             eco_vec![Instr::ImplPrim(
-            //                 ImplPrimitive::TraceN {
-            //                     n,
-            //                     inverse: false,
-            //                     stack_sub: false
-            //                 },
-            //                 *span
-            //             )],
-            //             Signature::new(n, n)
-            //         )
-            //     } else {
-            //         let span = self.add_span(modified.modifier.span.clone());
-            //         let instrs = take(&mut new_func.instrs);
-            //         for _ in 0..n.saturating_sub(1) {
-            //             new_func.instrs.push(Instr::PushTemp {
-            //                 stack: TempStack::Inline,
-            //                 count: sig.args,
-            //                 span,
-            //             });
-            //         }
-            //         for _ in 0..n.saturating_sub(1) {
-            //             new_func.instrs.extend(instrs.iter().cloned());
-            //             new_func.instrs.push(Instr::pop_inline(sig.args, span));
-            //         }
-            //         new_func.instrs.extend(instrs);
-            //         let sig = Signature::new(sig.args * n, sig.outputs * n);
-            //         if call {
-            //             self.push_all_instrs(new_func);
-            //         } else {
-            //             let func = self.make_function(
-            //                 modified.modifier.span.clone().into(),
-            //                 sig,
-            //                 new_func,
-            //             );
-            //             self.push_instr(Instr::PushFunc(func));
-            //         }
-            //     }
-            // }),
             Fill => wrap!(|| {
                 let mut operands = modified.code_operands().rev().cloned();
                 if !call {

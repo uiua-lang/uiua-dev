@@ -595,6 +595,10 @@ impl VirtualEnv {
                     let f = self.pop_func()?;
                     self.handle_sig(f);
                 }
+                ImplPrimitive::UnBoth => {
+                    let f = self.pop_func()?;
+                    self.handle_args_outputs(f.args * 2, f.outputs * 2);
+                }
                 prim => {
                     let args = prim.args();
                     for _ in 0..prim.modifier_args().unwrap_or(0) {

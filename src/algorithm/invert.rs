@@ -12,7 +12,10 @@ use regex::Regex;
 use serde::*;
 
 use crate::{
-    check::{instrs_clean_signature, instrs_signature, naive_under_sig, SigCheckError},
+    check::{
+        instrs_all_signatures, instrs_clean_signature, instrs_signature, naive_under_sig,
+        SigCheckError,
+    },
     instrs_are_pure,
     primitive::{ImplPrimitive, Primitive},
     Array, Assembly, BindingKind, Compiler, Complex, FmtInstrs, Function, FunctionFlags,
@@ -317,7 +320,6 @@ static INVERT_PATTERNS: &[&dyn InvertPattern] = {
         &InvertPatternFn(invert_primes_pattern, "primes"),
         &InvertPatternFn(invert_format_pattern, "format"),
         &InvertPatternFn(invert_insert_pattern, "insert"),
-        &InvertPatternFn(invert_split_pattern, "split"),
         &InvertPatternFn(invert_rows_pattern, "rows"),
         &InvertPatternFn(invert_dup_pattern, "dup"),
         &InvertPatternFn(invert_select_pattern, "select"),
@@ -353,6 +355,7 @@ static INVERT_PATTERNS: &[&dyn InvertPattern] = {
         &(Val, pat!(ValidateVariant, TagVariant)),
         &InvertPatternFn(invert_on_inv_pattern, "on inverse"),
         &InvertPatternFn(invert_on_pattern, "on"),
+        &InvertPatternFn(invert_dip_pattern, "dip"),
         &InvertPatternFn(invert_by_pattern, "by"),
         &InvertPatternFn(invert_push_temp_pattern, "push temp"),
         &InvertPatternFn(invert_push_pattern, "push"),
@@ -685,6 +688,7 @@ pub(crate) fn under_instrs(
         &UnderPatternFn(under_dup_pattern, "dup"),
         &UnderPatternFn(under_dip_pattern, "dip"),
         &UnderPatternFn(under_both_pattern, "both"),
+        &UnderPatternFn(under_on_pattern, "on"),
         // Basic math
         &dyad!(Flip, Add, Sub),
         &dyad!(Flip, Mul, Div),
@@ -1272,6 +1276,23 @@ fn invert_trivial_pattern<'a>(
         _ => {}
     }
     generic()
+}
+
+fn invert_dip_pattern<'a>(
+    input: &'a [Instr],
+    comp: &mut Compiler,
+) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
+    let [Instr::PushFunc(f), Instr::Prim(Primitive::Dip, span), input @ ..] = input else {
+        return generic();
+    };
+    let inner = f.instrs(&comp.asm).to_vec();
+    let inverse = invert_instrs(&inner, comp)?;
+    let inv_func = make_fn(inverse, f.flags, *span, comp)?;
+    let instrs = eco_vec![
+        Instr::PushFunc(inv_func),
+        Instr::Prim(Primitive::Dip, *span),
+    ];
+    Ok((input, instrs))
 }
 
 fn invert_on_inv_pattern<'a>(
@@ -2242,7 +2263,7 @@ fn under_dip_pattern<'a>(
         Instr::PushFunc(before_func),
         Instr::Prim(Primitive::Dip, span),
     ];
-    let afters = if inner_g_sig.args < inner_g_sig.outputs {
+    let afters = if g_sig.args > g_sig.outputs {
         f_after
     } else {
         let after_func = make_fn(f_after, f.flags, span, comp)?;
@@ -2265,19 +2286,59 @@ fn under_both_pattern<'a>(
     let span = *span;
     let instrs = f.instrs(&comp.asm).to_vec();
     let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
-    let (f_before, f_after) = under_instrs(&instrs, inner_g_sig, comp).map_err(|e| e.func(f))?;
+    let (f_before, mut f_after) =
+        under_instrs(&instrs, inner_g_sig, comp).map_err(|e| e.func(f))?;
     let before_func = make_fn(f_before, f.flags, span, comp)?;
     let befores = eco_vec![
         Instr::PushFunc(before_func),
         Instr::Prim(Primitive::Both, span),
     ];
-    let afters = if inner_g_sig.args < inner_g_sig.outputs {
+    let afters = if g_sig.args > g_sig.outputs {
+        let after_sigs = instrs_all_signatures(&f_after)?;
+        let to_discard = after_sigs.temps[TempStack::Under as usize].args;
+        f_after.push(Instr::PopTemp {
+            stack: TempStack::Under,
+            count: to_discard,
+            span,
+        });
+        for _ in 0..to_discard {
+            f_after.push(Instr::Prim(Primitive::Pop, span));
+        }
         f_after
     } else {
         let after_func = make_fn(f_after, f.flags, span, comp)?;
         eco_vec![
             Instr::PushFunc(after_func),
-            Instr::Prim(Primitive::Both, span),
+            Instr::ImplPrim(ImplPrimitive::UnBoth, span),
+        ]
+    };
+    // println!("befores: {}", crate::FmtInstrs(&befores, &comp.asm));
+    // println!("afters: {}", crate::FmtInstrs(&afters, &comp.asm));
+    Ok((input, (befores, afters)))
+}
+
+fn under_on_pattern<'a>(
+    input: &'a [Instr],
+    g_sig: Signature,
+    comp: &mut Compiler,
+) -> InversionResult<(&'a [Instr], Under)> {
+    let [Instr::PushFunc(f), Instr::Prim(Primitive::On, span), input @ ..] = input else {
+        return generic();
+    };
+    let instrs = f.instrs(&comp.asm).to_vec();
+    let (f_before, f_after) = under_instrs(&instrs, g_sig, comp).map_err(|e| e.func(f))?;
+    let before_func = make_fn(f_before, f.flags, *span, comp)?;
+    let befores = eco_vec![
+        Instr::PushFunc(before_func),
+        Instr::Prim(Primitive::On, *span),
+    ];
+    let afters = if g_sig.args > f.signature().outputs {
+        f_after
+    } else {
+        let f_after_func = make_fn(f_after, f.flags, *span, comp)?;
+        eco_vec![
+            Instr::PushFunc(f_after_func),
+            Instr::Prim(Primitive::Dip, *span),
         ]
     };
     Ok((input, (befores, afters)))
@@ -2732,58 +2793,13 @@ fn under_unpack_pattern<'a>(
 
 fn under_touch_pattern<'a>(
     input: &'a [Instr],
-    g_sig: Signature,
+    _: Signature,
     _: &mut Compiler,
 ) -> InversionResult<(&'a [Instr], Under)> {
-    let [instr @ Instr::TouchStack { count, span }, input @ ..] = input else {
+    let [instr @ Instr::TouchStack { .. }, input @ ..] = input else {
         return generic();
     };
-    let mut afters = eco_vec![];
-    let new_count = (*count + g_sig.outputs).saturating_sub(g_sig.args);
-    if new_count > 0 {
-        afters.push(Instr::TouchStack {
-            count: new_count,
-            span: *span,
-        });
-    }
-    Ok((input, (eco_vec![instr.clone()], afters)))
-}
-
-fn invert_split_pattern<'a>(
-    input: &'a [Instr],
-    _: &mut Compiler,
-) -> InversionResult<(&'a [Instr], EcoVec<Instr>)> {
-    let [Instr::CopyToTemp {
-        stack: TempStack::Inline,
-        count: 1,
-        ..
-    }, input @ ..] = input
-    else {
-        return generic();
-    };
-    let pop_pos = input
-        .iter()
-        .position(|instr| {
-            matches!(
-                instr,
-                Instr::PopTemp {
-                    stack: TempStack::Inline,
-                    count: 1,
-                    ..
-                }
-            )
-        })
-        .ok_or(Generic)?;
-    let (a, b) = input.split_at(pop_pos);
-    let b = &b[1..];
-    let (input, instrs) = match (a, b) {
-        (
-            [Instr::Prim(Primitive::Deduplicate, _)],
-            [Instr::Prim(Primitive::Classify, span), input @ ..],
-        ) => (input, eco_vec![Instr::Prim(Primitive::Select, *span)]),
-        _ => return generic(),
-    };
-    Ok((input, instrs))
+    Ok((input, (eco_vec![instr.clone()], eco_vec![instr.clone()])))
 }
 
 fn invert_scan_pattern<'a>(

@@ -3591,6 +3591,7 @@ impl_primitive!(
     (1(3), AudioDecode),
     (0(1), UnRawMode, Impure),
     (1(0), UnClip, Mutating),
+    (2[2], UnBoth),
     // Unders
     (1, UndoFix),
     (2, UndoUnbits),

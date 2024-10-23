@@ -195,6 +195,7 @@ impl fmt::Display for ImplPrimitive {
             AudioDecode => write!(f, "{Un}{AudioEncode}"),
             UnRawMode => write!(f, "{Un}{}", Primitive::Sys(SysOp::RawMode)),
             UnClip => write!(f, "{Un}{}", Primitive::Sys(SysOp::Clip)),
+            UnBoth => write!(f, "{Un}{Both}"),
             ProgressiveIndexOf => write!(f, "{Un}{By}{Select}"),
             UndoUnbits => write!(f, "{Under}{Un}{Bits}"),
             UndoBase => write!(f, "{Under}{Base}"),
@@ -1465,6 +1466,11 @@ impl ImplPrimitive {
                 }
                 let res = tag.join(val, false, env)?;
                 env.push(res);
+            }
+            ImplPrimitive::UnBoth => {
+                return Err(env.error(format!(
+                    "{self} was not inlined. This is a bug in the interpreter"
+                )))
             }
         }
         Ok(())

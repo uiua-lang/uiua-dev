@@ -2,7 +2,7 @@
 
 use ecow::EcoVec;
 
-use crate::{Assembly, FuncSlice, Function, Instr, Primitive};
+use crate::{Assembly, FuncSlice, Function, ImplPrimitive, Instr, Primitive};
 
 #[derive(Default)]
 struct Inliner {
@@ -60,6 +60,7 @@ impl Inliner {
 
 pub fn inline_assembly(asm: &mut Assembly) {
     // println!("inlining {}", crate::FmtInstrs(&asm.instrs, asm));
+    use ImplPrimitive::*;
     use Instr::*;
     use Primitive::*;
     let mut input = asm.instrs.as_slice();
@@ -84,6 +85,13 @@ pub fn inline_assembly(asm: &mut Assembly) {
                 inliner.func_instrs(f, *span);
                 inliner.pop_inline(f.signature().args, *span);
                 inliner.func_instrs(f, *span);
+                inp
+            }
+            [PushFunc(f), ImplPrim(UnBoth, span), inp @ ..] => {
+                inliner.func_instrs(f, *span);
+                inliner.push_inline(f.signature().outputs, *span);
+                inliner.func_instrs(f, *span);
+                inliner.pop_inline(f.signature().outputs, *span);
                 inp
             }
             [PushFunc(g), PushFunc(f), Prim(Fork, span), inp @ ..] => {
