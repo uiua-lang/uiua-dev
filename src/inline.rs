@@ -2,7 +2,7 @@
 
 use ecow::EcoVec;
 
-use crate::{Assembly, Function, Instr, Primitive};
+use crate::{Assembly, FuncSlice, Function, Instr, Primitive};
 
 #[derive(Default)]
 struct Inliner {
@@ -34,12 +34,18 @@ impl Inliner {
             self.push(Instr::TouchStack { count, span });
         }
     }
+    fn map_slice(&self, slice: FuncSlice) -> FuncSlice {
+        let start = self.mapping[slice.start];
+        let end = self.mapping[slice.end()];
+        FuncSlice {
+            start,
+            len: end - start,
+        }
+    }
     fn func_instrs(&mut self, f: &Function, span: usize) {
         if f.flags.track_caller() || f.flags.no_inline() {
             let mut f = f.clone();
-            let end = f.slice.end();
-            f.slice.start = self.mapping[f.slice.start];
-            f.slice.len = self.mapping[end] - f.slice.start;
+            f.slice = self.map_slice(f.slice);
             self.push(Instr::PushFunc(f));
             self.push(Instr::Call(span));
         } else {
@@ -53,6 +59,7 @@ impl Inliner {
 }
 
 pub fn inline_assembly(asm: &mut Assembly) {
+    // println!("inlining {}", crate::FmtInstrs(&asm.instrs, asm));
     use Instr::*;
     use Primitive::*;
     let mut input = asm.instrs.as_slice();
@@ -172,6 +179,30 @@ pub fn inline_assembly(asm: &mut Assembly) {
                 inp
             }
             [Comment(_), inp @ ..] => inp,
+            [PushFunc(f), inp @ ..] => {
+                let mut f = f.clone();
+                f.slice = inliner.map_slice(f.slice);
+                inliner.push(Instr::PushFunc(f));
+                inp
+            }
+            [CustomInverse(ci, span), inp @ ..] => {
+                let mut ci = ci.clone();
+                ci.un = ci.un.map(|mut f| {
+                    f.slice = inliner.map_slice(f.slice);
+                    f
+                });
+                ci.anti = ci.anti.map(|mut f| {
+                    f.slice = inliner.map_slice(f.slice);
+                    f
+                });
+                ci.under = ci.under.map(|mut f| {
+                    f.0.slice = inliner.map_slice(f.0.slice);
+                    f.1.slice = inliner.map_slice(f.1.slice);
+                    f
+                });
+                inliner.push(Instr::CustomInverse(ci, *span));
+                inp
+            }
             [instr, inp @ ..] => {
                 inliner.push(instr.clone());
                 inp
@@ -184,19 +215,13 @@ pub fn inline_assembly(asm: &mut Assembly) {
         input = new_input;
     }
 
-    let Inliner {
-        inlined,
-        mut mapping,
-    } = inliner;
-    mapping.push(inlined.len());
+    inliner.mapping.push(inliner.inlined.len());
 
     // Update top slices
     for top_slice in &mut asm.top_slices {
-        let start = mapping[top_slice.start];
-        let end = mapping[top_slice.end()];
-        let len = end - start;
-        top_slice.start = start;
-        top_slice.len = len;
+        *top_slice = inliner.map_slice(*top_slice);
     }
-    asm.instrs = inlined;
+
+    // println!("inlined to {}", crate::FmtInstrs(&inliner.inlined, asm));
+    asm.instrs = inliner.inlined;
 }

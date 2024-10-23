@@ -11,7 +11,7 @@ use std::{
 
 use enum_iterator::Sequence;
 
-use crate::{function::*, Array, ImplPrimitive, Instr, Primitive, TempStack, Value};
+use crate::{function::*, Array, Assembly, ImplPrimitive, Instr, Primitive, TempStack, Value};
 
 /// Count the number of arguments and outputs of a function.
 pub(crate) fn instrs_signature(instrs: &[Instr]) -> Result<Signature, SigCheckError> {
@@ -36,6 +36,16 @@ pub(crate) fn instrs_clean_signature(instrs: &[Instr]) -> Option<Signature> {
         return None;
     }
     Some(sig.stack)
+}
+
+pub(crate) fn instrs_clean_signature_asm(instrs: &[Instr], asm: &Assembly) -> Option<Signature> {
+    let sig = instrs_clean_signature(instrs)?;
+    for instr in instrs {
+        if let Instr::PushFunc(f) = instr {
+            instrs_clean_signature_asm(f.instrs(asm), asm)?;
+        }
+    }
+    Some(sig)
 }
 
 pub(crate) fn instrs_temp_signatures(

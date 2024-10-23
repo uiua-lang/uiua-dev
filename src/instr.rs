@@ -326,7 +326,7 @@ impl<'a> fmt::Debug for FmtInstrs<'a> {
         write!(f, "(")?;
         for (i, instr) in self.0.iter().enumerate() {
             if i > 0 {
-                write!(f, " ")?;
+                write!(f, ", ")?;
             }
             match instr {
                 Instr::PushFunc(func) => {
@@ -341,16 +341,7 @@ impl<'a> fmt::Debug for FmtInstrs<'a> {
 }
 impl<'a> fmt::Display for FmtInstrs<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, instr) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, " ")?;
-            }
-            match instr {
-                Instr::PushFunc(func) => FmtInstrs(func.instrs(self.1), self.1).fmt(f),
-                instr => instr.fmt(f),
-            }?
-        }
-        Ok(())
+        write!(f, "{self:?}")
     }
 }
 
