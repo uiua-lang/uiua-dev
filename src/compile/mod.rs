@@ -1212,7 +1212,7 @@ code:
                 if !call {
                     instr = Instr::PushFunc(self.make_function(
                         FunctionId::Anonymous(word.span.clone()),
-                        Signature::new(0, 1),
+                        Signature::new(1, 1),
                         eco_vec![instr].into(),
                     ));
                 }

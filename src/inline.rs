@@ -276,7 +276,6 @@ fn inline_pass(asm: &mut Assembly, pass: InlinePass) {
             (Inversion, [PushFunc(g), PushFunc(f), Prim(Under, span), ..]) => {
                 let span = *span;
                 let f_instrs = f.instrs(asm).to_vec();
-                println!("f_instrs: {:?}", crate::FmtInstrs(&f_instrs, asm));
                 let g_sig = g.signature();
                 let (before, after) = under_instrs(&f_instrs, g_sig, asm).unwrap();
                 inliner.push_all(before);

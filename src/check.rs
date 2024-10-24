@@ -89,7 +89,11 @@ pub(crate) fn instrs_all_signatures(instrs: &[Instr]) -> Result<AllSignatures, S
 
 pub(crate) fn naive_under_sig(f: Signature, g: Signature) -> Signature {
     let f_inv = if f.outputs > 1 {
-        f.inverse()
+        if g.args > g.outputs {
+            Signature::new(f.outputs.saturating_sub(g.outputs), 1)
+        } else {
+            f.inverse()
+        }
     } else {
         Signature::new(f.args.min(1), f.outputs)
     };
@@ -545,7 +549,7 @@ impl VirtualEnv {
                         f.outputs += 2 - f.args;
                         f.args = 2;
                     }
-                    self.handle_sig(f);
+                    self.handle_args_outputs(f.args, f.outputs + 1);
                 }
                 Below | Above => {
                     let mut f = self.pop_func()?;
