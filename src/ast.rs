@@ -572,8 +572,6 @@ pub struct FunctionPack {
     pub branches: Vec<Sp<Func>>,
     /// Whether a closing parenthesis was found
     pub closed: bool,
-    /// Whether the switch uses angle brackets
-    pub angled: bool,
 }
 
 /// A modifier with operands
