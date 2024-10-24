@@ -146,6 +146,7 @@ The `uiua` crate has the following noteable feature flags:
 mod algorithm;
 mod array;
 mod assembly;
+mod assembly2;
 pub mod ast;
 mod boxed;
 mod check;
@@ -157,6 +158,7 @@ mod ffi;
 mod fill;
 pub mod format;
 mod function;
+mod function2;
 mod grid_fmt;
 mod instr;
 mod lex;
@@ -174,6 +176,7 @@ pub mod stand;
 mod sys;
 #[cfg(feature = "native_sys")]
 mod sys_native;
+mod tree;
 mod types;
 mod value;
 
@@ -196,6 +199,7 @@ pub use self::{
     run::*,
     shape::*,
     sys::*,
+    tree::*,
     value::*,
 };
 
