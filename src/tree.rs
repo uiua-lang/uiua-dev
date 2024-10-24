@@ -1,16 +1,20 @@
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, HashSet},
     fmt,
     hash::{Hash, Hasher},
-    iter::once,
-    mem::take,
-    slice,
+    mem::{swap, take},
+    ops::Deref,
+    slice::{self, SliceIndex},
 };
 
-use ecow::EcoVec;
+use ecow::{eco_vec, EcoString, EcoVec};
 use serde::{Deserialize, Serialize};
 
-use crate::{ImplPrimitive, Primitive, Value};
+use crate::{
+    assembly2::{Assembly, BindingKind, Function},
+    function2::DynamicFunction,
+    ImplPrimitive, Primitive, Purity, Signature, Value,
+};
 
 macro_rules! node {
     ($(
@@ -149,18 +153,68 @@ node!(
     (1, Push(val(Value))),
     (2, Prim(prim(Primitive), span(usize))),
     (3, ImplPrim(prim(ImplPrimitive), span(usize))),
-    (4, Mod(prim(Primitive), args(EcoVec<Node>), span(usize))),
-    (5, ImplMod(prim(ImplPrimitive), args(EcoVec<Node>), span(usize))),
-    (6, CreateArray { len: usize, boxed: bool, span: usize }),
+    (4, Mod(prim(Primitive), args(EcoVec<SigNode>), span(usize))),
+    (5, ImplMod(prim(ImplPrimitive), args(EcoVec<SigNode>), span(usize))),
+    (6, Array { inner: Box<Node>, sig: Signature, boxed: bool, span: usize }),
+    (7, Call(func(Function))),
+    (8, CallGlobal(index(usize), sig(Signature))),
+    (9, BindGlobal { index: usize, span: usize }),
+    (10, Label(label(EcoString), span(usize))),
+    (11, RemoveLabel(span(usize))),
+    (12, Format(parts(EcoVec<EcoString>), span(usize))),
+    (13, MatchFormatPattern(parts(EcoVec<EcoString>), span(usize))),
+    (14, CustomInverse(cust(Box<CustomInverse>), span(usize))),
+    (15, Switch {
+        branches: EcoVec<SigNode>,
+        sig: Signature,
+        under_cond: bool,
+        span: usize,
+    }),
+    (16, Unpack { count: usize, boxed: bool, span: usize }),
+    (17, SetOutputComment { i: usize, n: usize }),
+    (18, Dynamic(func(DynamicFunction)))
 );
+
+/// A node argument
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SigNode {
+    pub node: Node,
+    pub sig: Signature,
+}
+
+impl SigNode {
+    pub fn new(node: impl Into<Node>, sig: impl Into<Signature>) -> Self {
+        Self {
+            node: node.into(),
+            sig: sig.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CustomInverse {
+    pub normal: SigNode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub un: Option<SigNode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub under: Option<(SigNode, SigNode)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anti: Option<SigNode>,
+}
 
 impl Default for Node {
     fn default() -> Self {
-        Node::Run(EcoVec::new())
+        Self::empty()
     }
 }
 
 impl Node {
+    pub fn empty() -> Self {
+        Self::Run(EcoVec::new())
+    }
+    pub fn new_push(val: impl Into<Value>) -> Self {
+        Self::Push(val.into())
+    }
     /// Get a slice of the nodes in this node
     pub fn as_slice(&self) -> &[Node] {
         if let Node::Run(nodes) = self {
@@ -185,6 +239,12 @@ impl Node {
             }
         }
     }
+    pub fn slice<R>(&self, range: R) -> Self
+    where
+        R: SliceIndex<[Node], Output = [Node]>,
+    {
+        Self::from_iter(self.as_slice()[range].iter().cloned())
+    }
     /// Get a mutable vector of the nodes in this node
     ///
     /// Transforms the node into a [`Node::Run`] if it is not already a [`Node::Run`]
@@ -201,11 +261,91 @@ impl Node {
             }
         }
     }
+    /// Turn the node into a vector
+    pub fn into_vec(self) -> EcoVec<Node> {
+        if let Node::Run(nodes) = self {
+            nodes
+        } else {
+            eco_vec![self]
+        }
+    }
+    /// Truncate the node to a certain length
+    pub fn truncate(&mut self, len: usize) {
+        if let Node::Run(nodes) = self {
+            nodes.truncate(len);
+            if nodes.len() == 1 {
+                *self = take(nodes).remove(0);
+            }
+        } else if len == 0 {
+            *self = Node::default();
+        }
+    }
+    /// Mutably iterate over the nodes of this node
+    ///
+    /// Transforms the node into a [`Node::Run`] if it is not already a [`Node::Run`]
+    pub fn iter_mut(&mut self) -> slice::IterMut<Self> {
+        self.as_mut_slice().iter_mut()
+    }
     /// Push a node onto the end of the node
     ///
     /// Transforms the node into a [`Node::Run`] if it is not already a [`Node::Run`]
-    pub fn push(&mut self, node: Node) {
-        self.as_vec().push(node);
+    pub fn push(&mut self, mut node: Node) {
+        if let Node::Run(nodes) = self {
+            if nodes.is_empty() {
+                *self = node;
+                return;
+            } else {
+                match node {
+                    Node::Run(other) => nodes.extend(other),
+                    node => nodes.push(node),
+                }
+            }
+        } else if let Node::Run(nodes) = &node {
+            if !nodes.is_empty() {
+                swap(self, &mut node);
+                self.as_vec().insert(0, node);
+            }
+        } else {
+            self.as_vec().push(node);
+        }
+    }
+    /// Push a node onto the beginning of the node
+    ///
+    /// Transforms the node into a [`Node::Run`] if it is not already a [`Node::Run`]
+    pub fn prepend(&mut self, mut node: Node) {
+        if let Node::Run(nodes) = self {
+            if nodes.is_empty() {
+                *self = node;
+                return;
+            } else {
+                match node {
+                    Node::Run(mut other) => {
+                        swap(nodes, &mut other);
+                        nodes.extend(other)
+                    }
+                    node => nodes.insert(0, node),
+                }
+            }
+        } else if let Node::Run(nodes) = &node {
+            if !nodes.is_empty() {
+                swap(self, &mut node);
+                self.as_vec().push(node);
+            }
+        } else {
+            self.as_vec().insert(0, node);
+        }
+    }
+    pub fn pop(&mut self) -> Option<Node> {
+        match self {
+            Node::Run(nodes) => {
+                let res = nodes.pop();
+                if nodes.len() == 1 {
+                    *self = take(nodes).remove(0);
+                }
+                res
+            }
+            node => Some(take(node)),
+        }
     }
     pub(crate) fn as_flipped_primitive(&self) -> Option<(Primitive, bool)> {
         match self {
@@ -241,15 +381,14 @@ impl Node {
 
 impl FromIterator<Node> for Node {
     fn from_iter<T: IntoIterator<Item = Node>>(iter: T) -> Self {
-        let mut iter = iter.into_iter().peekable();
-        let Some(first) = iter.next() else {
+        let mut iter = iter.into_iter();
+        let Some(mut node) = iter.next() else {
             return Node::default();
         };
-        if iter.peek().is_none() {
-            first
-        } else {
-            Node::Run(once(first).chain(iter).collect())
+        for n in iter {
+            node.push(n);
         }
+        node
     }
 }
 
@@ -280,12 +419,161 @@ impl fmt::Debug for Node {
                 }
                 tuple.finish()
             }
-            Node::CreateArray {
-                len, boxed: true, ..
-            } => write!(f, "{{{}{}}}", Primitive::Len, len),
-            Node::CreateArray {
-                len, boxed: false, ..
-            } => write!(f, "[{}{}]", Primitive::Len, len),
+            Node::Array {
+                sig, boxed: true, ..
+            } => write!(f, "{{{}{}}}", Primitive::Len, sig.outputs),
+            Node::Array {
+                sig, boxed: false, ..
+            } => write!(f, "[{}{}]", Primitive::Len, sig.outputs),
+            Node::Call(func) => write!(f, "call {}", func.id),
+            Node::CallGlobal(index, _) => write!(f, "<call global {index}>"),
+            Node::BindGlobal { index, .. } => write!(f, "<bind global {index}>"),
+            Node::Label(label, _) => write!(f, "${label}"),
+            Node::RemoveLabel(_) => write!(f, "remove label"),
+            Node::Format(parts, _) => {
+                write!(f, "$\"")?;
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "_")?
+                    }
+                    write!(f, "{part}")?
+                }
+                write!(f, "\"")
+            }
+            Node::MatchFormatPattern(parts, _) => {
+                write!(f, "°$\"")?;
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "_")?
+                    }
+                    write!(f, "{part}")?
+                }
+                write!(f, "\"")
+            }
+            Node::Switch { branches, .. } => write!(f, "<switch {}>", branches.len()),
+            Node::CustomInverse(cust, _) => {
+                f.debug_tuple("custom inverse").field(&cust.normal).finish()
+            }
+            Node::Unpack {
+                count,
+                boxed: false,
+                ..
+            } => write!(f, "<unpack {count}>"),
+            Node::Unpack {
+                count, boxed: true, ..
+            } => write!(f, "<unpack (unbox) {count}>"),
+            Node::SetOutputComment { i, n, .. } => write!(f, "<set output comment {i}({n})>"),
+            Node::Dynamic(func) => write!(f, "<dynamic function {}>", func.index),
         }
+    }
+}
+
+impl Node {
+    pub fn is_pure<'a>(&'a self, purity: Purity, asm: &'a Assembly) -> bool {
+        fn recurse<'a>(
+            node: &'a Node,
+            purity: Purity,
+            asm: &'a Assembly,
+            visited: &mut HashSet<&'a Function>,
+        ) -> bool {
+            match node {
+                Node::Run(nodes) => nodes.iter().all(|node| recurse(node, purity, asm, visited)),
+                Node::Prim(prim, _) => prim.purity() >= purity,
+                Node::ImplPrim(prim, _) => prim.purity() >= purity,
+                Node::Mod(prim, args, _) => {
+                    prim.purity() >= purity
+                        && args
+                            .iter()
+                            .all(|arg| recurse(&arg.node, purity, asm, visited))
+                }
+                Node::ImplMod(prim, args, _) => {
+                    prim.purity() >= purity
+                        && args
+                            .iter()
+                            .all(|arg| recurse(&arg.node, purity, asm, visited))
+                }
+                Node::Call(func) => {
+                    visited.insert(func) && recurse(&asm[func], purity, asm, visited)
+                }
+                Node::CallGlobal(index, _) => {
+                    if let Some(binding) = asm.bindings.get(*index) {
+                        match &binding.kind {
+                            BindingKind::Const(Some(_)) => true,
+                            BindingKind::Func(f) => {
+                                visited.insert(f) && recurse(&asm[f], purity, asm, visited)
+                            }
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => true,
+            }
+        }
+        recurse(self, purity, asm, &mut HashSet::new())
+    }
+    pub fn is_limit_bounded<'a>(&'a self, asm: &'a Assembly) -> bool {
+        fn recurse<'a>(
+            node: &'a Node,
+            asm: &'a Assembly,
+            visited: &mut HashSet<&'a Function>,
+        ) -> bool {
+            match node {
+                Node::Run(nodes) => nodes.iter().all(|node| recurse(node, asm, visited)),
+                Node::Prim(Primitive::Send | Primitive::Recv, _) => false,
+                Node::Mod(_, args, _) => args.iter().all(|arg| recurse(&arg.node, asm, visited)),
+                Node::ImplMod(_, args, _) => {
+                    args.iter().all(|arg| recurse(&arg.node, asm, visited))
+                }
+                Node::Call(func) => visited.insert(func) && recurse(&asm[func], asm, visited),
+                Node::CallGlobal(index, _) => {
+                    if let Some(binding) = asm.bindings.get(*index) {
+                        match &binding.kind {
+                            BindingKind::Const(Some(_)) => true,
+                            BindingKind::Func(f) => {
+                                visited.insert(f) && recurse(&asm[f], asm, visited)
+                            }
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => true,
+            }
+        }
+        recurse(self, asm, &mut HashSet::new())
+    }
+}
+
+impl Deref for Node {
+    type Target = [Node];
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<'a> IntoIterator for &'a Node {
+    type Item = &'a Node;
+    type IntoIter = slice::Iter<'a, Node>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Node {
+    type Item = &'a mut Node;
+    type IntoIter = slice::IterMut<'a, Node>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_mut_slice().iter_mut()
+    }
+}
+
+impl IntoIterator for Node {
+    type Item = Node;
+    type IntoIter = ecow::vec::IntoIter<Node>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
     }
 }

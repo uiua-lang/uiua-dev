@@ -1056,19 +1056,6 @@ impl<'a> Formatter<'a> {
                 }
             }
             Word::Func(func) => {
-                // Handle nested pack conversion to angle brackets
-                let mut code_words =
-                    (func.lines.iter().flatten()).filter(|word| word.value.is_code());
-                if code_words.clone().count() == 1 {
-                    let word = code_words.next().unwrap();
-                    if let Word::Pack(_) = &word.value {
-                        if word.span.as_str(self.inputs, |s| s.starts_with('(')) {
-                            self.format_word(word, depth);
-                            return;
-                        }
-                    }
-                }
-
                 let start_indent =
                     (self.output.split('\n').last()).map_or(0, |line| line.chars().count());
                 let indent = self.config.multiline_indent * depth;
@@ -1098,9 +1085,6 @@ impl<'a> Formatter<'a> {
                 self.output.push(')');
             }
             Word::Pack(pack) => {
-                if pack.angled {
-                    self.output.push_str(&Primitive::Switch.to_string());
-                }
                 let start_indent =
                     (self.output.lines().last()).map_or(0, |line| line.chars().count());
                 let indent = self.config.multiline_indent * depth;

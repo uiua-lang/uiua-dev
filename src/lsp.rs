@@ -634,9 +634,7 @@ impl Spanner {
                     }
                     if pack.closed {
                         let end = word.span.just_end(self.inputs());
-                        if end.as_str(self.inputs(), |s| {
-                            s == if pack.angled { "⟩" } else { ")" }
-                        }) {
+                        if end.as_str(self.inputs(), |s| s == ")") {
                             spans.push(end.sp(SpanKind::Delimiter));
                         }
                     }
