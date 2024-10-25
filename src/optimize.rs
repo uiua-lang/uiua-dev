@@ -340,16 +340,6 @@ pub(crate) fn optimize_instrs_mut(
         ([.., Instr::Push(_)], Instr::Prim(Pop, _)) => {
             instrs.pop();
         }
-        // End array repeat rand
-        (
-            [.., Instr::PushFunc(f), Instr::Prim(Repeat, span)],
-            Instr::EndArray { boxed: false, .. },
-        ) if f.as_primitive(asm) == Some(Rand) => {
-            let span = *span;
-            instrs.pop();
-            instrs.pop();
-            instrs.push(Instr::ImplPrim(EndRandArray, span));
-        }
         // Astar first
         ([.., Instr::Prim(Astar, span)], Instr::Prim(First, _)) => {
             let span = *span;

@@ -2418,59 +2418,6 @@ primitive!(
     /// ex! ⌝⊂ 1 [2 3 4]
     /// For more about inverses, see the [Inverse Tutorial](/tutorial/inverses).
     ([1], Anti, InversionModifier, ("anti", '⌝')),
-    /// Set the [un]-compatible inverse of a function
-    ///
-    /// The first function is the uninverted function, and the second function is the inverse.
-    /// ex: F ← setinv(&p$"Forward _" .)(&p$"Backward _" .)
-    ///   : ◌F   @A
-    ///   : ◌°F  @B
-    ///   : ◌⍜F∘ @C
-    ///
-    /// Unlike built-in functions, [setinv] cannot properly make inverses that save context for use in [under].
-    /// This can lead to errors if you are unaware of it.
-    /// ex! F ← setinv+-
-    ///   : ⍜F∘ 3 5
-    ///
-    /// For [under]-compatible inverse defining, see [setund].
-    ([2], SetInverse, InversionModifier, "setinv"),
-    /// Set the [under]-compatible inverse of a function
-    ///
-    /// The first function will be called if the function is *outside* an [under].
-    /// The second function will be called in the "do" part of an [under].
-    /// The third function will be called in the "undo" part of an [under].
-    ///
-    /// Any outputs of the second function that excede the number of outputs of the first function will be popped and saved as *context* after the "do" part of the [under]. On the "undo" part, the context will be pushed onto the stack before calling the third function.
-    ///
-    /// For example, here is a manual re-implementation of [add]'s [under] behavior. Note that the second function has 2 outputs. The extra output is saved as context.
-    /// ex: F ← setund(+|⟜+|-)
-    ///   : ⍜+(×10) 1 2
-    ///   : ⍜F(×10) 1 2
-    ///
-    /// This example demonstrates the flow of input, output, and context.
-    /// ex: F ← setund(
-    ///   :   &p$"Normal _".
-    ///   : | &p$"Do:   set ctx = _, value = _" ,, +1.
-    ///   : | &p$"Undo: get ctx = _, value = _" ⊙.
-    ///   : )
-    ///   : ◌F 5
-    ///   : ◌⍜F(×10) 5
-    ///
-    /// [setund] is often good for making a function [under]-compatible by nullifying the inverse for some part of the function.
-    /// For example, we can write a simple function that removes all instances of a character from a string.
-    /// ex: F ← ▽⊸≠
-    ///   : F @a "abra"
-    /// This works, but it does not work with [under].
-    /// ex! F ← ▽⊸≠
-    ///   : ⍜F⌵ @a "abra"
-    /// This is because the `⊸``≠` part is not [under]-compatible.
-    /// By wrapping that part in [setund], we can make the [under] work.
-    /// Here, we use a function pack with only two branches. [setund] reuses the first branch for both the "normal" and "do" branches. The second branch is empty.
-    /// ex: F ← ▽setund(⊸≠|)
-    ///   : F @a "abra"
-    ///   : ⍜F⌵ @a "abra"
-    ///
-    /// Inverses set with [setund] cannot be used with [un]. For simpler inverse defining, see [setinv].
-    ([3], SetUnder, InversionModifier, "setund"),
     /// Operate on a transformed array, then reverse the transformation
     ///
     /// This is a more powerful version of [un].
@@ -3636,7 +3583,6 @@ impl_primitive!(
     (2[1], Adjacent),
     (2[1], RowsWindows),
     (1, CountUnique),
-    (1, EndRandArray, Impure),
     (1(2)[3], AstarFirst),
     // Implementation details
     (1[2], RepeatWithInverse),

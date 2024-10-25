@@ -34,7 +34,7 @@ use crate::{
     lex::{AsciiToken, SUBSCRIPT_NUMS},
     sys::*,
     value::*,
-    FunctionId, Signature, Uiua, UiuaErrorKind, UiuaResult,
+    FunctionId, Ops, Signature, Uiua, UiuaErrorKind, UiuaResult,
 };
 
 /// Categories of primitives
@@ -243,7 +243,6 @@ impl fmt::Display for ImplPrimitive {
             RowsWindows => write!(f, "{Rows}(…){Windows}"),
             CountUnique => write!(f, "{Len}{Deduplicate}"),
             MatchPattern => write!(f, "pattern match"),
-            EndRandArray => write!(f, "[{Repeat}{Rand}"),
             AstarFirst => write!(f, "{First}{Astar}"),
             &ReduceDepth(n) => {
                 for _ in 0..n {
@@ -376,32 +375,27 @@ static ALIASES: Lazy<HashMap<Primitive, &[&str]>> = Lazy::new(|| {
 });
 
 macro_rules! fill {
-    ($env:expr, $with:ident, $without_but:ident) => {{
+    ($ops:expr, $env:expr, $with:ident, $without_but:ident) => {{
         let env = $env;
-        let fill = env.pop_function()?;
-        let f = env.pop_function()?;
-        let outputs = fill.signature().outputs;
+        let [fill, f] = get_ops($ops, env)?;
+        let outputs = fill.sig.outputs;
         if outputs > 1 {
             return Err(env.error(format!(
                 "{} function can have at most 1 output, but its signature is {}",
                 Primitive::Fill.format(),
-                fill.signature()
+                fill.sig
             )));
         }
         if outputs == 0 {
-            return env.$without_but(
-                fill.signature().args,
-                |env| env.call(fill),
-                |env| env.call(f),
-            );
+            return env.$without_but(fill.sig.args, |env| env.exec(fill), |env| env.exec(f));
         }
-        env.call(fill)?;
+        env.exec(fill)?;
         let fill_value = env.pop("fill value")?;
         match f.id {
             FunctionId::Named(_) | FunctionId::Macro(..) => {
-                env.$with(fill_value, |env| env.without_fill(|env| env.call(f)))
+                env.$with(fill_value, |env| env.without_fill(|env| env.exec(f)))
             }
-            _ => env.$with(fill_value, |env| env.call(f)),
+            _ => env.$with(fill_value, |env| env.exec(f)),
         }?;
     }};
 }
@@ -503,7 +497,6 @@ impl Primitive {
             Choose => format!("use {Tuples}{Lt} instead"),
             Permute => format!("use {Tuples}{Ne} instead"),
             Triangle => format!("use {Tuples} instead"),
-            SetInverse | SetUnder => format!("use {} instead", Obverse.format()),
             Struct => "use new data definitions instead".into(),
             _ => return None,
         })
@@ -819,19 +812,6 @@ impl Primitive {
             }
             Primitive::Bits => env.monadic_ref_env(Value::bits)?,
             Primitive::Base => env.dyadic_rr_env(Value::base)?,
-            Primitive::Reduce => reduce::reduce(0, env)?,
-            Primitive::Scan => reduce::scan(env)?,
-            Primitive::Fold => reduce::fold(env)?,
-            Primitive::Each => zip::each(env)?,
-            Primitive::Rows => zip::rows(false, env)?,
-            Primitive::Table => table::table(env)?,
-            Primitive::Inventory => zip::rows(true, env)?,
-            Primitive::Tuples => permute::tuples(env)?,
-            Primitive::Repeat => loops::repeat(false, env)?,
-            Primitive::Do => loops::do_(env)?,
-            Primitive::Group => loops::group(env)?,
-            Primitive::Partition => loops::partition(env)?,
-            Primitive::Triangle => table::triangle(env)?,
             Primitive::Reshape => {
                 let shape = env.pop(1)?;
                 let mut array = env.pop(2)?;
@@ -872,15 +852,6 @@ impl Primitive {
             Primitive::Pop => {
                 env.pop(1)?;
             }
-            Primitive::Fill => fill!(env, with_fill, without_fill_but),
-            Primitive::Try => algorithm::try_(env)?,
-            Primitive::Case => {
-                let f = env.pop_function()?;
-                env.call(f).map_err(|mut e| {
-                    e.is_case = true;
-                    e
-                })?;
-            }
             Primitive::Assert => {
                 let msg = env.pop(1)?;
                 let cond = env.pop(2)?;
@@ -903,45 +874,6 @@ impl Primitive {
             Primitive::Type => {
                 let val = env.pop(1)?;
                 env.push(val.type_id());
-            }
-            Primitive::Memo => {
-                let f = env.pop_function()?;
-                let sig = f.signature();
-                let mut args = Vec::with_capacity(sig.args);
-                for i in 0..sig.args {
-                    args.push(env.pop(i + 1)?);
-                }
-                let mut memo = env.rt.memo.get_or_default().borrow_mut();
-                if let Some(f_memo) = memo.get_mut(&f.id) {
-                    if let Some(outputs) = f_memo.get(&args) {
-                        let outputs = outputs.clone();
-                        drop(memo);
-                        for val in outputs {
-                            env.push(val);
-                        }
-                        return Ok(());
-                    }
-                }
-                drop(memo);
-                for arg in args.iter().rev() {
-                    env.push(arg.clone());
-                }
-                let id = f.id.clone();
-                env.call(f)?;
-                let outputs = env.clone_stack_top(sig.outputs)?;
-                let mut memo = env.rt.memo.get_or_default().borrow_mut();
-                memo.borrow_mut()
-                    .entry(id)
-                    .or_default()
-                    .insert(args, outputs.clone());
-            }
-            Primitive::Spawn => {
-                let f = env.pop_function()?;
-                env.spawn(f.signature().args, false, f)?;
-            }
-            Primitive::Pool => {
-                let f = env.pop_function()?;
-                env.spawn(f.signature().args, true, f)?;
             }
             Primitive::Wait => {
                 let id = env.pop(1)?;
@@ -966,17 +898,6 @@ impl Primitive {
                 env.push(o);
             }
             Primitive::DateTime => env.monadic_ref_env(Value::datetime)?,
-            Primitive::SetInverse => {
-                let f = env.pop_function()?;
-                let _inv = env.pop_function()?;
-                env.call(f)?;
-            }
-            Primitive::SetUnder => {
-                let f = env.pop_function()?;
-                let _before = env.pop_function()?;
-                let _after = env.pop_function()?;
-                env.call(f)?;
-            }
             Primitive::Insert => {
                 let key = env.pop("key")?;
                 let val = env.pop("value")?;
@@ -1009,7 +930,6 @@ impl Primitive {
             }
             Primitive::Trace => trace(env, false)?,
             Primitive::Stack => stack(env, false)?,
-            Primitive::Dump => dump(env, false)?,
             Primitive::Regex => regex(env)?,
             Primitive::Json => env.monadic_ref_env(Value::to_json_string)?,
             Primitive::Csv => env.monadic_ref_env(Value::to_csv)?,
@@ -1020,7 +940,6 @@ impl Primitive {
             Primitive::GifEncode => encode::gif_encode(env)?,
             Primitive::AudioEncode => encode::audio_encode(env)?,
             Primitive::Layout => env.dyadic_oo_env(encode::layout_text)?,
-            Primitive::Astar => algorithm::astar(env)?,
             Primitive::Fft => algorithm::fft(env)?,
             Primitive::Stringify
             | Primitive::Quote
@@ -1051,6 +970,101 @@ impl Primitive {
                 )))
             }
             Primitive::Sys(io) => io.run(env)?,
+            prim => {
+                return Err(env.error(if prim.modifier_args().is_some() {
+                    format!(
+                        "{} was not handled as a modifier. \
+                        This is a bug in the interpreter",
+                        prim.format()
+                    )
+                } else {
+                    format!(
+                        "{} was not handled as a function. \
+                        This is a bug in the interpreter",
+                        prim.format()
+                    )
+                }))
+            }
+        }
+        Ok(())
+    }
+    pub fn run_mod(&self, ops: Ops, env: &mut Uiua) -> UiuaResult {
+        match self {
+            Primitive::Reduce => reduce::reduce(ops, 0, env)?,
+            Primitive::Scan => reduce::scan(ops, env)?,
+            Primitive::Fold => reduce::fold(ops, env)?,
+            Primitive::Each => zip::each(ops, env)?,
+            Primitive::Rows => zip::rows(ops, false, env)?,
+            Primitive::Table => table::table(ops, env)?,
+            Primitive::Inventory => zip::rows(ops, true, env)?,
+            Primitive::Tuples => permute::tuples(ops, env)?,
+            Primitive::Repeat => loops::repeat(ops, false, env)?,
+            Primitive::Do => loops::do_(ops, env)?,
+            Primitive::Group => loops::group(ops, env)?,
+            Primitive::Partition => loops::partition(ops, env)?,
+            Primitive::Fill => fill!(ops, env, with_fill, without_fill_but),
+            Primitive::Try => algorithm::try_(ops, env)?,
+            Primitive::Case => {
+                let [f] = get_ops(ops, env)?;
+                env.exec(f).map_err(|mut e| {
+                    e.is_case = true;
+                    e
+                })?;
+            }
+            Primitive::Dump => dump(ops, env, false)?,
+            Primitive::Astar => algorithm::astar(ops, env)?,
+            Primitive::Memo => {
+                let [f] = get_ops(ops, env)?;
+                let mut args = Vec::with_capacity(f.sig.args);
+                for i in 0..f.sig.args {
+                    args.push(env.pop(i + 1)?);
+                }
+                let mut memo = env.rt.memo.get_or_default().borrow_mut();
+                if let Some(f_memo) = memo.get_mut(&f.node) {
+                    if let Some(outputs) = f_memo.get(&args) {
+                        let outputs = outputs.clone();
+                        drop(memo);
+                        for val in outputs {
+                            env.push(val);
+                        }
+                        return Ok(());
+                    }
+                }
+                drop(memo);
+                for arg in args.iter().rev() {
+                    env.push(arg.clone());
+                }
+                env.exec(f.node.clone())?;
+                let outputs = env.clone_stack_top(f.sig.outputs)?;
+                let mut memo = env.rt.memo.get_or_default().borrow_mut();
+                memo.borrow_mut()
+                    .entry(f.node)
+                    .or_default()
+                    .insert(args, outputs.clone());
+            }
+            Primitive::Spawn => {
+                let [f] = get_ops(ops, env)?;
+                env.spawn(f.sig.args, false, f)?;
+            }
+            Primitive::Pool => {
+                let [f] = get_ops(ops, env)?;
+                env.spawn(f.sig.args, true, f)?;
+            }
+            prim => {
+                return Err(env.error(if prim.modifier_args().is_some() {
+                    format!(
+                        "{} was not handled as a modifier. \
+                        This is a bug in the interpreter",
+                        prim.format()
+                    )
+                } else {
+                    format!(
+                        "{} was called as a modifier. \
+                        This is a bug in the interpreter",
+                        prim.format()
+                    )
+                }))
+            }
         }
         Ok(())
     }
@@ -1132,15 +1146,12 @@ impl ImplPrimitive {
             ImplPrimitive::UnParse => env.monadic_ref_env(Value::unparse)?,
             ImplPrimitive::UnFix => env.monadic_mut_env(Value::unfix)?,
             ImplPrimitive::UnShape => env.monadic_ref_env(Value::unshape)?,
-            ImplPrimitive::UnScan => reduce::unscan(env)?,
             ImplPrimitive::TraceN {
                 n,
                 inverse,
                 stack_sub,
             } => trace_n(env, *n, *inverse, *stack_sub)?,
             ImplPrimitive::UnStack => stack(env, true)?,
-            ImplPrimitive::UnDump => dump(env, true)?,
-            ImplPrimitive::UnFill => fill!(env, with_unfill, without_unfill_but),
             ImplPrimitive::Primes => env.monadic_ref_env(Value::primes)?,
             ImplPrimitive::UnBox => {
                 let val = env.pop(1)?;
@@ -1318,9 +1329,7 @@ impl ImplPrimitive {
                 val.undo_deshape(&shape, env)?;
                 env.push(val)
             }
-            ImplPrimitive::UndoPartition1 => loops::undo_partition_part1(env)?,
             ImplPrimitive::UndoPartition2 => loops::undo_partition_part2(env)?,
-            ImplPrimitive::UndoGroup1 => loops::undo_group_part1(env)?,
             ImplPrimitive::UndoGroup2 => loops::undo_group_part2(env)?,
             ImplPrimitive::UndoJoin => {
                 let a_shape = env.pop(1)?;
@@ -1360,8 +1369,6 @@ impl ImplPrimitive {
             ImplPrimitive::RandomRow => env.monadic_ref_env(Value::random_row)?,
             ImplPrimitive::LastWhere => env.monadic_ref_env(Value::last_where)?,
             ImplPrimitive::SortDown => env.monadic_mut(Value::sort_down)?,
-            ImplPrimitive::ReduceContent => reduce::reduce_content(env)?,
-            ImplPrimitive::ReduceTable => table::reduce_table(env)?,
             ImplPrimitive::ReplaceRand => {
                 env.pop(1)?;
                 env.push(random());
@@ -1371,22 +1378,10 @@ impl ImplPrimitive {
                 env.pop(2)?;
                 env.push(random());
             }
-            ImplPrimitive::Adjacent => reduce::adjacent(env)?,
-            ImplPrimitive::RowsWindows => zip::rows_windows(env)?,
             ImplPrimitive::CountUnique => env.monadic_ref(Value::count_unique)?,
             ImplPrimitive::MatchPattern => invert::match_pattern(env)?,
-            ImplPrimitive::EndRandArray => {
-                let n = env
-                    .pop(1)?
-                    .as_nat(env, "Repetition count must be a natural number")?;
-                let arr: Array<f64> = (0..n).map(|_| random()).collect();
-                env.end_array(false, Some(arr.into()))?;
-            }
-            ImplPrimitive::AstarFirst => algorithm::astar_first(env)?,
-            &ImplPrimitive::ReduceDepth(depth) => reduce::reduce(depth, env)?,
             &ImplPrimitive::TransposeN(n) => env.monadic_mut(|val| val.transpose_depth(0, n))?,
             // Implementation details
-            ImplPrimitive::RepeatWithInverse => loops::repeat(true, env)?,
             ImplPrimitive::ValidateType | ImplPrimitive::ValidateTypeConsume => {
                 let type_num = env
                     .pop(1)?
@@ -1465,6 +1460,36 @@ impl ImplPrimitive {
                 }
                 let res = tag.join(val, false, env)?;
                 env.push(res);
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn run_mod(&self, ops: Ops, env: &mut Uiua) -> UiuaResult {
+        match self {
+            ImplPrimitive::UndoPartition1 => loops::undo_partition_part1(ops, env)?,
+            ImplPrimitive::UndoGroup1 => loops::undo_group_part1(ops, env)?,
+            ImplPrimitive::ReduceContent => reduce::reduce_content(ops, env)?,
+            ImplPrimitive::Adjacent => reduce::adjacent(ops, env)?,
+            ImplPrimitive::AstarFirst => algorithm::astar_first(ops, env)?,
+            &ImplPrimitive::ReduceDepth(depth) => reduce::reduce(ops, depth, env)?,
+            ImplPrimitive::RepeatWithInverse => loops::repeat(ops, true, env)?,
+            ImplPrimitive::UnScan => reduce::unscan(ops, env)?,
+            ImplPrimitive::UnDump => dump(ops, env, true)?,
+            ImplPrimitive::UnFill => fill!(ops, env, with_unfill, without_unfill_but),
+            ImplPrimitive::ReduceTable => table::reduce_table(ops, env)?,
+            ImplPrimitive::RowsWindows => zip::rows_windows(ops, env)?,
+            prim => {
+                return Err(env.error(if prim.modifier_args().is_some() {
+                    format!(
+                        "{prim} was not handled as a modifier. \
+                        This is a bug in the interpreter"
+                    )
+                } else {
+                    format!(
+                        "{prim} was not handled as a function. \
+                        This is a bug in the interpreter"
+                    )
+                }))
             }
         }
         Ok(())
@@ -1626,8 +1651,8 @@ fn stack(env: &Uiua, inverse: bool) -> UiuaResult {
     Ok(())
 }
 
-fn dump(env: &mut Uiua, inverse: bool) -> UiuaResult {
-    let f = env.pop_function()?;
+fn dump(ops: Ops, env: &mut Uiua, inverse: bool) -> UiuaResult {
+    let [f] = get_ops(ops, env)?;
     if f.signature() != (1, 1) {
         return Err(env.error(format!(
             "{}'s function's signature must be |1, but it is {}",

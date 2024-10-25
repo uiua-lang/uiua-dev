@@ -3,8 +3,8 @@ use std::{cmp::Ordering, mem::take};
 use enum_iterator::Sequence;
 
 use crate::{
-    cowslice::CowSlice, Array, Assembly, Boxed, Complex, Function, ImplPrimitive, Instr,
-    PersistentMeta, Primitive, Shape, TempStack, Uiua, Value,
+    cowslice::CowSlice, Array, Assembly, Boxed, Complex, Function, ImplPrimitive, Node,
+    PersistentMeta, Primitive, Shape, SigNode, TempStack, Uiua, Value,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -77,7 +77,7 @@ fn make_val(mut ty: Type) -> Value {
 }
 
 pub(crate) fn push_empty_rows_value<'a, I>(
-    f: &Function,
+    f: &SigNode,
     args: I,
     inventory: bool,
     per_meta: &mut PersistentMeta,
@@ -89,12 +89,12 @@ where
 {
     if inventory {
         let per_meta = take(per_meta);
-        for _ in 0..f.signature().outputs.saturating_sub(1) {
+        for _ in 0..f.sig.outputs.saturating_sub(1) {
             let mut arr = Array::<Boxed>::new([0], CowSlice::default());
             arr.set_per_meta(per_meta.clone());
             env.push(arr);
         }
-        if f.signature().outputs > 0 {
+        if f.sig.outputs > 0 {
             let mut arr = Array::<Boxed>::new([0], CowSlice::default());
             arr.set_per_meta(per_meta);
             env.push(arr);
@@ -111,7 +111,7 @@ where
         array_stack: Vec::new(),
         function_stack: Vec::new(),
     };
-    match rt.instrs(f.instrs(&env.asm), &env.asm) {
+    match rt.node(&f.node, &env.asm) {
         Ok(()) => {
             let per_meta = take(per_meta);
             let count = rt.stack.len();
@@ -140,48 +140,19 @@ struct TypeRt<'a> {
 }
 
 impl<'a> TypeRt<'a> {
-    fn instrs(&mut self, instrs: &'a [Instr], asm: &'a Assembly) -> Result<(), TypeError> {
-        for instr in instrs {
-            self.instr(instr, asm)?;
+    fn nodes(&mut self, nodes: &'a [Node], asm: &'a Assembly) -> Result<(), TypeError> {
+        for instr in nodes {
+            self.node(instr, asm)?;
         }
         Ok(())
     }
     #[allow(clippy::collapsible_match)]
-    fn instr(&mut self, instr: &'a Instr, asm: &'a Assembly) -> Result<(), TypeError> {
+    fn node(&mut self, node: &'a Node, asm: &'a Assembly) -> Result<(), TypeError> {
         use Primitive as P;
-        match instr {
-            Instr::Push(val) => self.stack.push(val.row_ty()),
-            Instr::PushFunc(f) => self.function_stack.push(f),
-            Instr::Call(_) => {
-                let f = self.pop_func()?;
-                self.instrs(f.instrs(asm), asm)?;
-            }
-            Instr::PushTemp { stack, count, .. } => {
-                for _ in 0..*count {
-                    let val = self.pop()?;
-                    self.temp_stacks[*stack as usize].push(val);
-                }
-            }
-            Instr::CopyToTemp { stack, count, .. } => {
-                let mut vals = Vec::with_capacity(*count);
-                for _ in 0..*count {
-                    vals.push(self.pop()?);
-                }
-                for val in vals {
-                    self.temp_stacks[*stack as usize].push(val.clone());
-                    self.stack.push(val);
-                }
-            }
-            Instr::PopTemp { stack, count, .. } => {
-                for _ in 0..*count {
-                    self.stack.push(
-                        self.temp_stacks[*stack as usize]
-                            .pop()
-                            .ok_or(TypeError::StackUnderflow)?,
-                    );
-                }
-            }
-            Instr::Prim(prim, _) => match prim {
+        match node {
+            Node::Push(val) => self.stack.push(val.row_ty()),
+            Node::Call(f, _) => self.node(&asm[f], asm)?,
+            Node::Prim(prim, _) => match prim {
                 P::Dup => {
                     let val = self.pop()?;
                     self.stack.push(val.clone());
@@ -281,7 +252,7 @@ impl<'a> TypeRt<'a> {
                 }
                 _ => return Err(TypeError::NotSupported),
             },
-            Instr::ImplPrim(prim, _) => match prim {
+            Node::ImplPrim(prim, _) => match prim {
                 ImplPrimitive::UnBox => {
                     let x = self.pop()?;
                     if x.shape.len() == 0 {

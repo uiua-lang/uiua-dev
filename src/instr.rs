@@ -14,7 +14,7 @@ use crate::{
     function::*,
     primitive::{ImplPrimitive, Primitive},
     value::Value,
-    Assembly, BindingKind, Ident,
+    Assembly, BindingKind, Function, Ident,
 };
 
 macro_rules! instr {
