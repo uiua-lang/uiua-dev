@@ -5,14 +5,17 @@ mod modifier;
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{hash_map::DefaultHasher, BTreeSet, HashMap, HashSet, VecDeque},
     env::current_dir,
     fmt, fs,
+    hash::{Hash, Hasher},
     iter::{once, repeat},
     mem::{replace, swap, take},
     panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
+    slice,
     sync::Arc,
+    time::Duration,
 };
 
 use ecow::{eco_vec, EcoString, EcoVec};
@@ -20,27 +23,45 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assembly2::{Assembly, BindingKind, DocComment, DocCommentSig, Function},
+    algorithm::{
+        invert::{anti_instrs, invert_instrs, under_instrs, CustomInverse},
+        IgnoreError,
+    },
     ast::*,
-    check2::{nodes_sig, SigCheckError, SigCheckErrorKind},
+    check::{instrs_clean_signature, instrs_signature, SigCheckError, SigCheckErrorKind},
     format::{format_word, format_words},
-    function2::{DynamicFunction, FunctionFlags},
+    function::*,
     ident_modifier_args,
     instr::*,
     lex::{CodeSpan, Sp, Span},
     lsp::{CodeMeta, ImportSrc, SigDecl},
+    optimize::{optimize_instrs, optimize_instrs_mut},
     parse::{count_placeholders, flip_unsplit_lines, parse, split_words},
-    Array, Boxed, CustomInverse, Diagnostic, DiagnosticKind, FunctionId, GitTarget, Ident,
-    ImplPrimitive, InputSrc, IntoInputSrc, IntoSysBackend, Node, Primitive, RunMode,
-    SemanticComment, SigNode, Signature, SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult,
-    Value, CONSTANTS, EXAMPLE_UA, SUBSCRIPT_NUMS, VERSION,
+    Array, Assembly, BindingKind, Boxed, Diagnostic, DiagnosticKind, DocComment, DocCommentSig,
+    GitTarget, Ident, ImplPrimitive, InputSrc, IntoInputSrc, IntoSysBackend, Primitive, RunMode,
+    SemanticComment, SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value, CONSTANTS,
+    EXAMPLE_UA, SUBSCRIPT_NUMS, VERSION,
 };
+
+/// Wrap a block in a closure call to reduce stack size
+macro_rules! wrap {
+    (|| -> $ty:ty { $($tt:tt)* }) => {
+        return (|| -> $ty {$($tt)*})()
+    };
+    (|| { $($tt:tt)* }) => {
+        (|| -> UiuaResult {$($tt)* Ok(())})()?
+    };
+}
+
+use wrap;
 
 /// The Uiua compiler
 #[derive(Clone)]
 pub struct Compiler {
     pub(crate) asm: Assembly,
     pub(crate) code_meta: CodeMeta,
+    /// Functions which are under construction
+    new_functions: Vec<NewFunction>,
     /// The name of the current bindings
     current_bindings: Vec<CurrentBinding>,
     /// The index of the next global binding
@@ -65,6 +86,10 @@ pub struct Compiler {
     in_inverse: bool,
     /// Whether the compiler is in a try
     in_try: bool,
+    /// Map of instructions to undered functions that created them
+    ///
+    /// This is used to under functions that have already been inlined
+    pub(crate) undered_funcs: HashMap<EcoVec<Instr>, UnderedFunctions>,
     /// Accumulated errors
     errors: Vec<UiuaError>,
     /// Primitives that have emitted errors because they are deprecated
@@ -86,6 +111,7 @@ impl Default for Compiler {
         Compiler {
             asm: Assembly::default(),
             code_meta: CodeMeta::default(),
+            new_functions: Vec::new(),
             current_bindings: Vec::new(),
             next_global: 0,
             scope: Scope::default(),
@@ -98,6 +124,7 @@ impl Default for Compiler {
             macro_depth: 0,
             in_inverse: false,
             in_try: false,
+            undered_funcs: HashMap::new(),
             errors: Vec::new(),
             deprecated_prim_errors: HashSet::new(),
             diagnostics: BTreeSet::new(),
@@ -105,6 +132,33 @@ impl Default for Compiler {
             comptime: true,
             pre_eval_mode: PreEvalMode::default(),
             macro_env: Uiua::default(),
+        }
+    }
+}
+
+/// A function that is under construction
+///
+/// Has a list of instructions but also tracks flags
+#[derive(Debug, Clone, Default)]
+pub(crate) struct NewFunction {
+    pub instrs: EcoVec<Instr>,
+    pub flags: FunctionFlags,
+}
+
+impl From<EcoVec<Instr>> for NewFunction {
+    fn from(instrs: EcoVec<Instr>) -> Self {
+        Self {
+            instrs,
+            flags: FunctionFlags::default(),
+        }
+    }
+}
+
+impl From<FunctionFlags> for NewFunction {
+    fn from(flags: FunctionFlags) -> Self {
+        Self {
+            flags,
+            instrs: EcoVec::new(),
         }
     }
 }
@@ -266,11 +320,11 @@ const MAX_PRE_EVAL_ELEMS: usize = 1000;
 const MAX_PRE_EVAL_RANK: usize = 4;
 
 impl PreEvalMode {
-    fn matches_node(&self, node: &Node, asm: &Assembly) -> bool {
-        if node.iter().any(|node| {
+    fn matches_instrs(&self, instrs: &[Instr], asm: &Assembly) -> bool {
+        if instrs.iter().any(|instr| {
             matches!(
-                node,
-                Node::Push(val)
+                instr,
+                Instr::Push(val)
                     if val.element_count() > MAX_PRE_EVAL_ELEMS
                     || val.rank() > MAX_PRE_EVAL_RANK
             )
@@ -279,10 +333,13 @@ impl PreEvalMode {
         }
         match self {
             PreEvalMode::Normal | PreEvalMode::Line => {
-                node.is_pure(Purity::Pure, asm) && node.is_limit_bounded(asm)
+                instrs_are_pure(instrs, asm, Purity::Pure) && instrs_are_limit_bounded(instrs, asm)
             }
             PreEvalMode::Lazy => false,
-            PreEvalMode::Lsp => node.is_pure(Purity::Impure, asm) && node.is_limit_bounded(asm),
+            PreEvalMode::Lsp => {
+                instrs_are_pure(instrs, asm, Purity::Impure)
+                    && instrs_are_limit_bounded(instrs, asm)
+            }
         }
     }
 }
@@ -400,21 +457,21 @@ impl Compiler {
         &mut self,
         kind: ScopeKind,
         f: impl FnOnce(&mut Self) -> UiuaResult<T>,
-    ) -> UiuaResult<(Module, T)> {
+    ) -> UiuaResult<Module> {
         self.higher_scopes.push(take(&mut self.scope));
         self.scope.kind = kind;
         let res = f(self);
         let scope = replace(&mut self.scope, self.higher_scopes.pop().unwrap());
-        let res = res?;
-        let module = Module {
+        res?;
+        Ok(Module {
             comment: scope.comment,
             names: scope.names,
             experimental: scope.experimental,
-        };
-        Ok((module, res))
+        })
     }
     fn load_impl(&mut self, input: &str, src: InputSrc) -> UiuaResult<&mut Self> {
-        let node_start = self.asm.root.len();
+        let instrs_start = self.asm.instrs.len();
+        let top_slices_start = self.asm.top_slices.len();
         let (items, errors, diagnostics) = parse(input, src.clone(), &mut self.asm.inputs);
         for diagnostic in diagnostics {
             self.emit_diagnostic_impl(diagnostic);
@@ -447,7 +504,8 @@ impl Compiler {
         }
         match res {
             Err(e) | Ok(Err(e)) => {
-                self.asm.root.truncate(node_start);
+                self.asm.instrs.truncate(instrs_start);
+                self.asm.top_slices.truncate(top_slices_start);
                 self.errors.push(e);
             }
             _ => {}
@@ -557,7 +615,7 @@ code:
         &mut self,
         mut lines: Vec<Vec<Sp<Word>>>,
         must_run: bool,
-        _precomp: bool,
+        precomp: bool,
         prelude: &mut BindingPrelude,
     ) -> UiuaResult {
         fn words_should_run_anyway(words: &[Sp<Word>]) -> bool {
@@ -628,32 +686,149 @@ code:
                     "Cannot use placeholder outside of an index macro",
                 );
             }
+            let all_literal = line.iter().filter(|w| w.value.is_code()).all(|w| {
+                matches!(
+                    w.value,
+                    Word::Char(_) | Word::Number(..) | Word::String(_) | Word::MultilineString(_)
+                )
+            });
+            let line_sig_comment = line_sig(&line);
             // Compile the words
-            let mut line_node = self.line(line)?;
-            match line_node.sig() {
-                Ok(sig) => {
-                    // Update scope stack height
-                    if let Ok(height) = &mut self.scope.stack_height {
-                        *height = (*height + sig.outputs).saturating_sub(sig.args);
-                        // Compile test assert
-                        if self.mode != RunMode::Normal
-                            && sig.outputs == 0
-                            && !self
-                                .scopes()
-                                .any(|sc| sc.kind == ScopeKind::File(FileScopeKind::Git))
+            wrap!(|| {
+                let instr_count_before = self.asm.instrs.len();
+                let binding_count_before = self.asm.bindings.len();
+                let new_func = self.compile_words(line, true)?;
+                let instr_count_after = self.asm.instrs.len();
+                let binding_count_after = self.asm.bindings.len();
+                let (mut new_func, pre_eval_errors) = self.pre_eval_instrs(new_func);
+                let mut line_eval_errored = false;
+                match instrs_signature(&new_func.instrs) {
+                    Ok(sig) => {
+                        // Check doc comment sig
+                        if let Some(comment_sig) = line_sig_comment {
+                            if !comment_sig.value.matches_sig(sig) {
+                                self.emit_diagnostic(
+                                    format!("Line signature {sig} does not match comment"),
+                                    DiagnosticKind::Warning,
+                                    comment_sig.span.clone(),
+                                );
+                            }
+                        }
+                        // Update scope stack height
+                        if let Ok(height) = &mut self.scope.stack_height {
+                            *height = (*height + sig.outputs).saturating_sub(sig.args);
+                            // Compile test assert
+                            if self.mode != RunMode::Normal
+                                && sig.outputs == 0
+                                && !self
+                                    .scopes()
+                                    .any(|sc| sc.kind == ScopeKind::File(FileScopeKind::Git))
+                            {
+                                if let Some(Instr::Prim(Primitive::Assert, span)) =
+                                    new_func.instrs.last()
+                                {
+                                    let span = *span;
+                                    new_func.instrs.pop();
+                                    new_func
+                                        .instrs
+                                        .push(Instr::ImplPrim(ImplPrimitive::TestAssert, span));
+                                }
+                            }
+                        }
+                        // Try to evaluate at comptime
+                        // This can be done when:
+                        // - the pre-eval mode is not `Line`
+                        // - there are at least as many push instructions preceding the current line as there are arguments to the line
+                        // - the words create no bindings
+                        if precomp
+                            && self.pre_eval_mode != PreEvalMode::Line
+                            && !new_func.instrs.is_empty()
+                            && instr_count_before >= sig.args
+                            && instr_count_after >= instr_count_before
+                            && binding_count_before == binding_count_after
+                            && (self.asm.instrs.iter().take(instr_count_before).rev())
+                                .take(sig.args)
+                                .all(|instr| matches!(instr, Instr::Push(_)))
                         {
-                            if let Some(Node::Prim(Primitive::Assert, span)) = line_node.last() {
-                                let span = *span;
-                                line_node.pop();
-                                line_node.push(Node::ImplPrim(ImplPrimitive::TestAssert, span));
+                            // The instructions for evaluation are the preceding push
+                            // instructions, followed by the current line
+                            let mut comp_instrs = EcoVec::from(
+                                &self.asm.instrs[instr_count_before - sig.args..instr_count_before],
+                            );
+                            comp_instrs.extend(new_func.instrs.iter().cloned());
+                            match self.comptime_instrs(comp_instrs) {
+                                Ok(Some(vals)) => {
+                                    // Track top level values
+                                    if !all_literal {
+                                        self.code_meta.top_level_values.insert(span, vals.clone());
+                                    }
+                                    // Truncate instrs
+                                    self.asm.instrs.truncate(instr_count_before - sig.args);
+                                    // Truncate top slices
+                                    let mut remaining = sig.args;
+                                    while let Some(slice) = self.asm.top_slices.last_mut() {
+                                        let to_sub = slice.len.min(remaining);
+                                        slice.len -= to_sub;
+                                        remaining -= to_sub;
+                                        if remaining == 0 {
+                                            break;
+                                        }
+                                        if slice.len == 0 {
+                                            self.asm.top_slices.pop();
+                                        }
+                                    }
+                                    // Set instrs
+                                    new_func.instrs = vals.into_iter().map(Instr::push).collect();
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    self.errors.push(e);
+                                    line_eval_errored = true;
+                                }
                             }
                         }
                     }
+                    Err(e) => self.scope.stack_height = Err(span.sp(e)),
                 }
-                Err(e) => self.scope.stack_height = Err(span.sp(e)),
-            }
+                if !line_eval_errored {
+                    self.errors.extend(pre_eval_errors);
+                }
+                let start = self.asm.instrs.len();
+                self.asm.instrs.extend(new_func.instrs);
+                let end = self.asm.instrs.len();
+                if end != start {
+                    self.asm.top_slices.push(FuncSlice {
+                        start,
+                        len: end - start,
+                    });
+                }
+            });
         }
         Ok(())
+    }
+    #[must_use]
+    pub(crate) fn make_function(
+        &mut self,
+        id: FunctionId,
+        sig: Signature,
+        new_func: NewFunction,
+    ) -> Function {
+        let (new_func, errors) = self.pre_eval_instrs(new_func);
+        self.errors.extend(errors);
+        let len = new_func.instrs.len();
+        (self.asm.instrs).push(Instr::Comment(format!("({id}").into()));
+        let start = if len == 0 { 0 } else { self.asm.instrs.len() };
+        let mut hasher = DefaultHasher::new();
+        new_func.instrs.hash(&mut hasher);
+        let hash = hasher.finish();
+        self.asm.instrs.extend(new_func.instrs);
+        (self.asm.instrs).push(Instr::Comment(format!("{id})").into()));
+        let slice = FuncSlice { start, len };
+        // println!(
+        //     "make function: {id} {sig} {slice:?} {:?}",
+        //     self.asm.instrs(slice)
+        // );
+        Function::new(id, sig, slice, hash).with_flags(new_func.flags)
     }
     fn compile_bind_function(
         &mut self,
@@ -666,14 +841,14 @@ code:
         let comment = comment.map(|text| {
             let comment = DocComment::from(text);
             if let Some(sig) = &comment.sig {
-                if !sig.matches_sig(function.sig()) {
+                if !sig.matches_sig(function.signature()) {
                     self.emit_diagnostic(
                         format!(
                             "{}'s comment describes {}, \
                             but its code has signature {}",
                             name,
                             sig.sig_string(),
-                            function.sig(),
+                            function.signature(),
                         ),
                         DiagnosticKind::Warning,
                         self.get_span(span).clone().code().unwrap(),
@@ -809,7 +984,7 @@ code:
                         format!("Cycle detected importing {}", path.to_string_lossy()),
                     ));
                 }
-                let (module, ()) = self.in_scope(ScopeKind::File(file_kind), |comp| {
+                let module = self.in_scope(ScopeKind::File(file_kind), |comp| {
                     comp.load_str_src(&input, &path).map(drop)
                 })?;
                 self.imports.insert(path.clone(), module);
@@ -852,13 +1027,20 @@ code:
             pathdiff::diff_paths(&target, base).unwrap_or(target)
         }
     }
+    fn compile_words(&mut self, words: Vec<Sp<Word>>, call: bool) -> UiuaResult<NewFunction> {
+        self.new_functions.push(NewFunction::default());
+        for line in flip_unsplit_lines(split_words(words)) {
+            self.words(line, call)?;
+        }
+        Ok(self.new_functions.pop().unwrap())
+    }
     // Compile a line, checking an end-of-line signature comment
-    fn line(&mut self, line: Vec<Sp<Word>>) -> UiuaResult<Node> {
+    fn compile_line(&mut self, line: Vec<Sp<Word>>, call: bool) -> UiuaResult<NewFunction> {
         let comment_sig = line_sig(&line);
         let is_empty = line.iter().all(|w| !w.value.is_code());
-        let node = self.words(line)?;
+        let new_func = self.compile_words(line, call)?;
         if let Some(comment_sig) = comment_sig {
-            if let Ok(sig) = node.sig() {
+            if let Ok(sig) = instrs_signature(&new_func.instrs) {
                 if !is_empty && !comment_sig.value.matches_sig(sig) {
                     self.emit_diagnostic(
                         format!("Line signature {sig} does not match comment"),
@@ -868,37 +1050,45 @@ code:
                 }
             }
         }
-        Ok(node)
+        Ok(new_func)
     }
-    fn args(&mut self, words: Vec<Sp<Word>>) -> UiuaResult<EcoVec<SigNode>> {
-        words
-            .into_iter()
-            .filter(|w| w.value.is_code())
-            .map(|w| self.word_sig(w))
-            .collect()
-    }
-    fn words_sig(&mut self, words: Vec<Sp<Word>>) -> UiuaResult<SigNode> {
-        let span = words
-            .first()
-            .zip(words.last())
-            .map(|(f, l)| f.span.clone().merge(l.span.clone()));
-        let node = self.words(words)?;
-        let sig = if let Some(span) = span {
-            self.sig_of(&node, &span)?
+    fn compile_operand_word(&mut self, word: Sp<Word>) -> UiuaResult<(NewFunction, Signature)> {
+        let span = word.span.clone();
+        let mut new_func = self.compile_words(vec![word], true)?;
+        let mut sig = None;
+        let len = new_func.instrs.len();
+        // Extract function instrs if possible
+        if let [Instr::PushFunc(f)] | [Instr::PushFunc(f), Instr::Call(_)] =
+            new_func.instrs.as_slice()
+        {
+            sig = Some(f.signature());
+            let slice = f.slice;
+            new_func.flags = f.flags;
+            new_func.instrs = f.instrs(&self.asm).into();
+            if len == 1 && slice.start + slice.len >= self.asm.instrs.len() - 1 {
+                self.asm.instrs.truncate(slice.start);
+                if matches!(self.asm.instrs.last(), Some(Instr::Comment(com)) if com.starts_with('('))
+                {
+                    self.asm.instrs.pop();
+                }
+            }
+        }
+        let sig = if let Some(sig) = sig {
+            sig
         } else {
-            Signature::new(0, 0)
+            self.sig_of(&new_func.instrs, &span)?
         };
-        Ok(SigNode::new(node, sig))
+        new_func.instrs = optimize_instrs(new_func.instrs, false, &self.asm);
+        Ok((new_func, sig))
     }
-    fn words(&mut self, mut words: Vec<Sp<Word>>) -> UiuaResult<Node> {
+    fn words(&mut self, mut words: Vec<Sp<Word>>, call: bool) -> UiuaResult {
         words.retain(|word| word.value.is_code());
         words.reverse();
         #[derive(Debug, Clone)]
         struct PrevWord(Option<Primitive>, Option<Signature>, CodeSpan);
         let mut a: Option<PrevWord> = None;
         let mut b: Option<PrevWord> = None;
-        let mut nodes = Node::empty();
-        for word in flip_unsplit_lines(split_words(words)).into_iter().flatten() {
+        for word in words {
             let span = word.span.clone();
             let prim = match word.value {
                 Word::Primitive(prim) => Some(prim),
@@ -951,33 +1141,78 @@ code:
                 _ => {}
             }
 
+            let start = self.new_functions.last().unwrap().instrs.len();
+
             // Compile the word
-            let node = self.word(word)?;
-            let sig = node.sig().ok();
-            nodes.push(node);
+            self.word(word, call)?;
+
+            let new_function = self.new_functions.last().unwrap();
+            let sig = if new_function.instrs.len() >= start {
+                instrs_signature(&new_function.instrs[start..]).ok()
+            } else {
+                None
+            };
             a = b;
             b = Some(PrevWord(prim, sig, span));
         }
-        Ok(nodes)
+        Ok(())
     }
-    fn word_sig(&mut self, word: Sp<Word>) -> UiuaResult<SigNode> {
-        let span = word.span.clone();
-        let node = self.word(word)?;
-        let sig = self.sig_of(&node, &span)?;
-        Ok(SigNode::new(node, sig))
+    /// Push an instruction to the current function being compiled
+    ///
+    /// Also performs some optimizations if the instruction and the previous
+    /// instruction form some known pattern
+    fn push_instr(&mut self, instr: Instr) {
+        let new_func = self.new_functions.last_mut().unwrap();
+        optimize_instrs_mut(&mut new_func.instrs, instr, false, &self.asm);
     }
-    fn word(&mut self, word: Sp<Word>) -> UiuaResult<Node> {
-        Ok(match word.value {
-            Word::Number(_, n) => Node::new_push(n),
+    fn push_all_instrs(&mut self, new_func: impl Into<NewFunction>) {
+        let new_func = new_func.into();
+        let curr = self.new_functions.last_mut().unwrap();
+        curr.flags |= new_func.flags;
+        for instr in new_func.instrs {
+            optimize_instrs_mut(&mut curr.instrs, instr, false, &self.asm);
+        }
+    }
+    fn word(&mut self, word: Sp<Word>, call: bool) -> UiuaResult {
+        match word.value {
+            Word::Number(_, n) => {
+                let mut instr = Instr::push(n);
+                if !call {
+                    instr = Instr::PushFunc(self.make_function(
+                        FunctionId::Anonymous(word.span.clone()),
+                        Signature::new(0, 1),
+                        eco_vec![instr].into(),
+                    ));
+                }
+                self.push_instr(instr);
+            }
             Word::Char(c) => {
                 let val: Value = if c.chars().count() == 1 {
                     c.chars().next().unwrap().into()
                 } else {
                     c.into()
                 };
-                Node::new_push(val)
+                let mut instr = Instr::push(val);
+                if !call {
+                    instr = Instr::PushFunc(self.make_function(
+                        FunctionId::Anonymous(word.span.clone()),
+                        Signature::new(0, 1),
+                        eco_vec![instr].into(),
+                    ));
+                }
+                self.push_instr(instr);
             }
-            Word::String(s) => Node::new_push(s),
+            Word::String(s) => {
+                let mut instr = Instr::push(s);
+                if !call {
+                    instr = Instr::PushFunc(self.make_function(
+                        FunctionId::Anonymous(word.span.clone()),
+                        Signature::new(0, 1),
+                        eco_vec![instr].into(),
+                    ));
+                }
+                self.push_instr(instr);
+            }
             Word::MultilineString(lines) => {
                 let mut s = EcoVec::new();
                 for (i, line) in lines.into_iter().enumerate() {
@@ -986,15 +1221,50 @@ code:
                     }
                     s.extend(line.value.chars());
                 }
-                Node::new_push(s)
+                let mut instr = Instr::push(s);
+                if !call {
+                    instr = Instr::PushFunc(self.make_function(
+                        FunctionId::Anonymous(word.span.clone()),
+                        Signature::new(0, 1),
+                        eco_vec![instr].into(),
+                    ));
+                }
+                self.push_instr(instr);
             }
-            Word::Label(label) => Node::Label(label.into(), self.add_span(word.span.clone())),
+            Word::Label(label) => {
+                let mut instr = Instr::Label {
+                    label: label.into(),
+                    span: self.add_span(word.span.clone()),
+                    remove: false,
+                };
+                if !call {
+                    instr = Instr::PushFunc(self.make_function(
+                        FunctionId::Anonymous(word.span.clone()),
+                        Signature::new(0, 1),
+                        eco_vec![instr].into(),
+                    ));
+                }
+                self.push_instr(instr);
+            }
             Word::FormatString(frags) => {
+                let signature = Signature::new(frags.len() - 1, 1);
                 let parts = frags.into_iter().map(Into::into).collect();
                 let span = self.add_span(word.span.clone());
-                Node::Format(parts, span)
+                let mut instr = Instr::Format { parts, span };
+                if !call {
+                    instr = Instr::PushFunc(self.make_function(
+                        FunctionId::Anonymous(word.span.clone()),
+                        signature,
+                        eco_vec![instr].into(),
+                    ));
+                }
+                self.push_instr(instr);
             }
             Word::MultilineFormatString(lines) => {
+                let signature = Signature::new(
+                    lines.iter().map(|l| l.value.len().saturating_sub(1)).sum(),
+                    1,
+                );
                 let span = self.add_span(word.span.clone());
                 let mut curr_part = EcoString::new();
                 let mut parts = EcoVec::new();
@@ -1010,9 +1280,17 @@ code:
                     }
                 }
                 parts.push(curr_part);
-                Node::Format(parts, span)
+                let mut instr = Instr::Format { parts, span };
+                if !call {
+                    instr = Instr::PushFunc(self.make_function(
+                        FunctionId::Anonymous(word.span.clone()),
+                        signature,
+                        eco_vec![instr].into(),
+                    ));
+                }
+                self.push_instr(instr);
             }
-            Word::Ref(r) => self.reference(r)?,
+            Word::Ref(r) => self.reference(r, call)?,
             Word::IncompleteRef { path, in_macro_arg } => {
                 if let Some((_, locals)) = self.ref_path(&path, in_macro_arg)? {
                     self.add_error(
@@ -1029,19 +1307,18 @@ code:
                         .incomplete_refs
                         .insert(word.span.clone(), locals.last().unwrap().index);
                 }
-                Node::empty()
             }
             Word::Strand(items) => {
                 // Track span for LSP
                 let just_spans: Vec<_> = items.iter().map(|w| w.span.clone()).collect();
                 // Compile individual items
-                let op_nodes = items
+                let op_instrs = items
                     .into_iter()
                     .rev()
-                    .map(|word| self.word_sig(word))
+                    .map(|word| self.compile_operand_word(word))
                     .collect::<UiuaResult<Vec<_>>>()?;
                 // Check item sigs
-                let has_functions = op_nodes.iter().any(|sn| sn.sig.args > 0);
+                let has_functions = op_instrs.iter().any(|(_, sig)| sig.args > 0);
                 if has_functions {
                     return Err(
                         self.fatal_error(word.span.clone(), "Functions are not allowed in strands")
@@ -1049,14 +1326,24 @@ code:
                 }
                 self.code_meta.strands.insert(word.span.clone(), just_spans);
                 // Flatten instrs
-                let mut inner = Node::from_iter(op_nodes.into_iter().map(|sn| sn.node));
+                let (inner, flags): (Vec<Instr>, FunctionFlags) = op_instrs.into_iter().fold(
+                    (Vec::new(), FunctionFlags::default()),
+                    |(mut inner, mut flags), (nf, _)| {
+                        inner.extend(nf.instrs);
+                        flags |= nf.flags;
+                        (inner, flags)
+                    },
+                );
 
                 // Normal strand
-
+                if !call {
+                    self.new_functions.push(NewFunction::from(flags));
+                }
+                self.push_instr(Instr::BeginArray);
                 // Diagnostic for strand of characters
                 if !inner.is_empty()
                     && inner.iter().all(
-                        |instr| matches!(instr, Node::Push(Value::Char(arr)) if arr.rank() == 0),
+                        |instr| matches!(instr, Instr::Push(Value::Char(arr)) if arr.rank() == 0),
                     )
                 {
                     self.emit_diagnostic(
@@ -1066,29 +1353,39 @@ code:
                     );
                 }
 
-                let span = self.add_span(word.span.clone());
+                let span_index = self.add_span(word.span.clone());
+                let new_func = self.new_functions.last_mut().unwrap();
                 // Inline constant arrays
-                if inner.iter().all(|instr| matches!(instr, Node::Push(_))) {
+                if call && inner.iter().all(|instr| matches!(instr, Instr::Push(_))) {
                     let values: Vec<_> = inner
                         .iter()
                         .rev()
                         .map(|instr| match instr {
-                            Node::Push(v) => v.clone(),
+                            Instr::Push(v) => v.clone(),
                             _ => unreachable!(),
                         })
                         .collect();
                     match Value::from_row_values(values, &(&word.span, &self.asm.inputs)) {
-                        Ok(val) => inner = Node::new_push(val),
+                        Ok(val) => {
+                            new_func.instrs.pop();
+                            self.push_instr(Instr::push(val));
+                            return Ok(());
+                        }
                         Err(e) if e.is_fill => {}
                         Err(e) => return Err(e),
                     }
                 }
-                let sig = self.sig_of(&inner, &word.span)?;
-                Node::Array {
-                    inner: inner.into(),
-                    sig,
+                // Normal case
+                new_func.instrs.extend(inner);
+                self.push_instr(Instr::EndArray {
+                    span: span_index,
                     boxed: false,
-                    span,
+                });
+                if !call {
+                    let new_func = self.new_functions.pop().unwrap();
+                    let sig = instrs_signature(&new_func.instrs).unwrap();
+                    let func = self.make_function(FunctionId::Anonymous(word.span), sig, new_func);
+                    self.push_instr(Instr::PushFunc(func));
                 }
             }
             Word::Array(arr) => {
@@ -1106,10 +1403,18 @@ code:
                         .array_inner_spans
                         .insert(word.span.clone(), just_spans);
                 }
+
+                if !call {
+                    self.new_functions.push(NewFunction::default());
+                }
+                self.push_instr(Instr::BeginArray);
+                let mut inner = Vec::new();
+                let mut flags = FunctionFlags::default();
                 let line_count = arr.lines.len();
-                let mut inner = Node::empty();
                 for line in arr.lines.into_iter().rev() {
-                    inner.push(self.line(line)?);
+                    let nf = self.compile_line(line, true)?;
+                    inner.extend(nf.instrs);
+                    flags |= nf.flags;
                 }
                 // Validate inner loop correctness
                 let inner_sig = self.validate_array_loop_sig(&inner, &word.span);
@@ -1130,7 +1435,7 @@ code:
                     && !arr.boxes
                     && !inner.is_empty()
                     && inner.iter().all(
-                        |instr| matches!(instr, Node::Push(Value::Char(arr)) if arr.rank() == 0),
+                        |instr| matches!(instr, Instr::Push(Value::Char(arr)) if arr.rank() == 0),
                     )
                 {
                     self.emit_diagnostic(
@@ -1140,11 +1445,13 @@ code:
                     );
                 }
                 let span = self.add_span(word.span.clone());
+                let new_func = self.new_functions.last_mut().unwrap();
+                new_func.flags |= flags;
                 // Inline constant arrays
-                if inner.iter().all(|instr| matches!(instr, Node::Push(_))) {
+                if call && inner.iter().all(|instr| matches!(instr, Instr::Push(_))) {
                     let empty = inner.is_empty();
                     let values = inner.iter().rev().map(|instr| match instr {
-                        Node::Push(v) => v.clone(),
+                        Instr::Push(v) => v.clone(),
                         _ => unreachable!(),
                     });
                     let res = if arr.boxes {
@@ -1169,47 +1476,48 @@ code:
                             self.code_meta
                                 .array_shapes
                                 .insert(word.span.clone(), val.shape().clone());
-                            inner = Node::new_push(val);
+                            new_func.instrs.pop();
+                            self.push_instr(Instr::push(val));
+                            return Ok(());
                         }
                         Err(e) if e.is_fill => {}
                         Err(e) => return Err(e),
                     }
                 }
                 // Normal case
-                let sig = self.sig_of(&inner, &word.span)?;
-                Node::Array {
-                    inner: inner.into(),
-                    sig,
-                    boxed: arr.boxes,
+                new_func.instrs.extend(inner);
+                self.push_instr(Instr::EndArray {
                     span,
+                    boxed: arr.boxes,
+                });
+                if !call {
+                    let new_func = self.new_functions.pop().unwrap();
+                    let sig = instrs_signature(&new_func.instrs).unwrap_or(Signature::new(0, 0));
+                    let func = self.make_function(FunctionId::Anonymous(word.span), sig, new_func);
+                    self.push_instr(Instr::PushFunc(func));
                 }
             }
-            Word::Func(func) => self.func(func, word.span)?,
+            Word::Func(func) => self.func(func, word.span, call)?,
             Word::Pack(pack) => {
                 self.add_error(
                     word.span.clone(),
                     "Function packs are not allowed without a modifier",
                 );
                 if let Some(first) = pack.branches.into_iter().next() {
-                    self.word(first.map(Word::Func))?
-                } else {
-                    Node::empty()
+                    self.word(first.map(Word::Func), call)?;
                 }
             }
-            Word::Primitive(p) => self.primitive(p, word.span),
-            Word::Modified(m) => self.modified(*m, None)?,
+            Word::Primitive(p) => self.primitive(p, word.span, call)?,
+            Word::Modified(m) => self.modified(*m, None, call)?,
             Word::Placeholder(_) => {
                 // We could error here, but it's easier to handle it higher up
-                Node::empty()
             }
-            Word::SemanticComment(sc) => {
-                self.semantic_comment(sc, word.span);
-                Node::empty()
-            }
-            Word::OutputComment { i, n } => Node::SetOutputComment { i, n },
-            Word::Subscript(sub) => self.subscript(*sub, word.span)?,
-            Word::Comment(_) | Word::Spaces | Word::BreakLine | Word::FlipLine => Node::empty(),
-        })
+            Word::SemanticComment(sc) => self.semantic_comment(sc, word.span),
+            Word::OutputComment { i, n } => self.push_instr(Instr::SetOutputComment { i, n }),
+            Word::Subscript(sub) => self.subscript(*sub, word.span, call)?,
+            Word::Comment(_) | Word::Spaces | Word::BreakLine | Word::FlipLine => {}
+        }
+        Ok(())
     }
     fn semantic_comment(&mut self, comment: SemanticComment, span: CodeSpan) {
         match comment {
@@ -1217,20 +1525,22 @@ code:
                 self.scope.experimental = true;
             }
             SemanticComment::NoInline => {
-                todo!("# No inline!")
+                if let Some(new_func) = self.new_functions.last_mut() {
+                    new_func.flags |= FunctionFlags::NO_INLINE;
+                }
             }
             SemanticComment::TrackCaller => {
-                todo!("# Track caller!")
+                if let Some(new_func) = self.new_functions.last_mut() {
+                    new_func.flags |= FunctionFlags::TRACK_CALLER;
+                }
             }
-            SemanticComment::Boo => {
-                self.add_error(span, "The compiler is scared!");
-            }
+            SemanticComment::Boo => self.add_error(span, "The compiler is scared!"),
         }
     }
     /// Emit a warning if a loop inside an array could
     /// potentially pull in a variable number of values
-    fn validate_array_loop_sig(&mut self, node: &Node, span: &CodeSpan) -> Option<Signature> {
-        let inner_sig = node.sig();
+    fn validate_array_loop_sig(&mut self, instrs: &[Instr], span: &CodeSpan) -> Option<Signature> {
+        let inner_sig = instrs_signature(instrs);
         if self.current_bindings.is_empty() && !matches!(self.scope.kind, ScopeKind::Temp(_)) {
             return inner_sig.ok();
         }
@@ -1238,50 +1548,49 @@ code:
             // Case where repeat's function has a balanced signature
             // This is fine in other contexts, so an error is not returned
             // from the signature check, but it is not okay in an array.
-            if let Some(i) = node
+            if let Some(i) = instrs
                 .iter()
                 .position(|instr| {
                     matches!(
                         instr,
-                        Node::Mod(Primitive::Repeat, ..)
-                            | Node::ImplMod(ImplPrimitive::RepeatWithInverse, ..)
+                        Instr::Prim(Primitive::Repeat, _)
+                            | Instr::ImplPrim(ImplPrimitive::RepeatWithInverse, _)
                     )
                 })
                 .filter(|&i| i > 0)
             {
-                let (Node::Mod(_, args, _) | Node::ImplMod(_, args, _)) = &node[i - 1] else {
-                    unreachable!()
-                };
-                let body_sig = args[0].sig;
-                let before_sig = nodes_sig(&node[..i - 1]).ok()?;
-                let after_sig = nodes_sig(&node[i + 1..]).ok()?;
-                if body_sig.args == body_sig.outputs
-                    && before_sig.args < body_sig.args
-                    && before_sig.outputs <= body_sig.args
-                    && after_sig.args.saturating_sub(body_sig.outputs) < body_sig.args
-                {
-                    let replacement: String = repeat('⊙')
-                        .take(body_sig.args.saturating_sub(1))
-                        .chain(['∘'])
-                        .collect();
-                    let message = format!(
-                        "This array contains a loop with an equal number \
-                        of arguments and outputs. This may result in a \
-                        variable number of values being pulled into the \
-                        array. To fix this, insert `{replacement}` on the \
-                        right side of the array.",
-                    );
-                    self.emit_diagnostic(message, DiagnosticKind::Warning, span.clone());
+                if let Instr::PushFunc(f) = &instrs[i - 1] {
+                    let body_sig = f.signature();
+                    let before_sig = instrs_signature(&instrs[..i - 1]).ok()?;
+                    let after_sig = instrs_signature(&instrs[i + 1..]).ok()?;
+                    if body_sig.args == body_sig.outputs
+                        && before_sig.args < body_sig.args
+                        && before_sig.outputs <= body_sig.args
+                        && after_sig.args.saturating_sub(body_sig.outputs) < body_sig.args
+                    {
+                        let replacement: String = repeat('⊙')
+                            .take(body_sig.args.saturating_sub(1))
+                            .chain(['∘'])
+                            .collect();
+                        let message = format!(
+                            "This array contains a loop with an equal number \
+                            of arguments and outputs. This may result in a \
+                            variable number of values being pulled into the \
+                            array. To fix this, insert `{replacement}` on the \
+                            right side of the array.",
+                        );
+                        self.emit_diagnostic(message, DiagnosticKind::Warning, span.clone());
+                    }
                 }
             }
             return inner_sig.ok();
         };
-        let before_sig = (0..node.len())
+        let before_sig = (0..instrs.len())
             .rev()
-            .find_map(|i| nodes_sig(&node[..i]).ok())
+            .find_map(|i| instrs_signature(&instrs[..i]).ok())
             .unwrap();
-        let after_sig = (0..=node.len())
-            .find_map(|i| nodes_sig(&node[i..]).ok())
+        let after_sig = (0..=instrs.len())
+            .find_map(|i| instrs_signature(&instrs[i..]).ok())
             .unwrap();
         match e.kind {
             SigCheckErrorKind::LoopVariable { sig: body_sig, inf } => {
@@ -1488,9 +1797,9 @@ code:
 
         Ok(Some((module, path_locals)))
     }
-    fn reference(&mut self, r: Ref) -> UiuaResult<Node> {
+    fn reference(&mut self, r: Ref, call: bool) -> UiuaResult {
         if r.path.is_empty() {
-            self.ident(r.name.value, r.name.span, r.in_macro_arg)
+            self.ident(r.name.value, r.name.span, call, r.in_macro_arg)
         } else if let Some((path_locals, local)) = self.ref_local(&r)? {
             self.validate_local(&r.name.value, local, &r.name.span);
             for (local, comp) in path_locals.into_iter().zip(&r.path) {
@@ -1500,47 +1809,61 @@ code:
             self.code_meta
                 .global_references
                 .insert(r.name.span.clone(), local.index);
-            Ok(self.global_index(local.index, r.name.span))
+            self.global_index(local.index, r.name.span, call);
+            Ok(())
         } else {
-            self.ident(r.name.value, r.name.span, r.in_macro_arg)
+            self.ident(r.name.value, r.name.span, call, r.in_macro_arg)
         }
     }
-    fn ident(&mut self, ident: Ident, span: CodeSpan, skip_local: bool) -> UiuaResult<Node> {
-        Ok(
-            if let Some(curr) = (self.current_bindings.last_mut()).filter(|curr| curr.name == ident)
-            {
-                // Name is a recursive call
-                let Some(sig) = curr.signature else {
-                    return Err(self.fatal_error(
-                        span,
-                        format!(
-                            "Recursive function `{ident}` must have a \
+    fn ident(&mut self, ident: Ident, span: CodeSpan, call: bool, skip_local: bool) -> UiuaResult {
+        if let Some(curr) = (self.current_bindings.last_mut()).filter(|curr| curr.name == ident) {
+            // Name is a recursive call
+            let Some(sig) = curr.signature else {
+                return Err(self.fatal_error(
+                    span,
+                    format!(
+                        "Recursive function `{ident}` must have a \
                         signature declared after the ←."
-                        ),
-                    ));
-                };
-                curr.referenced = true;
-                (self.code_meta.global_references).insert(span.clone(), curr.global_index);
-                Node::CallGlobal(curr.global_index, sig)
-            } else if let Some(local) = self.find_name(&ident, skip_local) {
-                // Name exists in scope
-                self.validate_local(&ident, local, &span);
-                (self.code_meta.global_references).insert(span.clone(), local.index);
-                self.global_index(local.index, span)
-            } else if let Some(constant) = CONSTANTS.iter().find(|c| c.name == ident) {
-                // Name is a built-in constant
-                self.code_meta
-                    .constant_references
-                    .insert(span.clone().sp(ident));
-                Node::Push(
-                    constant
-                        .value
-                        .resolve(self.scope_file_path(), &*self.backend()),
-                )
+                    ),
+                ));
+            };
+            curr.referenced = true;
+            (self.code_meta.global_references).insert(span.clone(), curr.global_index);
+            let instr = Instr::CallGlobal {
+                index: curr.global_index,
+                call,
+                sig,
+            };
+            self.push_instr(instr);
+        } else if let Some(local) = self.find_name(&ident, skip_local) {
+            // Name exists in scope
+            self.validate_local(&ident, local, &span);
+            (self.code_meta.global_references).insert(span.clone(), local.index);
+            self.global_index(local.index, span, call);
+        } else if let Some(constant) = CONSTANTS.iter().find(|c| c.name == ident) {
+            // Name is a built-in constant
+            let instr = Instr::push(
+                constant
+                    .value
+                    .resolve(self.scope_file_path(), &*self.backend()),
+            );
+            self.code_meta
+                .constant_references
+                .insert(span.clone().sp(ident));
+            if call {
+                self.push_instr(instr);
             } else {
-                return Err(self.fatal_error(span, format!("Unknown identifier `{ident}`")));
-            },
-        )
+                let f = self.make_function(
+                    FunctionId::Anonymous(span),
+                    Signature::new(0, 1),
+                    eco_vec![instr].into(),
+                );
+                self.push_instr(Instr::PushFunc(f));
+            }
+        } else {
+            return Err(self.fatal_error(span, format!("Unknown identifier `{ident}`")));
+        }
+        Ok(())
     }
     fn scope_file_path(&self) -> Option<&Path> {
         for scope in self.scopes() {
@@ -1550,26 +1873,69 @@ code:
         }
         None
     }
-    fn global_index(&mut self, index: usize, span: CodeSpan) -> Node {
+    fn global_index(&mut self, index: usize, span: CodeSpan, call: bool) {
         let global = self.asm.bindings[index].kind.clone();
         match global {
-            BindingKind::Const(Some(val)) => Node::new_push(val),
-            BindingKind::Const(None) => Node::CallGlobal(index, Signature::new(0, 1)),
-            BindingKind::Func(f) => Node::Call(f),
+            BindingKind::Const(Some(val)) if call => self.push_instr(Instr::push(val)),
+            BindingKind::Const(Some(val)) => {
+                let f = self.make_function(
+                    FunctionId::Anonymous(span),
+                    Signature::new(0, 1),
+                    eco_vec![Instr::push(val)].into(),
+                );
+                self.push_instr(Instr::PushFunc(f));
+            }
+            BindingKind::Const(None) if call => self.push_instr(Instr::CallGlobal {
+                index,
+                call: true,
+                sig: Signature::new(0, 1),
+            }),
+            BindingKind::Const(None) => {
+                let f = self.make_function(
+                    FunctionId::Anonymous(span),
+                    Signature::new(0, 1),
+                    eco_vec![Instr::CallGlobal {
+                        index,
+                        call: true,
+                        sig: Signature::new(0, 1)
+                    }]
+                    .into(),
+                );
+                self.push_instr(Instr::PushFunc(f));
+            }
+            BindingKind::Func(f) if self.inlinable(f.instrs(&self.asm), f.flags) => {
+                if call {
+                    // Inline instructions
+                    self.push_all_instrs(EcoVec::from(f.instrs(&self.asm)));
+                } else {
+                    self.push_instr(Instr::PushFunc(f));
+                }
+            }
+            BindingKind::Func(f) => {
+                if let Some(new_func) = self.new_functions.last_mut() {
+                    if f.flags.track_caller() {
+                        new_func.flags |= FunctionFlags::NO_PRE_EVAL;
+                    }
+                }
+                self.push_instr(Instr::PushFunc(f));
+                if call {
+                    let span = self.add_span(span);
+                    self.push_instr(Instr::Call(span));
+                }
+            }
             BindingKind::Import(path) => {
                 if let Some(local) = self.imports.get(&path).and_then(|m| m.names.get("Call")) {
                     self.code_meta.global_references.remove(&span);
                     self.code_meta
                         .global_references
                         .insert(span.clone(), local.index);
-                    self.global_index(local.index, span)
+                    self.global_index(local.index, span, call);
                 } else {
                     self.add_error(
                         span,
                         "Module cannot be called here as \
                         it has no `Call` function.",
                     );
-                    Node::empty()
                 }
             }
             BindingKind::Module(m) => {
@@ -1578,23 +1944,21 @@ code:
                     self.code_meta
                         .global_references
                         .insert(span.clone(), local.index);
-                    self.global_index(local.index, span)
+                    self.global_index(local.index, span, call);
                 } else {
                     self.add_error(
                         span,
                         "Module cannot be called here as \
                         it has no `Call` or `New` function.",
                     );
-                    Node::empty()
                 }
             }
             BindingKind::IndexMacro(_) | BindingKind::CodeMacro(_) => {
                 // We could error here, but it's easier to handle it higher up
-                Node::empty()
             }
         }
     }
-    fn func(&mut self, func: Func, span: CodeSpan) -> UiuaResult<Node> {
+    fn func(&mut self, func: Func, span: CodeSpan, call: bool) -> UiuaResult {
         if (func.lines.iter().flatten().filter(|w| w.value.is_code())).count() == 1 {
             // Inline single ident
             if let Some(
@@ -1604,17 +1968,44 @@ code:
                 },
             ) = func.lines.iter().flatten().find(|w| w.value.is_code())
             {
-                return self.word(word.clone());
+                return self.word(word.clone(), call);
             }
         }
 
-        let mut root = Node::empty();
+        if call {
+            let (_, _, instrs) = self.compile_func_instrs(func, span, false)?;
+            self.push_all_instrs(instrs);
+        } else {
+            let function = self.compile_func(func, span.clone())?;
+            self.push_instr(Instr::PushFunc(function));
+        }
+        Ok(())
+    }
+    fn compile_func(&mut self, func: Func, span: CodeSpan) -> UiuaResult<Function> {
+        let (id, sig, new_func) = self.compile_func_instrs(func, span, true)?;
+        let sig = sig.unwrap();
+
+        if let [Instr::PushFunc(f), Instr::Call(_)] = new_func.instrs.as_slice() {
+            return Ok(Function::clone(f));
+        }
+
+        Ok(self.make_function(id, sig, new_func))
+    }
+    fn compile_func_instrs(
+        &mut self,
+        func: Func,
+        span: CodeSpan,
+        require_valid_sig: bool,
+    ) -> UiuaResult<(FunctionId, Option<Signature>, NewFunction)> {
+        let mut new_func = NewFunction::default();
         for line in func.lines {
-            root.push(self.line(line)?);
+            let nf = self.compile_line(line, true)?;
+            new_func.instrs.extend(nf.instrs);
+            new_func.flags |= nf.flags;
         }
 
         // Validate signature
-        let sig = match root.sig() {
+        let sig = match instrs_signature(&new_func.instrs) {
             Ok(mut sig) => {
                 if let Some(declared_sig) = &func.signature {
                     if declared_sig.value == sig {
@@ -1645,6 +2036,18 @@ code:
                             ),
                         ));
                     }
+                } else if require_valid_sig {
+                    return Err(self.fatal_error(
+                        span,
+                        format!(
+                            "Cannot infer function signature: {e}{}",
+                            if e.kind == SigCheckErrorKind::Ambiguous {
+                                ". A signature can be declared after the opening `(`."
+                            } else {
+                                ""
+                            }
+                        ),
+                    ));
                 } else {
                     None
                 }
@@ -1661,84 +2064,127 @@ code:
                 },
             );
         }
-        Ok(root)
+        Ok((func.id, sig, new_func))
     }
-    fn switch(&mut self, branches: Vec<Sp<Word>>, span: CodeSpan) -> UiuaResult<Node> {
+    fn switch(&mut self, branches: Vec<Sp<Word>>, span: CodeSpan, call: bool) -> UiuaResult {
         let count = branches.len();
+        if !call {
+            self.new_functions.push(NewFunction::default());
+        }
         // Compile branches
-        let mut br = EcoVec::with_capacity(count);
+        let mut functions = Vec::with_capacity(count);
         let mut rigid_indices = Vec::new();
         let mut flex_indices = Vec::new();
         for (i, branch) in branches.into_iter().enumerate() {
             let span = branch.span.clone();
-            let SigNode { node, sig } = self.word_sig(branch)?;
-            let is_flex = node
-                .iter()
-                .rposition(|node| matches!(node, Node::Prim(Primitive::Assert, _)))
+            let (new_func, sig) = self.compile_operand_word(branch)?;
+            let is_flex = (new_func.instrs.iter())
+                .rposition(|instr| matches!(instr, Instr::Prim(Primitive::Assert, _)))
                 .is_some_and(|end| {
                     (0..end).rev().any(|start| {
-                        let sub = node.slice(start..end);
-                        match sub.as_slice() {
-                            [Node::Push(val), Node::Prim(Primitive::Dup, _)]
-                            | [Node::Push(val), Node::Push(..)]
+                        let sub = &new_func.instrs[start..end];
+                        match sub {
+                            [Instr::Push(val), Instr::Prim(Primitive::Dup, _)]
+                            | [Instr::Push(val), Instr::Push(..)]
                                 if val != &Value::from(1) =>
                             {
                                 return true;
                             }
-                            [Node::Format(..), Node::Prim(Primitive::Dup, _)] => return true,
+                            [Instr::Format { .. }, Instr::Prim(Primitive::Dup, _)] => return true,
                             _ => (),
                         }
-                        if !(sub.is_pure(Purity::Pure, &self.asm)
-                            && sub.sig().is_ok_and(|sig| sig == (0, 2)))
+                        if !(instrs_are_pure(sub, &self.asm, Purity::Pure)
+                            && instrs_signature(sub).is_ok_and(|sig| sig == (0, 2)))
                         {
                             return false;
                         }
-                        todo!("switch flex eval")
+                        let mut comp = self.clone();
+                        let func = comp.make_function(
+                            FunctionId::Anonymous(span.clone()),
+                            Signature::new(0, 2),
+                            EcoVec::from(sub).into(),
+                        );
+                        comp.macro_env.asm = comp.asm.clone();
+                        comp.macro_env
+                            .call(func)
+                            .and_then(|_| {
+                                let _message = comp.macro_env.pop(1)?;
+                                let flag = comp.macro_env.pop(2)?;
+                                Ok(flag != Value::from(1))
+                            })
+                            .unwrap_or(false)
                     })
                 });
-            br.push((SigNode::new(node, sig), span));
+            functions.push((new_func, sig, span));
             if is_flex {
                 flex_indices.push(i);
             } else {
                 rigid_indices.push(i);
             }
         }
-        let mut rigid_funcs = rigid_indices.into_iter().map(|i| &br[i]);
+        let mut rigid_funcs = rigid_indices.into_iter().map(|i| &functions[i]);
         let mut sig = None;
-        if let Some((arg, _)) = rigid_funcs.next() {
-            sig = Some(arg.sig);
+        if let Some((_, f_sig, _)) = rigid_funcs.next() {
+            sig = Some(*f_sig);
             let sig = sig.as_mut().unwrap();
             // Compile remaining branches
-            for (arg, span) in rigid_funcs {
-                if arg.sig.is_compatible_with(*sig) {
-                    *sig = sig.max_with(arg.sig);
-                } else if arg.sig.outputs == sig.outputs {
-                    sig.args = sig.args.max(arg.sig.args)
+            for (_, f_sig, span) in rigid_funcs {
+                if f_sig.is_compatible_with(*sig) {
+                    *sig = sig.max_with(*f_sig);
+                } else if f_sig.outputs == sig.outputs {
+                    sig.args = sig.args.max(f_sig.args)
                 } else {
                     self.add_error(
                         span.clone(),
                         format!(
-                            "Switch branch's signature {} is \
+                            "Switch branch's signature {f_sig} is \
                             incompatible with previous branches {sig}",
-                            arg.sig
                         ),
                     );
                 }
             }
         }
-        let mut flex_funcs = flex_indices.into_iter().map(|i| &br[i]);
-        let mut sig = sig.unwrap_or_else(|| flex_funcs.next().unwrap().0.sig);
-        for (arg, _) in flex_funcs {
-            sig.args = sig.args.max(arg.sig.args);
+        let mut flex_funcs = flex_indices.into_iter().map(|i| &functions[i]);
+        let mut sig = sig.unwrap_or_else(|| flex_funcs.next().unwrap().1);
+        for (_, f_sig, _) in flex_funcs {
+            sig.args = sig.args.max(f_sig.args);
         }
 
-        let span = self.add_span(span.clone());
-        Ok(Node::Switch {
-            branches: br.into_iter().map(|(arg, _)| arg).collect(),
+        for (new_func, sig, span) in functions {
+            let id = FunctionId::Anonymous(span);
+            let function = self.make_function(id, sig, new_func);
+            self.push_instr(Instr::PushFunc(function));
+        }
+
+        let span_idx = self.add_span(span.clone());
+        self.push_instr(Instr::Switch {
+            count,
             sig,
-            span,
+            span: span_idx,
             under_cond: false,
-        })
+        });
+        if !call {
+            let new_func = self.new_functions.pop().unwrap();
+            let sig = match instrs_signature(&new_func.instrs) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    return Err(self.fatal_error(
+                        span,
+                        format!(
+                            "Cannot infer function signature: {e}{}",
+                            if e.kind == SigCheckErrorKind::Ambiguous {
+                                ". A signature can be declared after the opening `(`."
+                            } else {
+                                ""
+                            }
+                        ),
+                    ));
+                }
+            };
+            let function = self.make_function(FunctionId::Anonymous(span), sig, new_func);
+            self.push_instr(Instr::PushFunc(function));
+        }
+        Ok(())
     }
     fn handle_primitive_deprecation(&mut self, prim: Primitive, span: &CodeSpan) {
         if let Some(suggestion) = prim.deprecation_suggestion() {
@@ -1772,17 +2218,35 @@ code:
             });
         }
     }
-    fn validate_primitive(&mut self, prim: Primitive, span: &CodeSpan) {
-        self.handle_primitive_experimental(prim, span);
-        self.handle_primitive_deprecation(prim, span);
+    fn primitive(&mut self, prim: Primitive, span: CodeSpan, call: bool) -> UiuaResult {
+        self.handle_primitive_experimental(prim, &span);
+        self.handle_primitive_deprecation(prim, &span);
+        let spandex = self.add_span(span.clone());
+        self.instructions(
+            FunctionId::Primitive(prim),
+            eco_vec![Instr::Prim(prim, spandex)],
+            &span,
+            call,
+        )
     }
-    fn primitive(&mut self, prim: Primitive, span: CodeSpan) -> Node {
-        self.validate_primitive(prim, &span);
-        let span = self.add_span(span);
-        Node::Prim(prim, span)
+    fn instructions(
+        &mut self,
+        function_id: FunctionId,
+        instrs: EcoVec<Instr>,
+        span: &CodeSpan,
+        call: bool,
+    ) -> UiuaResult {
+        if call {
+            self.push_all_instrs(instrs);
+        } else {
+            let sig = self.sig_of(&instrs, span)?;
+            let func = self.make_function(function_id, sig, instrs.into());
+            self.push_instr(Instr::PushFunc(func));
+        }
+        Ok(())
     }
     #[allow(clippy::match_single_binding)]
-    fn subscript(&mut self, sub: Subscript, span: CodeSpan) -> UiuaResult<Node> {
+    fn subscript(&mut self, sub: Subscript, span: CodeSpan, call: bool) -> UiuaResult {
         if !matches!(sub.word.value, Word::Primitive(Primitive::Utf8)) {
             self.experimental_error(&span, || {
                 "Subscripts are experimental. To use them, add \
@@ -1790,13 +2254,13 @@ code:
             });
         }
         let Some(n) = sub.n.value else {
-            return self.word(sub.word);
+            return self.word(sub.word, call);
         };
-        Ok(match sub.word.value {
+        match sub.word.value {
             Word::Modified(m) => match m.modifier.value {
                 Modifier::Ref(_) => {
                     self.add_error(span, "Subscripts are not implemented for macros");
-                    self.modified(*m, Some(n))?
+                    self.modified(*m, Some(n), call)?;
                 }
                 Modifier::Primitive(prim) => match prim {
                     _ => {
@@ -1813,95 +2277,132 @@ code:
                                 format!("Subscripts are not implemented for {}", prim.format()),
                             );
                         }
-                        self.modified(*m, Some(n))?
+                        self.modified(*m, Some(n), call)?;
                     }
                 },
             },
-            Word::Primitive(prim) => match prim {
-                prim if prim.signature().is_some_and(|sig| sig == (2, 1))
-                    && prim.subscript_sig(Some(2)).is_some_and(|sig| sig == (1, 1)) =>
-                {
-                    Node::from_iter([
-                        self.word(sub.n.span.sp(Word::Number(n.to_string(), n as f64)))?,
-                        self.primitive(prim, span),
-                    ])
+            Word::Primitive(prim) => {
+                if !call {
+                    self.new_functions.push(NewFunction::default());
                 }
-                Primitive::Transpose => {
-                    if n > 100 {
-                        self.add_error(span.clone(), "Too many subscript repetitions");
+                let sp = span.clone();
+                match prim {
+                    prim if prim.signature().is_some_and(|sig| sig == (2, 1))
+                        && prim.subscript_sig(Some(2)).is_some_and(|sig| sig == (1, 1)) =>
+                    {
+                        self.word(sub.n.span.sp(Word::Number(n.to_string(), n as f64)), true)?;
+                        self.primitive(prim, span, true)?;
                     }
-                    (0..n.min(100))
-                        .map(|_| self.primitive(prim, span.clone()))
-                        .collect()
-                }
-                Primitive::Sqrt => {
-                    if n == 0 {
-                        self.add_error(span.clone(), "Cannot take 0th root");
+                    Primitive::Transpose => {
+                        if n > 100 {
+                            self.add_error(span.clone(), "Too many subscript repetitions");
+                        }
+                        for _ in 0..n.min(100) {
+                            self.primitive(prim, span.clone(), true)?;
+                        }
                     }
-                    Node::from_iter([
-                        Node::new_push(1.0 / n.max(1) as f64),
-                        self.primitive(Primitive::Pow, span),
-                    ])
-                }
-                Primitive::Round | Primitive::Floor | Primitive::Ceil => {
-                    let mul = 10f64.powi(n as i32);
-                    Node::from_iter([
-                        Node::new_push(mul),
-                        self.primitive(Primitive::Mul, span.clone()),
-                        self.primitive(prim, span.clone()),
-                        Node::new_push(mul),
-                        self.primitive(Primitive::Div, span),
-                    ])
-                }
-                Primitive::Rand => Node::from_iter([
-                    self.primitive(Primitive::Rand, span.clone()),
-                    Node::new_push(n),
-                    self.primitive(Primitive::Mul, span.clone()),
-                    self.primitive(Primitive::Floor, span),
-                ]),
-                Primitive::Utf8 => {
-                    if n != 8 {
-                        self.add_error(span.clone(), "Only UTF-8 is supported");
+                    Primitive::Sqrt => {
+                        if n == 0 {
+                            self.add_error(span.clone(), "Cannot take 0th root");
+                        }
+                        self.push_instr(Instr::push(1.0 / n.max(1) as f64));
+                        self.primitive(Primitive::Pow, span, true)?;
                     }
-                    self.primitive(prim, span)
-                }
-                Primitive::Couple => match n {
-                    1 => self.primitive(Primitive::Fix, span),
-                    2 => self.primitive(Primitive::Couple, span),
-                    n => Node::Array {
-                        inner: Node::empty().into(),
-                        sig: Signature::new(n, n),
-                        boxed: false,
-                        span: self.add_span(span.clone()),
+                    Primitive::Round | Primitive::Floor | Primitive::Ceil => {
+                        let mul = 10f64.powi(n as i32);
+                        self.push_instr(Instr::push(mul));
+                        self.primitive(Primitive::Mul, span.clone(), true)?;
+                        self.primitive(prim, span.clone(), true)?;
+                        self.push_instr(Instr::push(mul));
+                        self.primitive(Primitive::Div, span, true)?;
+                    }
+                    Primitive::Rand => {
+                        self.primitive(Primitive::Rand, span.clone(), true)?;
+                        self.push_instr(Instr::push(n));
+                        self.primitive(Primitive::Mul, span.clone(), true)?;
+                        self.primitive(Primitive::Floor, span, true)?;
+                    }
+                    Primitive::Utf8 => {
+                        if n != 8 {
+                            self.add_error(span.clone(), "Only UTF-8 is supported");
+                        }
+                        self.primitive(prim, span, true)?
+                    }
+                    Primitive::Couple => match n {
+                        1 => self.primitive(Primitive::Fix, span, true)?,
+                        2 => self.primitive(Primitive::Couple, span, true)?,
+                        n => {
+                            let span = self.add_span(span.clone());
+                            self.push_instr(Instr::BeginArray);
+                            if n > 0 {
+                                self.push_instr(Instr::TouchStack { count: n, span });
+                            }
+                            self.push_instr(Instr::EndArray { boxed: false, span });
+                        }
                     },
-                },
-                Primitive::Box => Node::Array {
-                    inner: Node::empty().into(),
-                    sig: Signature::new(n, n),
-                    boxed: true,
-                    span: self.add_span(span.clone()),
-                },
-                Primitive::Stack => Node::ImplPrim(
-                    ImplPrimitive::TraceN {
-                        n,
-                        inverse: false,
-                        stack_sub: true,
-                    },
-                    self.add_span(span.clone()),
-                ),
-                _ => {
-                    self.add_error(
-                        span.clone(),
-                        format!("Subscripts are not implemented for {}", prim.format()),
-                    );
-                    self.primitive(prim, span)
+                    Primitive::Box => {
+                        let span = self.add_span(span.clone());
+                        self.push_instr(Instr::BeginArray);
+                        if n > 0 {
+                            self.push_instr(Instr::TouchStack { count: n, span });
+                        }
+                        self.push_instr(Instr::EndArray { boxed: true, span });
+                    }
+                    Primitive::Stack => {
+                        let span = self.add_span(span.clone());
+                        self.push_instr(Instr::ImplPrim(
+                            ImplPrimitive::TraceN {
+                                n,
+                                inverse: false,
+                                stack_sub: true,
+                            },
+                            span,
+                        ));
+                    }
+                    _ => {
+                        self.add_error(
+                            span.clone(),
+                            format!("Subscripts are not implemented for {}", prim.format()),
+                        );
+                        self.primitive(prim, span, true)?;
+                    }
                 }
-            },
-            _ => {
-                self.add_error(span.clone(), "Subscripts are not allowed in this context");
-                self.word(sub.word)?
+                if !call {
+                    let new_func = self.new_functions.pop().unwrap();
+                    let sig = self.sig_of(&new_func.instrs, &sp)?;
+                    let func = self.make_function(FunctionId::Anonymous(sp), sig, new_func);
+                    self.push_instr(Instr::PushFunc(func));
+                }
             }
-        })
+            _ => {
+                self.word(sub.word, call)?;
+                self.add_error(span.clone(), "Subscripts are not allowed in this context");
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn inlinable(&self, instrs: &[Instr], flags: FunctionFlags) -> bool {
+        use ImplPrimitive::*;
+        use Primitive::*;
+        if flags.track_caller() || flags.no_inline() || flags.no_pre_eval() {
+            return false;
+        }
+        if instrs.len() > 10 {
+            return false;
+        }
+        for instr in instrs {
+            match instr {
+                Instr::Prim(Trace | Dump | Stack | Assert, _) => return false,
+                Instr::ImplPrim(UnDump | UnStack | TraceN { .. }, _) => return false,
+                Instr::PushFunc(f)
+                    if !self.inlinable(f.instrs(&self.asm), FunctionFlags::default()) =>
+                {
+                    return false
+                }
+                _ => {}
+            }
+        }
+        true
     }
     /// Get all diagnostics
     pub fn diagnostics(&self) -> &BTreeSet<Diagnostic> {
@@ -2013,13 +2514,10 @@ code:
         let signature = signature.into();
         let index = self.asm.dynamic_functions.len();
         self.asm.dynamic_functions.push(Arc::new(f));
-        self.asm.add_function(
+        self.make_function(
             FunctionId::Unnamed,
             signature,
-            Node::Dynamic(DynamicFunction {
-                index,
-                sig: signature,
-            }),
+            eco_vec![Instr::Dynamic(DynamicFunction { index, signature })].into(),
         )
     }
     /// Bind a function in the current scope
@@ -2050,14 +2548,189 @@ code:
         let function = self.create_function(signature, f);
         self.bind_function(name, function)
     }
-    fn sig_of(&self, node: &Node, span: &CodeSpan) -> UiuaResult<Signature> {
-        node.sig().map_err(|e| {
+    #[must_use]
+    fn pre_eval_instrs(&mut self, mut new_func: NewFunction) -> (NewFunction, Vec<UiuaError>) {
+        let mut errors = Vec::new();
+        new_func.instrs = optimize_instrs(new_func.instrs, true, &self.asm);
+        if self.in_inverse
+            || self.pre_eval_mode == PreEvalMode::Lazy
+            || (new_func.instrs.iter()).all(|instr| matches!(instr, Instr::Push(_)))
+            || new_func.flags.no_inline()
+            || new_func.flags.track_caller()
+            || new_func.flags.no_pre_eval()
+        {
+            return (new_func, errors);
+        }
+        // println!("pre eval {:?}", FmtInstrs(&new_func.instrs, &self.asm));
+        let allow_error = instrs_are_pure(&new_func.instrs, &self.asm, Purity::Pure);
+        let mut start = 0;
+        let mut new_instrs: Option<EcoVec<Instr>> = None;
+        'start: while start < new_func.instrs.len() {
+            for end in (start + 1..=new_func.instrs.len()).rev() {
+                let section = &new_func.instrs[start..end];
+                if !instrs_can_pre_eval(section, &self.asm) {
+                    continue;
+                }
+                if instrs_are_pure(section, &self.asm, Purity::Pure)
+                    && instrs_clean_signature(section)
+                        .is_some_and(|sig| sig.args == 0 && sig.outputs > 0)
+                {
+                    let mut success = false;
+                    match self.comptime_instrs(section.into()) {
+                        Ok(Some(values)) => {
+                            // println!("section: {section:?}");
+                            // println!("values: {values:?}");
+                            for val in &values {
+                                val.validate_shape();
+                            }
+                            let new_instrs =
+                                new_instrs.get_or_insert_with(|| new_func.instrs[..start].into());
+                            new_instrs.extend(values.into_iter().map(Instr::Push));
+                            success = true;
+                        }
+                        Ok(None) => {}
+                        Err(e) if !allow_error || e.is_fill || self.in_try => {}
+                        Err(e) => {
+                            // println!("error: {e:?}");
+                            errors.push(e)
+                        }
+                    }
+                    if !success {
+                        if let Some(new_instrs) = &mut new_instrs {
+                            new_instrs.extend(section.iter().cloned());
+                        }
+                    }
+                    start = end;
+                    continue 'start;
+                }
+            }
+            if let Some(new_instrs) = &mut new_instrs {
+                new_instrs.push(new_func.instrs[start].clone())
+            }
+            start += 1;
+        }
+        // if let Some(new_instrs) = &new_instrs {
+        //     println!("eval: {new_instrs:?}")
+        // }
+        new_func.instrs = new_instrs.unwrap_or(new_func.instrs);
+        (new_func, errors)
+    }
+    fn comptime_instrs(&mut self, instrs: EcoVec<Instr>) -> UiuaResult<Option<Vec<Value>>> {
+        if !self.pre_eval_mode.matches_instrs(&instrs, &self.asm) {
+            return Ok(None);
+        }
+        if instrs.iter().all(|instr| matches!(instr, Instr::Push(_))) {
+            return Ok(Some(
+                (instrs.into_iter())
+                    .map(|instr| match instr {
+                        Instr::Push(val) => val,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            ));
+        }
+        thread_local! {
+            static CACHE: RefCell<HashMap<EcoVec<Instr>, Option<Vec<Value>>>> = RefCell::new(HashMap::new());
+        }
+        CACHE.with(|cache| {
+            let instrs = optimize_instrs(instrs, true, &self.asm);
+            if let Some(stack) = cache.borrow().get(&instrs) {
+                return Ok(stack.clone());
+            }
+            let mut asm = self.asm.clone();
+            asm.top_slices.clear();
+            let start = asm.instrs.len();
+            let len = instrs.len();
+            asm.instrs.extend(instrs.iter().cloned());
+            if len > 0 {
+                asm.top_slices.push(FuncSlice { start, len });
+            }
+            let mut env = if self.pre_eval_mode == PreEvalMode::Lsp {
+                #[cfg(feature = "native_sys")]
+                {
+                    Uiua::with_native_sys()
+                }
+                #[cfg(not(feature = "native_sys"))]
+                Uiua::with_safe_sys()
+            } else {
+                Uiua::with_safe_sys()
+            }
+            .with_execution_limit(Duration::from_millis(40));
+            match env.run_asm(asm) {
+                Ok(()) => {
+                    let stack = env.take_stack();
+                    let res = if stack.iter().any(|v| {
+                        v.element_count() > MAX_PRE_EVAL_ELEMS || v.rank() > MAX_PRE_EVAL_RANK
+                    }) {
+                        None
+                    } else {
+                        Some(stack)
+                    };
+                    cache.borrow_mut().insert(instrs, res.clone());
+                    Ok(res)
+                }
+                Err(e) if matches!(e.kind, UiuaErrorKind::Timeout(..)) => {
+                    cache.borrow_mut().insert(instrs, None);
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            }
+        })
+    }
+    fn sig_of(&self, instrs: &[Instr], span: &CodeSpan) -> UiuaResult<Signature> {
+        instrs_signature(instrs).map_err(|e| {
             self.fatal_error(
                 span.clone(),
                 format!("Cannot infer function signature: {e}"),
             )
         })
     }
+}
+
+fn instrs_can_pre_eval(instrs: &[Instr], asm: &Assembly) -> bool {
+    use Primitive::*;
+    if instrs.is_empty() {
+        return true;
+    }
+    // Begin and end array instructions must be balanced
+    let begin_array_pos = (instrs.iter()).position(|instr| matches!(instr, Instr::BeginArray));
+    let begin_array_count = (instrs.iter())
+        .filter(|instr| matches!(instr, Instr::BeginArray))
+        .count();
+    let end_array_pos = (instrs.iter()).position(|instr| matches!(instr, Instr::EndArray { .. }));
+    let end_array_count = (instrs.iter())
+        .filter(|instr| matches!(instr, Instr::EndArray { .. }))
+        .count();
+    let array_allowed = begin_array_count == end_array_count
+        && match (begin_array_pos, end_array_pos) {
+            (Some(0), Some(end)) => end == instrs.len() - 1,
+            (None, None) => true,
+            _ => false,
+        };
+    if !array_allowed
+        || matches!(
+            instrs.last().unwrap(),
+            Instr::PushFunc(_) | Instr::BeginArray
+        )
+        || instrs.iter().all(|instr| matches!(instr, Instr::Push(_)))
+        || instrs.iter().any(|instr| {
+            matches!(
+                instr,
+                Instr::Prim(Obverse | SetInverse | SetUnder, _)
+                    | Instr::ImplPrim(ImplPrimitive::UnPop, _)
+            )
+        })
+    {
+        return false;
+    }
+    for instr in instrs {
+        match instr {
+            Instr::PushFunc(f) if !instrs_can_pre_eval(f.instrs(asm), asm) => return false,
+            Instr::CallGlobal { index, .. } if *index >= asm.bindings.len() => return false,
+            _ => (),
+        }
+    }
+    true
 }
 
 fn words_look_pervasive(words: &[Sp<Word>]) -> bool {

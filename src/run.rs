@@ -22,12 +22,11 @@ use crate::{
     algorithm::{self, invert, validate_size_impl},
     check::instrs_temp_signatures,
     fill::Fill,
-    function::*,
     instr::*,
     lex::Span,
-    Array, Assembly, BindingKind, Boxed, CodeSpan, Compiler, Ident, ImplPrimitive, Inputs,
-    IntoSysBackend, LocalName, Primitive, Report, SafeSys, SysBackend, SysOp, TraceFrame,
-    UiuaError, UiuaErrorKind, UiuaResult, Value, VERSION,
+    Array, Assembly, BindingKind, Boxed, CodeSpan, Compiler, Function, FunctionId, Ident,
+    ImplPrimitive, Inputs, IntoSysBackend, LocalName, Node, Primitive, Report, SafeSys, SigNode,
+    Signature, SysBackend, SysOp, TraceFrame, UiuaError, UiuaErrorKind, UiuaResult, Value, VERSION,
 };
 
 /// The Uiua interpreter
@@ -43,12 +42,8 @@ pub struct Uiua {
 pub(crate) struct Runtime {
     /// The thread's stack
     pub(crate) stack: Vec<Value>,
-    /// The thread's function stack
-    pub(crate) function_stack: Vec<Function>,
     /// The thread's temp stack for inlining
     temp_stacks: [Vec<Value>; TempStack::CARDINALITY],
-    /// The stack height at the start of each array currently being built
-    pub(crate) array_stack: Vec<usize>,
     /// The call stack
     pub(crate) call_stack: Vec<StackFrame>,
     /// The stack for tracking recursion points
@@ -89,7 +84,7 @@ pub(crate) struct Runtime {
     pub(crate) reports: Vec<Report>,
 }
 
-type MemoMap = HashMap<FunctionId, HashMap<Vec<Value>, Vec<Value>>>;
+type MemoMap = HashMap<Node, HashMap<Vec<Value>, Vec<Value>>>;
 
 impl AsRef<Assembly> for Uiua {
     fn as_ref(&self) -> &Assembly {
@@ -105,15 +100,11 @@ impl AsMut<Assembly> for Uiua {
 
 #[derive(Debug, Clone)]
 pub(crate) struct StackFrame {
-    /// The function being executed
-    pub(crate) slice: FuncSlice,
-    pub(crate) id: FunctionId,
     pub(crate) sig: Signature,
+    pub(crate) id: FunctionId,
     track_caller: bool,
     /// The span at which the function was called
     pub(crate) call_span: usize,
-    /// The program counter for the function
-    pub(crate) pc: usize,
     /// Additional spans for error reporting
     spans: Vec<(usize, Option<Primitive>)>,
 }
@@ -186,16 +177,12 @@ impl Default for Runtime {
     fn default() -> Self {
         Runtime {
             stack: Vec::new(),
-            function_stack: Vec::new(),
             temp_stacks: [Vec::new(), Vec::new()],
-            array_stack: Vec::new(),
             call_stack: vec![StackFrame {
-                slice: FuncSlice::default(),
-                id: FunctionId::Main,
                 sig: Signature::new(0, 0),
+                id: FunctionId::Main,
                 track_caller: false,
                 call_span: 0,
-                pc: 0,
                 spans: Vec::new(),
             }],
             recur_stack: Vec::new(),
@@ -336,7 +323,7 @@ impl Uiua {
     ) -> UiuaResult<Compiler> {
         let mut comp = Compiler::with_backend(self.rt.backend.clone());
         let asm = compile(&mut comp)?.finish();
-        self.run_asm(&asm)?;
+        self.run_asm(asm)?;
         comp.set_backend(SafeSys::default());
         Ok(comp)
     }
@@ -358,7 +345,6 @@ impl Uiua {
         let mut asm = self.take_asm();
         match res {
             Ok(()) => {
-                asm.top_slices.clear();
                 *compiler.assembly_mut() = asm;
                 Ok(())
             }
@@ -369,7 +355,7 @@ impl Uiua {
         }
     }
     /// Run a Uiua assembly
-    pub fn run_asm(&mut self, asm: impl Into<Assembly>) -> UiuaResult {
+    pub fn run_asm(&mut self, asm: Assembly) -> UiuaResult {
         fn run_asm(env: &mut Uiua, asm: Assembly) -> UiuaResult {
             env.asm = asm;
             env.rt.execution_start = env.rt.backend.now();
@@ -378,9 +364,8 @@ impl Uiua {
                 Ok(()) => res = Err(te),
                 Err(e) => e.multi.push(te),
             };
-            let total_assert_tests = (env.asm.top_slices.iter())
-                .flat_map(|s| &env.asm.instrs[s.start..s.end()])
-                .filter(|instr| matches!(instr, Instr::ImplPrim(ImplPrimitive::TestAssert, _)))
+            let total_assert_tests = (env.asm.root.iter())
+                .filter(|node| matches!(node, Node::ImplPrim(ImplPrimitive::TestAssert, _)))
                 .count();
             if total_assert_tests > 0 {
                 let total_run = env.rt.test_results.len();
@@ -448,324 +433,295 @@ code:
             ))),
         }
     }
-    fn exec(&mut self, frame: StackFrame) -> UiuaResult {
-        let slice = frame.slice;
-        self.rt.call_stack.push(frame);
-        let mut formatted_instr = String::new();
-        for i in slice.start..slice.end() {
-            let instr = &self.asm.instrs[i];
+    pub fn exec(&mut self, node: impl Into<Node>) -> UiuaResult {
+        self.exec_impl(node.into())
+    }
+    fn exec_impl(&mut self, node: Node) -> UiuaResult {
+        let mut formatted_node = String::new();
 
-            // Uncomment to debug
-            // for val in &self.rt.stack {
-            //     print!("{:?} ", val);
-            // }
-            // if self.rt.stack.is_empty() {
-            //     print!("(empty) ");
-            // }
-            // println!();
-            // if !self.rt.array_stack.is_empty() {
-            //     print!("array: ");
-            //     for val in &self.rt.array_stack {
-            //         print!("{:?} ", val);
-            //     }
-            //     println!();
-            // }
-            // if !self.rt.function_stack.is_empty() {
-            //     println!("{} function(s)", self.rt.function_stack.len());
-            // }
-            // for temp in enum_iterator::all::<TempStack>() {
-            //     if !self.rt.temp_stacks[temp as usize].is_empty() {
-            //         print!("{temp}: ");
-            //         for val in &self.rt.temp_stacks[temp as usize] {
-            //             print!("{:?} ", val);
-            //         }
-            //         println!();
-            //     }
-            // }
-            // println!("\n    {:?}", instr);
+        // Uncomment to debug
+        // for val in &self.rt.stack {
+        //     print!("{:?} ", val);
+        // }
+        // if self.rt.stack.is_empty() {
+        //     print!("(empty) ");
+        // }
+        // println!();
+        // if !self.rt.array_stack.is_empty() {
+        //     print!("array: ");
+        //     for val in &self.rt.array_stack {
+        //         print!("{:?} ", val);
+        //     }
+        //     println!();
+        // }
+        // if !self.rt.function_stack.is_empty() {
+        //     println!("{} function(s)", self.rt.function_stack.len());
+        // }
+        // for temp in enum_iterator::all::<TempStack>() {
+        //     if !self.rt.temp_stacks[temp as usize].is_empty() {
+        //         print!("{temp}: ");
+        //         for val in &self.rt.temp_stacks[temp as usize] {
+        //             print!("{:?} ", val);
+        //         }
+        //         println!();
+        //     }
+        // }
+        // println!("\n    {:?}", instr);
 
-            if self.rt.time_instrs {
-                formatted_instr = format!("{instr:?}");
-                self.rt.last_time = self.rt.backend.now();
+        if self.rt.time_instrs {
+            formatted_node = format!("{node:?}");
+            self.rt.last_time = self.rt.backend.now();
+        }
+        let res = match node {
+            // Pause execution timer during &sc
+            Node::Prim(prim @ Primitive::Sys(SysOp::ScanLine), span) => {
+                self.with_prim_span(span, Some(prim), |env| {
+                    let start = env.rt.backend.now();
+                    let res = prim.run(env);
+                    env.rt.execution_start += env.rt.backend.now() - start;
+                    res
+                })
             }
-            let res = match instr {
-                Instr::Comment(_) => Ok(()),
-                // Pause execution timer during &sc
-                &Instr::Prim(prim @ Primitive::Sys(SysOp::ScanLine), span) => {
-                    self.with_prim_span(span, Some(prim), |env| {
-                        let start = env.rt.backend.now();
-                        let res = prim.run(env);
-                        env.rt.execution_start += env.rt.backend.now() - start;
-                        res
-                    })
-                }
-                &Instr::Prim(prim, span) => {
-                    self.with_prim_span(span, Some(prim), |env| prim.run(env))
-                }
-                &Instr::ImplPrim(prim, span) => self.with_span(span, |env| prim.run(env)),
-                Instr::Push(val) => {
-                    self.rt.stack.push(Value::clone(val));
-                    Ok(())
-                }
-                &Instr::CallGlobal { index, call, .. } => {
-                    let binding = self.asm.bindings.get(index).ok_or_else(|| {
-                        self.error(
-                            "Called out-of-bounds binding. \
+            Node::Prim(prim, span) => self.with_prim_span(span, Some(prim), |env| prim.run(env)),
+            Node::ImplPrim(prim, span) => self.with_span(span, |env| prim.run(env)),
+            Node::Push(val) => {
+                self.rt.stack.push(val);
+                Ok(())
+            }
+            Node::CallGlobal(index, _) => {
+                let binding = self.asm.bindings.get(index).ok_or_else(|| {
+                    self.error(
+                        "Called out-of-bounds binding. \
                             This is a bug in the interpreter.",
-                        )
-                    })?;
-                    match binding.kind.clone() {
-                        BindingKind::Const(Some(val)) => {
-                            self.rt.stack.push(val);
-                            Ok(())
-                        }
-                        BindingKind::Const(None) => Err(self.error(
-                            "Called unbound constant. \
-                            This is a bug in the interpreter.",
-                        )),
-                        BindingKind::Func(f) if call => {
-                            self.respect_recursion_limit().and_then(|_| self.call(f))
-                        }
-                        BindingKind::Func(f) => self
-                            .respect_recursion_limit()
-                            .map(|_| self.rt.function_stack.push(f)),
-                        BindingKind::Import { .. } | BindingKind::Module(_) => Err(self.error(
-                            "Called module global. \
-                            This is a bug in the interpreter.",
-                        )),
-                        BindingKind::IndexMacro(_) => Err(self.error(
-                            "Called index macro global. \
-                            This is a bug in the interpreter.",
-                        )),
-                        BindingKind::CodeMacro(_) => Err(self.error(
-                            "Called code macro global. \
-                            This is a bug in the interpreter.",
-                        )),
-                    }
-                }
-                &Instr::BindGlobal { span, index } => {
-                    let local = LocalName {
-                        index,
-                        public: false,
-                    };
-                    if let Some(f) = self.rt.function_stack.pop() {
-                        // Binding is an imported function
-                        self.asm.bind_function(local, f, span, None);
-                    } else if let Some(mut value) = self.rt.stack.pop() {
-                        value.compress();
-                        // Binding is a constant
-                        self.asm.bind_const(local, Some(value), span, None);
-                    } else {
-                        // Binding is an empty function
-                        let id = match self.get_span(span) {
-                            Span::Code(span) => FunctionId::Anonymous(span),
-                            Span::Builtin => FunctionId::Unnamed,
-                        };
-                        let func = Function::new(id, Signature::new(0, 0), FuncSlice::default(), 0);
-                        self.asm.bind_function(local, func, span, None);
-                    }
-                    Ok(())
-                }
-                Instr::BeginArray => {
-                    self.rt.array_stack.push(self.rt.stack.len());
-                    Ok(())
-                }
-                &Instr::EndArray { span, boxed } => {
-                    self.with_span(span, |env| env.end_array(boxed, None))
-                }
-                &Instr::Call(span) | &Instr::CustomInverse(_, span) => self
-                    .pop_function()
-                    .and_then(|f| self.call_with_span(f, span)),
-                Instr::PushFunc(f) => {
-                    self.rt.function_stack.push(f.clone());
-                    Ok(())
-                }
-                &Instr::Switch {
-                    count,
-                    sig,
-                    span,
-                    under_cond,
-                } => self.with_span(span, |env| algorithm::switch(count, sig, under_cond, env)),
-                Instr::Format { parts, span } => {
-                    let parts = parts.clone();
-                    self.with_span(*span, |env| {
-                        let mut s = String::new();
-                        for (i, part) in parts.into_iter().enumerate() {
-                            if i > 0 {
-                                s.push_str(&env.pop(("format argument", i))?.format());
-                            }
-                            s.push_str(&part);
-                        }
-                        env.push(s);
+                    )
+                })?;
+                match binding.kind.clone() {
+                    BindingKind::Const(Some(val)) => {
+                        self.rt.stack.push(val);
                         Ok(())
-                    })
+                    }
+                    BindingKind::Const(None) => Err(self.error(
+                        "Called unbound constant. \
+                        This is a bug in the interpreter.",
+                    )),
+                    BindingKind::Func(f) => {
+                        self.respect_recursion_limit().and_then(|_| self.call(&f))
+                    }
+                    BindingKind::Import { .. } | BindingKind::Module(_) => Err(self.error(
+                        "Called module global. \
+                        This is a bug in the interpreter.",
+                    )),
+                    BindingKind::IndexMacro(_) => Err(self.error(
+                        "Called index macro global. \
+                        This is a bug in the interpreter.",
+                    )),
+                    BindingKind::CodeMacro(_) => Err(self.error(
+                        "Called code macro global. \
+                        This is a bug in the interpreter.",
+                    )),
                 }
-                Instr::MatchFormatPattern { parts, span } => {
-                    let parts = parts.clone();
-                    self.with_span(*span, |env| invert::match_format_pattern(parts, env))
-                }
-                &Instr::Label {
-                    ref label,
-                    span,
-                    remove,
-                } => {
-                    let label = label.clone();
-                    self.with_span(span, |env| {
-                        env.monadic_mut(|val| {
-                            let label = if label.is_empty() {
-                                None
-                            } else if remove {
-                                if val.meta().label.as_ref().map_or(true, |l| l == &label) {
-                                    None
-                                } else {
-                                    Some(label)
-                                }
-                            } else {
-                                Some(label)
-                            };
-                            val.set_label(label);
-                        })
-                    })
-                }
-                &Instr::ValidateType {
+            }
+            Node::BindGlobal { span, index } => {
+                let local = LocalName {
                     index,
-                    ref name,
-                    type_num,
-                    span,
-                } => {
-                    let name = name.clone();
-                    self.with_span(span, |env| {
-                        let val = env.pop(index)?;
-                        if val.type_id() != type_num {
-                            let found = if val.element_count() == 1 {
-                                val.type_name()
-                            } else {
-                                val.type_name_plural()
-                            };
-                            let expected = match type_num {
-                                0 => "numbers",
-                                1 => "complex numbers",
-                                2 => "characters",
-                                3 => "boxes",
-                                _ => {
-                                    return Err(env.error(format!(
-                                        "Invalid type number {type_num}. \
-                                        This is a bug in the interpreter."
-                                    )));
-                                }
-                            };
-                            return Err(env.error(format!(
-                                "Field `{name}` should be {expected} but found {found}"
-                            )));
-                        }
-                        env.push(val);
-                        Ok(())
-                    })
+                    public: false,
+                };
+                if let Some(mut value) = self.rt.stack.pop() {
+                    value.compress();
+                    // Binding is a constant
+                    self.asm.bind_const(local, Some(value), span, None);
+                } else {
+                    // Binding is an empty function
+                    let id = match self.get_span(span) {
+                        Span::Code(span) => FunctionId::Anonymous(span),
+                        Span::Builtin => FunctionId::Unnamed,
+                    };
+                    let func = self
+                        .asm
+                        .add_function(id, Signature::new(0, 0), Node::empty());
+                    self.asm.bind_function(local, func, span, None);
                 }
-                &Instr::Dynamic(df) => (|| {
-                    self.asm
-                        .dynamic_functions
-                        .get(df.index)
-                        .ok_or_else(|| {
-                            self.error(format!("Dynamic function index {} out of range", df.index))
-                        })?
-                        .clone()(self)
-                })(),
-                &Instr::Unpack { count, span, unbox } => self.with_span(span, |env| {
-                    let arr = env.pop(1)?;
-                    if arr.row_count() != count {
+                Ok(())
+            }
+            Node::Array {
+                inner,
+                sig,
+                boxed,
+                span,
+            } => self.with_span(span, |env| env.make_array(boxed, sig, *inner)),
+            Node::Call(f, span) => self.call_with_span(&f, span),
+            Node::CustomInverse(cust, span) => self.call_with_span(&cust.normal, span),
+            Node::Switch {
+                branches,
+                sig,
+                span,
+                under_cond,
+            } => self.with_span(span, |env| {
+                algorithm::switch(branches, sig, under_cond, env)
+            }),
+            Node::Format(parts, span) => {
+                let parts = parts.clone();
+                self.with_span(span, |env| {
+                    let mut s = String::new();
+                    for (i, part) in parts.into_iter().enumerate() {
+                        if i > 0 {
+                            s.push_str(&env.pop(("format argument", i))?.format());
+                        }
+                        s.push_str(&part);
+                    }
+                    env.push(s);
+                    Ok(())
+                })
+            }
+            Node::MatchFormatPattern(parts, span) => {
+                let parts = parts.clone();
+                self.with_span(span, |env| todo!())
+            }
+            Node::Label(label, span) => self.with_span(span, |env| {
+                env.monadic_mut(|val| {
+                    val.set_label(if label.is_empty() { None } else { Some(label) });
+                })
+            }),
+            Node::RemoveLabel(span) => {
+                self.with_span(span, |env| env.monadic_mut(|val| val.set_label(None)))
+            }
+            Node::ValidateType {
+                index,
+                name,
+                type_num,
+                span,
+            } => {
+                let name = name.clone();
+                self.with_span(span, |env| {
+                    let val = env.pop(index)?;
+                    if val.type_id() != type_num {
+                        let found = if val.element_count() == 1 {
+                            val.type_name()
+                        } else {
+                            val.type_name_plural()
+                        };
+                        let expected = match type_num {
+                            0 => "numbers",
+                            1 => "complex numbers",
+                            2 => "characters",
+                            3 => "boxes",
+                            _ => {
+                                return Err(env.error(format!(
+                                    "Invalid type number {type_num}. \
+                                        This is a bug in the interpreter."
+                                )));
+                            }
+                        };
                         return Err(env.error(format!(
-                            "This °{} expects an array with {} rows, \
-                            but the array has {}",
-                            if unbox { "{}" } else { "[]" },
-                            count,
-                            arr.row_count()
+                            "Field `{name}` should be {expected} but found {found}"
                         )));
                     }
-                    if unbox {
-                        for val in arr.into_rows().rev() {
-                            env.push(val.unboxed());
-                        }
-                    } else {
-                        for val in arr.into_rows().rev() {
-                            env.push(val);
-                        }
-                    }
+                    env.push(val);
                     Ok(())
-                }),
-                &Instr::TouchStack { count, span } => {
-                    self.with_span(span, |env| env.touch_array_stack(count))
+                })
+            }
+            &Instr::Dynamic(df) => (|| {
+                self.asm
+                    .dynamic_functions
+                    .get(df.index)
+                    .ok_or_else(|| {
+                        self.error(format!("Dynamic function index {} out of range", df.index))
+                    })?
+                    .clone()(self)
+            })(),
+            &Instr::Unpack { count, span, unbox } => self.with_span(span, |env| {
+                let arr = env.pop(1)?;
+                if arr.row_count() != count {
+                    return Err(env.error(format!(
+                        "This °{} expects an array with {} rows, \
+                            but the array has {}",
+                        if unbox { "{}" } else { "[]" },
+                        count,
+                        arr.row_count()
+                    )));
                 }
-                &Instr::PushTemp { stack, count, span } => self.with_span(span, |env| {
-                    for i in 0..count {
-                        let value = env.pop(i + 1)?;
-                        env.rt.temp_stacks[stack as usize].push(value);
+                if unbox {
+                    for val in arr.into_rows().rev() {
+                        env.push(val.unboxed());
                     }
-                    Ok(())
-                }),
-                &Instr::PopTemp {
-                    stack, count, span, ..
-                } => self.with_span(span, |env| {
-                    for _ in 0..count {
-                        let value = env.rt.temp_stacks[stack as usize].pop().ok_or_else(|| {
-                            env.error(format!(
-                                "Stack was empty when getting saved {} value",
-                                format!("{stack:?}").to_lowercase()
-                            ))
-                        })?;
-                        env.push(value);
+                } else {
+                    for val in arr.into_rows().rev() {
+                        env.push(val);
                     }
+                }
+                Ok(())
+            }),
+            &Instr::TouchStack { count, span } => {
+                self.with_span(span, |env| env.touch_array_stack(count))
+            }
+            &Instr::PushTemp { stack, count, span } => self.with_span(span, |env| {
+                for i in 0..count {
+                    let value = env.pop(i + 1)?;
+                    env.rt.temp_stacks[stack as usize].push(value);
+                }
+                Ok(())
+            }),
+            &Instr::PopTemp {
+                stack, count, span, ..
+            } => self.with_span(span, |env| {
+                for _ in 0..count {
+                    let value = env.rt.temp_stacks[stack as usize].pop().ok_or_else(|| {
+                        env.error(format!(
+                            "Stack was empty when getting saved {} value",
+                            format!("{stack:?}").to_lowercase()
+                        ))
+                    })?;
+                    env.push(value);
+                }
 
-                    Ok(())
-                }),
-                &Instr::CopyToTemp { stack, count, span } => self.with_span(span, |env| {
-                    env.touch_array_stack(count)?;
-                    for i in 0..count {
-                        let value = env.rt.stack[env.rt.stack.len() - i - 1].clone();
-                        env.rt.temp_stacks[stack as usize].push(value);
-                    }
-                    Ok(())
-                }),
-                &Instr::SetOutputComment { i, n } => {
-                    let values = self.stack()[self.stack().len().saturating_sub(n)..].to_vec();
-                    let stack_values = self.rt.output_comments.entry(i).or_default();
-                    if stack_values.is_empty() {
-                        *stack_values = values.into_iter().map(|v| vec![v]).collect();
-                    } else {
-                        for (stack_values, value) in stack_values.iter_mut().zip(values) {
-                            stack_values.push(value);
-                        }
-                    }
-                    Ok(())
+                Ok(())
+            }),
+            &Instr::CopyToTemp { stack, count, span } => self.with_span(span, |env| {
+                env.touch_array_stack(count)?;
+                for i in 0..count {
+                    let value = env.rt.stack[env.rt.stack.len() - i - 1].clone();
+                    env.rt.temp_stacks[stack as usize].push(value);
                 }
-            };
-            if self.rt.time_instrs {
-                let end_time = self.rt.backend.now();
-                let padding = self.rt.call_stack.len().saturating_sub(1) * 2;
-                #[rustfmt::skip]
+                Ok(())
+            }),
+            &Instr::SetOutputComment { i, n } => {
+                let values = self.stack()[self.stack().len().saturating_sub(n)..].to_vec();
+                let stack_values = self.rt.output_comments.entry(i).or_default();
+                if stack_values.is_empty() {
+                    *stack_values = values.into_iter().map(|v| vec![v]).collect();
+                } else {
+                    for (stack_values, value) in stack_values.iter_mut().zip(values) {
+                        stack_values.push(value);
+                    }
+                }
+                Ok(())
+            }
+        };
+        if self.rt.time_instrs {
+            let end_time = self.rt.backend.now();
+            let padding = self.rt.call_stack.len().saturating_sub(1) * 2;
+            #[rustfmt::skip]
                 println!( // Allow println
                     "  ⏲{:padding$}{:.2}ms - {}",
                     "",
                     end_time - self.rt.last_time,
-                    formatted_instr
+                    formatted_node
                 );
-                self.rt.last_time = self.rt.backend.now();
-            }
-            if let Err(mut err) = res {
-                // Trace errors
-                let frame = self.rt.call_stack.pop().unwrap();
-                let span = self.asm.spans[frame.call_span].clone();
-                if frame.track_caller {
-                    err.track_caller(span);
-                } else {
-                    err.trace.push(TraceFrame { id: frame.id, span });
-                }
-                return Err(err);
-            }
-            self.rt.call_stack.last_mut().unwrap().pc += 1;
-            self.respect_execution_limit()?;
+            self.rt.last_time = self.rt.backend.now();
         }
-        self.rt.call_stack.pop();
+        if let Err(mut err) = res {
+            // Trace errors
+            let frame = self.rt.call_stack.pop().unwrap();
+            let span = self.asm.spans[frame.call_span].clone();
+            if frame.track_caller {
+                err.track_caller(span);
+            } else {
+                err.trace.push(TraceFrame { id: frame.id, span });
+            }
+            return Err(err);
+        }
+        self.rt.call_stack.last_mut().unwrap().pc += 1;
+        self.respect_execution_limit()?;
         Ok(())
     }
     /// Timeout if an execution limit is set and has been exceeded
@@ -810,59 +766,56 @@ code:
     }
     /// Call a function
     #[inline]
-    pub fn call(&mut self, f: Function) -> UiuaResult {
+    pub fn call(&mut self, f: &Function) -> UiuaResult {
         let call_span = self.span_index();
         self.call_with_span(f, call_span)
     }
-    #[inline]
-    fn call_slice(&mut self, slice: FuncSlice) -> UiuaResult {
-        let call_span = self.span_index();
-        let frame = StackFrame {
-            slice,
-            sig: Signature::new(0, 0),
-            track_caller: false,
-            id: FunctionId::Main,
-            call_span,
-            spans: Vec::new(),
-            pc: 0,
-        };
-        self.exec(frame)
+    /// Call and truncate the stack to before the args were pushed if the call fails
+    pub(crate) fn call_clean_stack(&mut self, f: &Function) -> UiuaResult {
+        let sn = self.asm.sig_node(f);
+        self.exec_clean_stack(sn)
     }
     /// Call and truncate the stack to before the args were pushed if the call fails
-    pub(crate) fn call_clean_stack(&mut self, f: Function) -> UiuaResult {
-        let sig = f.signature();
-        let temp_sigs = instrs_temp_signatures(f.instrs(&self.asm))
+    pub(crate) fn exec_clean_stack(&mut self, sn: SigNode) -> UiuaResult {
+        let sig = sn.sig;
+        let temp_sigs = sn
+            .node
+            .temp_sigs()
             .unwrap_or([Signature::new(0, 0); TempStack::CARDINALITY]);
         let bottom = self.stack_height().saturating_sub(sig.args);
         let mut temp_bottoms: [usize; TempStack::CARDINALITY] = [0; TempStack::CARDINALITY];
         for (i, stack) in self.rt.temp_stacks.iter().enumerate() {
             temp_bottoms[i] = stack.len().saturating_sub(temp_sigs[i].args);
         }
-        let array_stack_height = self.rt.array_stack.len();
-        let res = self.call(f);
+        let res = self.exec(sn.node);
         if res.is_err() {
             self.truncate_stack(bottom);
             for (stack, bottom) in self.rt.temp_stacks.iter_mut().zip(temp_bottoms) {
                 stack.truncate(bottom);
             }
-            self.rt.array_stack.truncate(array_stack_height);
         }
         res
     }
     /// Call and maintaint the stack delta if the call fails
-    pub(crate) fn call_maintain_sig(&mut self, f: Function) -> UiuaResult {
-        let sig = f.signature();
-        let mut args = self.stack()[self.stack().len().saturating_sub(sig.args)..].to_vec();
+    pub(crate) fn call_maintain_sig(&mut self, f: &Function) -> UiuaResult {
+        let sn = self.asm.sig_node(f);
+        self.exec_maintain_sig(sn)
+    }
+    /// Call and maintain the stack delta if the call fails
+    pub(crate) fn exec_maintain_sig(&mut self, sn: SigNode) -> UiuaResult {
+        let mut args = self.stack()[self.stack().len().saturating_sub(sn.sig.args)..].to_vec();
         args.reverse();
-        let temp_sigs = instrs_temp_signatures(f.instrs(&self.asm))
+        let temp_sigs = sn
+            .node
+            .temp_sigs()
             .unwrap_or([Signature::new(0, 0); TempStack::CARDINALITY]);
-        let target_height = (self.stack_height() + sig.outputs).saturating_sub(sig.args);
+        let target_height = (self.stack_height() + sn.sig.outputs).saturating_sub(sn.sig.args);
         let mut temp_target_heights: [usize; TempStack::CARDINALITY] = [0; TempStack::CARDINALITY];
         for (temp, temp_sig) in all::<TempStack>().zip(&temp_sigs) {
             temp_target_heights[temp as usize] =
                 (self.temp_stack_height(temp) + temp_sig.outputs).saturating_sub(temp_sig.args);
         }
-        let res = self.call(f);
+        let res = self.exec(sn);
         match self.stack_height().cmp(&target_height) {
             Ordering::Equal => {}
             Ordering::Greater => {
@@ -890,16 +843,14 @@ code:
         res
     }
     #[inline]
-    fn call_with_span(&mut self, f: Function, call_span: usize) -> UiuaResult {
+    fn call_with_span(&mut self, f: &Function, call_span: usize) -> UiuaResult {
         self.call_with_frame_span(
             StackFrame {
-                slice: f.slice(),
-                sig: f.signature(),
-                id: f.id,
+                sig: f.sig(),
+                id: f.id.clone(),
                 track_caller: f.flags.track_caller(),
                 call_span,
                 spans: Vec::new(),
-                pc: 0,
             },
             call_span,
         )
@@ -978,16 +929,12 @@ code:
     }
     /// Pop a value from the stack
     pub fn pop(&mut self, arg: impl StackArg) -> UiuaResult<Value> {
-        let res = self.rt.stack.pop().ok_or_else(|| {
+        self.rt.stack.pop().ok_or_else(|| {
             self.error(format!(
                 "Stack was empty when evaluating {}",
                 arg.arg_name()
             ))
-        });
-        for bottom in &mut self.rt.array_stack {
-            *bottom = (*bottom).min(self.rt.stack.len());
-        }
-        res
+        })
     }
     /// Pop a value and try to convert it
     pub fn pop_convert<T>(
@@ -1029,20 +976,16 @@ code:
         self.pop_convert(Value::as_string)
     }
     /// Simulates popping a value and immediately pushing it back
-    pub(crate) fn touch_array_stack(&mut self, n: usize) -> UiuaResult {
+    pub(crate) fn touch_stack(&mut self, n: usize) -> UiuaResult {
         if self.rt.stack.len() < n {
             return Err(self.error(format!(
                 "Stack was empty evaluating argument {}",
                 self.rt.stack.len() + 1
             )));
         }
-        for bottom in &mut self.rt.array_stack {
-            *bottom = (*bottom).min(self.rt.stack.len().saturating_sub(n));
-        }
         Ok(())
     }
-    pub(crate) fn end_array(&mut self, boxed: bool, initial_value: Option<Value>) -> UiuaResult {
-        let start = self.rt.array_stack.pop().unwrap();
+    pub(crate) fn make_array(&mut self, boxed: bool, sig: Signature, inner: Node) -> UiuaResult {
         let values = self.rt.stack.drain(start..).rev();
         let values: Vec<Value> = if boxed {
             values.map(Boxed).map(Value::from).collect()
@@ -1057,13 +1000,6 @@ code:
             validate_size_impl(elem_size, [elems]).map_err(|e| self.error(e))?;
             Value::from_row_values(values, self)?
         };
-        if let Some(init) = initial_value {
-            if val.shape() == [0] {
-                val = init;
-            } else {
-                val = init.join(val, false, self)?;
-            }
-        }
         self.push(val);
         Ok(())
     }
@@ -1074,20 +1010,11 @@ code:
     pub(crate) fn push_temp(&mut self, temp: TempStack, val: Value) {
         self.rt.temp_stacks[temp as usize].push(val);
     }
-    /// Push a function onto the function stack
-    pub fn push_func(&mut self, f: Function) {
-        self.rt.function_stack.push(f);
-    }
-    /// Get a slice of instructions
-    pub fn instrs(&self, slice: FuncSlice) -> &[Instr] {
-        &self.asm.instrs[slice.start..][..slice.len]
-    }
     /// Take the entire stack
     pub fn take_stack(&mut self) -> Vec<Value> {
         for stack in &mut self.rt.temp_stacks {
             stack.clear();
         }
-        self.rt.function_stack.clear();
         take(&mut self.rt.stack)
     }
     /// Take all stacks
@@ -1103,15 +1030,6 @@ code:
     /// Get a mutable reference to the stack data
     pub fn stack_mut(&mut self) -> &mut [Value] {
         &mut self.rt.stack
-    }
-    /// Pop a function from the function stack
-    pub fn pop_function(&mut self) -> UiuaResult<Function> {
-        self.rt.function_stack.pop().ok_or_else(|| {
-            self.error(
-                "Function stack was empty when popping. \
-                This is a bug in the interpreter.",
-            )
-        })
     }
     /// Get all bound values in the assembly
     ///
@@ -1157,9 +1075,6 @@ code:
             )));
         }
         let start = self.rt.stack.len() - n;
-        for bottom in &mut self.rt.array_stack {
-            *bottom = (*bottom).min(start);
-        }
         for i in 0..n {
             self.push(self.rt.stack[start + i].clone());
         }
@@ -1397,13 +1312,14 @@ code:
         }
     }
     /// Spawn a thread
-    pub(crate) fn spawn(&mut self, capture_count: usize, _pool: bool, f: Function) -> UiuaResult {
+    pub(crate) fn spawn(&mut self, capture_count: usize, _pool: bool, f: SigNode) -> UiuaResult {
         if !self.rt.backend.allow_thread_spawning() {
             return Err(self.error("Thread spawning is not allowed in this environment"));
         }
-        if f.is_recursive() {
-            return Err(self.error(format!("Cannot spawn recursive function {}", f.id)));
-        }
+        // TODO:
+        // if f.is_recursive() {
+        //     return Err(self.error(format!("Cannot spawn recursive function {}", f.id)));
+        // }
         if self.rt.stack.len() < capture_count {
             return Err(self.error(format!(
                 "Expected at least {} value(s) on the stack, but there are {}",
@@ -1426,9 +1342,7 @@ code:
                 stack: (self.rt.stack)
                     .drain(self.rt.stack.len() - capture_count..)
                     .collect(),
-                function_stack: Vec::new(),
                 temp_stacks: [Vec::new(), Vec::new()],
-                array_stack: Vec::new(),
                 fill_stack: Vec::new(),
                 fill_boundary_stack: Vec::new(),
                 unfill_stack: Vec::new(),
@@ -1454,10 +1368,10 @@ code:
         let recv = {
             let (send, recv) = crossbeam_channel::unbounded();
             if _pool {
-                rayon::spawn(move || _ = send.send(env.call(f).map(|_| env.take_stack())));
+                rayon::spawn(move || _ = send.send(env.exec(f).map(|_| env.take_stack())));
             } else {
                 std::thread::Builder::new()
-                    .spawn(move || _ = send.send(env.call(f).map(|_| env.take_stack())))
+                    .spawn(move || _ = send.send(env.exec(f).map(|_| env.take_stack())))
                     .map_err(|e| self.error(format!("Error spawning thread: {e}")))?;
             }
             recv

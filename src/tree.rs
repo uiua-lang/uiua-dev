@@ -11,9 +11,8 @@ use ecow::{eco_vec, EcoString, EcoVec};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assembly2::{Assembly, BindingKind, Function},
-    function2::DynamicFunction,
-    ImplPrimitive, Primitive, Purity, Signature, Value,
+    Assembly, BindingKind, DynamicFunction, Function, ImplPrimitive, Primitive, Purity, Signature,
+    Value,
 };
 
 macro_rules! node {
@@ -153,12 +152,12 @@ node!(
     (1, Push(val(Value))),
     (2, Prim(prim(Primitive), span(usize))),
     (3, ImplPrim(prim(ImplPrimitive), span(usize))),
-    (4, Mod(prim(Primitive), args(EcoVec<SigNode>), span(usize))),
-    (5, ImplMod(prim(ImplPrimitive), args(EcoVec<SigNode>), span(usize))),
+    (4, Mod(prim(Primitive), args(Ops), span(usize))),
+    (5, ImplMod(prim(ImplPrimitive), args(Ops), span(usize))),
     (6, Array { inner: Box<Node>, sig: Signature, boxed: bool, span: usize }),
-    (7, Call(func(Function))),
+    (7, Call(func(Function), span(usize))),
     (8, CallGlobal(index(usize), sig(Signature))),
-    (9, CallMacro(index(usize), sig(Signature), args(EcoVec<SigNode>))),
+    (9, CallMacro(index(usize), sig(Signature), args(Ops))),
     (10, BindGlobal { index: usize, span: usize }),
     (11, Label(label(EcoString), span(usize))),
     (12, RemoveLabel(span(usize))),
@@ -166,14 +165,20 @@ node!(
     (14, MatchFormatPattern(parts(EcoVec<EcoString>), span(usize))),
     (15, CustomInverse(cust(Box<CustomInverse>), span(usize))),
     (16, Switch {
-        branches: EcoVec<SigNode>,
+        branches: Ops,
         sig: Signature,
         under_cond: bool,
         span: usize,
     }),
     (17, Unpack { count: usize, boxed: bool, span: usize }),
     (18, SetOutputComment { i: usize, n: usize }),
-    (19, Dynamic(func(DynamicFunction)))
+    (19, ValidateType {
+        index: usize,
+        type_num: u8,
+        name: EcoString,
+        span: usize,
+    }),
+    (20, Dynamic(func(DynamicFunction)))
 );
 
 /// A node argument
@@ -191,6 +196,14 @@ impl SigNode {
         }
     }
 }
+
+impl From<SigNode> for Node {
+    fn from(sn: SigNode) -> Self {
+        sn.node
+    }
+}
+
+pub(crate) type Ops = EcoVec<SigNode>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -445,7 +458,7 @@ impl fmt::Debug for Node {
             Node::Array {
                 sig, boxed: false, ..
             } => write!(f, "[{}{}]", Primitive::Len, sig.outputs),
-            Node::Call(func) => write!(f, "call {}", func.id),
+            Node::Call(func, _) => write!(f, "call {}", func.id),
             Node::CallGlobal(index, _) => write!(f, "<call global {index}>"),
             Node::CallMacro(index, _, args) => {
                 let mut tuple = f.debug_tuple(&format!("<call macro {index}>"));
@@ -490,6 +503,9 @@ impl fmt::Debug for Node {
                 count, boxed: true, ..
             } => write!(f, "<unpack (unbox) {count}>"),
             Node::SetOutputComment { i, n, .. } => write!(f, "<set output comment {i}({n})>"),
+            Node::ValidateType { type_num, name, .. } => {
+                write!(f, "<validate {name} as {type_num}>")
+            }
             Node::Dynamic(func) => write!(f, "<dynamic function {}>", func.index),
         }
     }
@@ -519,7 +535,7 @@ impl Node {
                             .iter()
                             .all(|arg| recurse(&arg.node, purity, asm, visited))
                 }
-                Node::Call(func) => {
+                Node::Call(func, _) => {
                     visited.insert(func) && recurse(&asm[func], purity, asm, visited)
                 }
                 Node::CallGlobal(index, _) => {
@@ -553,7 +569,7 @@ impl Node {
                 Node::ImplMod(_, args, _) => {
                     args.iter().all(|arg| recurse(&arg.node, asm, visited))
                 }
-                Node::Call(func) => visited.insert(func) && recurse(&asm[func], asm, visited),
+                Node::Call(func, _) => visited.insert(func) && recurse(&asm[func], asm, visited),
                 Node::CallGlobal(index, _) => {
                     if let Some(binding) = asm.bindings.get(*index) {
                         match &binding.kind {

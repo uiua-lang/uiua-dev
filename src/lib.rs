@@ -146,13 +146,10 @@ The `uiua` crate has the following noteable feature flags:
 mod algorithm;
 mod array;
 mod assembly;
-mod assembly2;
 pub mod ast;
 mod boxed;
 mod check;
-mod check2;
 mod compile;
-mod compile2;
 mod complex;
 mod cowslice;
 mod error;
@@ -160,7 +157,6 @@ mod ffi;
 mod fill;
 pub mod format;
 mod function;
-mod function2;
 mod grid_fmt;
 mod instr;
 mod lex;
@@ -189,6 +185,7 @@ pub use self::{
     assembly::*,
     boxed::*,
     compile::*,
+    complex::*,
     error::*,
     ffi::*,
     function::*,
@@ -205,10 +202,10 @@ pub use self::{
     value::*,
 };
 
+use self::algorithm::get_ops;
 #[cfg(feature = "native_sys")]
 pub use self::sys_native::*;
 
-pub use complex::*;
 use ecow::EcoString;
 
 /// The Uiua version
