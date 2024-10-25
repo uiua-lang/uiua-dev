@@ -24,6 +24,7 @@ use crate::{
 mod dyadic;
 pub mod encode;
 pub mod invert;
+pub mod invert2;
 pub mod loops;
 pub mod map;
 mod monadic;

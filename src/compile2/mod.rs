@@ -12,7 +12,6 @@ use std::{
     mem::{replace, swap, take},
     panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
-    slice,
     sync::Arc,
 };
 
@@ -21,10 +20,6 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    algorithm::{
-        invert::{anti_instrs, invert_instrs, under_instrs, CustomInverse},
-        IgnoreError,
-    },
     assembly2::{Assembly, BindingKind, DocComment, DocCommentSig, Function},
     ast::*,
     check2::{nodes_sig, SigCheckError, SigCheckErrorKind},
@@ -34,25 +29,12 @@ use crate::{
     instr::*,
     lex::{CodeSpan, Sp, Span},
     lsp::{CodeMeta, ImportSrc, SigDecl},
-    optimize::optimize_instrs,
     parse::{count_placeholders, flip_unsplit_lines, parse, split_words},
-    Array, Boxed, Diagnostic, DiagnosticKind, FunctionId, GitTarget, Ident, ImplPrimitive,
-    InputSrc, IntoInputSrc, IntoSysBackend, Node, Primitive, RunMode, SemanticComment, SigNode,
-    Signature, SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value, CONSTANTS,
-    EXAMPLE_UA, SUBSCRIPT_NUMS, VERSION,
+    Array, Boxed, CustomInverse, Diagnostic, DiagnosticKind, FunctionId, GitTarget, Ident,
+    ImplPrimitive, InputSrc, IntoInputSrc, IntoSysBackend, Node, Primitive, RunMode,
+    SemanticComment, SigNode, Signature, SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult,
+    Value, CONSTANTS, EXAMPLE_UA, SUBSCRIPT_NUMS, VERSION,
 };
-
-/// Wrap a block in a closure call to reduce stack size
-macro_rules! wrap {
-    (|| -> $ty:ty { $($tt:tt)* }) => {
-        return (|| -> $ty {$($tt)*})()
-    };
-    (|| { $($tt:tt)* }) => {
-        (|| -> UiuaResult {$($tt)* Ok(())})()?
-    };
-}
-
-use wrap;
 
 /// The Uiua compiler
 #[derive(Clone)]
@@ -418,17 +400,18 @@ impl Compiler {
         &mut self,
         kind: ScopeKind,
         f: impl FnOnce(&mut Self) -> UiuaResult<T>,
-    ) -> UiuaResult<Module> {
+    ) -> UiuaResult<(Module, T)> {
         self.higher_scopes.push(take(&mut self.scope));
         self.scope.kind = kind;
         let res = f(self);
         let scope = replace(&mut self.scope, self.higher_scopes.pop().unwrap());
-        res?;
-        Ok(Module {
+        let res = res?;
+        let module = Module {
             comment: scope.comment,
             names: scope.names,
             experimental: scope.experimental,
-        })
+        };
+        Ok((module, res))
     }
     fn load_impl(&mut self, input: &str, src: InputSrc) -> UiuaResult<&mut Self> {
         let node_start = self.asm.root.len();
@@ -574,7 +557,7 @@ code:
         &mut self,
         mut lines: Vec<Vec<Sp<Word>>>,
         must_run: bool,
-        precomp: bool,
+        _precomp: bool,
         prelude: &mut BindingPrelude,
     ) -> UiuaResult {
         fn words_should_run_anyway(words: &[Sp<Word>]) -> bool {
@@ -826,7 +809,7 @@ code:
                         format!("Cycle detected importing {}", path.to_string_lossy()),
                     ));
                 }
-                let module = self.in_scope(ScopeKind::File(file_kind), |comp| {
+                let (module, ()) = self.in_scope(ScopeKind::File(file_kind), |comp| {
                     comp.load_str_src(&input, &path).map(drop)
                 })?;
                 self.imports.insert(path.clone(), module);
@@ -886,6 +869,26 @@ code:
             }
         }
         Ok(node)
+    }
+    fn args(&mut self, words: Vec<Sp<Word>>) -> UiuaResult<EcoVec<SigNode>> {
+        words
+            .into_iter()
+            .filter(|w| w.value.is_code())
+            .map(|w| self.word_sig(w))
+            .collect()
+    }
+    fn words_sig(&mut self, words: Vec<Sp<Word>>) -> UiuaResult<SigNode> {
+        let span = words
+            .first()
+            .zip(words.last())
+            .map(|(f, l)| f.span.clone().merge(l.span.clone()));
+        let node = self.words(words)?;
+        let sig = if let Some(span) = span {
+            self.sig_of(&node, &span)?
+        } else {
+            Signature::new(0, 0)
+        };
+        Ok(SigNode::new(node, sig))
     }
     fn words(&mut self, mut words: Vec<Sp<Word>>) -> UiuaResult<Node> {
         words.retain(|word| word.value.is_code());
@@ -987,16 +990,11 @@ code:
             }
             Word::Label(label) => Node::Label(label.into(), self.add_span(word.span.clone())),
             Word::FormatString(frags) => {
-                let signature = Signature::new(frags.len() - 1, 1);
                 let parts = frags.into_iter().map(Into::into).collect();
                 let span = self.add_span(word.span.clone());
                 Node::Format(parts, span)
             }
             Word::MultilineFormatString(lines) => {
-                let signature = Signature::new(
-                    lines.iter().map(|l| l.value.len().saturating_sub(1)).sum(),
-                    1,
-                );
                 let span = self.add_span(word.span.clone());
                 let mut curr_part = EcoString::new();
                 let mut parts = EcoVec::new();
@@ -1213,11 +1211,10 @@ code:
             Word::Comment(_) | Word::Spaces | Word::BreakLine | Word::FlipLine => Node::empty(),
         })
     }
-    fn semantic_comment(&mut self, comment: SemanticComment, span: CodeSpan) -> Node {
+    fn semantic_comment(&mut self, comment: SemanticComment, span: CodeSpan) {
         match comment {
             SemanticComment::Experimental => {
                 self.scope.experimental = true;
-                Node::empty()
             }
             SemanticComment::NoInline => {
                 todo!("# No inline!")
@@ -1227,7 +1224,6 @@ code:
             }
             SemanticComment::Boo => {
                 self.add_error(span, "The compiler is scared!");
-                Node::empty()
             }
         }
     }
@@ -1675,7 +1671,7 @@ code:
         let mut flex_indices = Vec::new();
         for (i, branch) in branches.into_iter().enumerate() {
             let span = branch.span.clone();
-            let (node, sig) = self.word_sig(branch)?;
+            let SigNode { node, sig } = self.word_sig(branch)?;
             let is_flex = node
                 .iter()
                 .rposition(|node| matches!(node, Node::Prim(Primitive::Assert, _)))
@@ -1821,89 +1817,86 @@ code:
                     }
                 },
             },
-            Word::Primitive(prim) => {
-                let sp = span.clone();
-                match prim {
-                    prim if prim.signature().is_some_and(|sig| sig == (2, 1))
-                        && prim.subscript_sig(Some(2)).is_some_and(|sig| sig == (1, 1)) =>
-                    {
-                        Node::from_iter([
-                            self.word(sub.n.span.sp(Word::Number(n.to_string(), n as f64)))?,
-                            self.primitive(prim, span),
-                        ])
+            Word::Primitive(prim) => match prim {
+                prim if prim.signature().is_some_and(|sig| sig == (2, 1))
+                    && prim.subscript_sig(Some(2)).is_some_and(|sig| sig == (1, 1)) =>
+                {
+                    Node::from_iter([
+                        self.word(sub.n.span.sp(Word::Number(n.to_string(), n as f64)))?,
+                        self.primitive(prim, span),
+                    ])
+                }
+                Primitive::Transpose => {
+                    if n > 100 {
+                        self.add_error(span.clone(), "Too many subscript repetitions");
                     }
-                    Primitive::Transpose => {
-                        if n > 100 {
-                            self.add_error(span.clone(), "Too many subscript repetitions");
-                        }
-                        (0..n.min(100))
-                            .map(|_| self.primitive(prim, span.clone()))
-                            .collect()
+                    (0..n.min(100))
+                        .map(|_| self.primitive(prim, span.clone()))
+                        .collect()
+                }
+                Primitive::Sqrt => {
+                    if n == 0 {
+                        self.add_error(span.clone(), "Cannot take 0th root");
                     }
-                    Primitive::Sqrt => {
-                        if n == 0 {
-                            self.add_error(span.clone(), "Cannot take 0th root");
-                        }
-                        Node::from_iter([
-                            Node::new_push(1.0 / n.max(1) as f64),
-                            self.primitive(Primitive::Pow, span),
-                        ])
-                    }
-                    Primitive::Round | Primitive::Floor | Primitive::Ceil => {
-                        let mul = 10f64.powi(n as i32);
-                        Node::from_iter([
-                            Node::new_push(mul),
-                            self.primitive(Primitive::Mul, span.clone()),
-                            self.primitive(prim, span.clone()),
-                            Node::new_push(mul),
-                            self.primitive(Primitive::Div, span),
-                        ])
-                    }
-                    Primitive::Rand => Node::from_iter([
-                        self.primitive(Primitive::Rand, span.clone()),
-                        Node::new_push(n),
+                    Node::from_iter([
+                        Node::new_push(1.0 / n.max(1) as f64),
+                        self.primitive(Primitive::Pow, span),
+                    ])
+                }
+                Primitive::Round | Primitive::Floor | Primitive::Ceil => {
+                    let mul = 10f64.powi(n as i32);
+                    Node::from_iter([
+                        Node::new_push(mul),
                         self.primitive(Primitive::Mul, span.clone()),
-                        self.primitive(Primitive::Floor, span),
-                    ]),
-                    Primitive::Utf8 => {
-                        if n != 8 {
-                            self.add_error(span.clone(), "Only UTF-8 is supported");
-                        }
-                        self.primitive(prim, span)
+                        self.primitive(prim, span.clone()),
+                        Node::new_push(mul),
+                        self.primitive(Primitive::Div, span),
+                    ])
+                }
+                Primitive::Rand => Node::from_iter([
+                    self.primitive(Primitive::Rand, span.clone()),
+                    Node::new_push(n),
+                    self.primitive(Primitive::Mul, span.clone()),
+                    self.primitive(Primitive::Floor, span),
+                ]),
+                Primitive::Utf8 => {
+                    if n != 8 {
+                        self.add_error(span.clone(), "Only UTF-8 is supported");
                     }
-                    Primitive::Couple => match n {
-                        1 => self.primitive(Primitive::Fix, span),
-                        2 => self.primitive(Primitive::Couple, span),
-                        n => Node::Array {
-                            inner: Node::empty().into(),
-                            sig: Signature::new(n, n),
-                            boxed: false,
-                            span: self.add_span(span.clone()),
-                        },
-                    },
-                    Primitive::Box => Node::Array {
+                    self.primitive(prim, span)
+                }
+                Primitive::Couple => match n {
+                    1 => self.primitive(Primitive::Fix, span),
+                    2 => self.primitive(Primitive::Couple, span),
+                    n => Node::Array {
                         inner: Node::empty().into(),
                         sig: Signature::new(n, n),
-                        boxed: true,
+                        boxed: false,
                         span: self.add_span(span.clone()),
                     },
-                    Primitive::Stack => Node::ImplPrim(
-                        ImplPrimitive::TraceN {
-                            n,
-                            inverse: false,
-                            stack_sub: true,
-                        },
-                        self.add_span(span.clone()),
-                    ),
-                    _ => {
-                        self.add_error(
-                            span.clone(),
-                            format!("Subscripts are not implemented for {}", prim.format()),
-                        );
-                        self.primitive(prim, span)
-                    }
+                },
+                Primitive::Box => Node::Array {
+                    inner: Node::empty().into(),
+                    sig: Signature::new(n, n),
+                    boxed: true,
+                    span: self.add_span(span.clone()),
+                },
+                Primitive::Stack => Node::ImplPrim(
+                    ImplPrimitive::TraceN {
+                        n,
+                        inverse: false,
+                        stack_sub: true,
+                    },
+                    self.add_span(span.clone()),
+                ),
+                _ => {
+                    self.add_error(
+                        span.clone(),
+                        format!("Subscripts are not implemented for {}", prim.format()),
+                    );
+                    self.primitive(prim, span)
                 }
-            }
+            },
             _ => {
                 self.add_error(span.clone(), "Subscripts are not allowed in this context");
                 self.word(sub.word)?
@@ -2023,7 +2016,10 @@ code:
         self.asm.add_function(
             FunctionId::Unnamed,
             signature,
-            Node::Dynamic(DynamicFunction { index, signature }),
+            Node::Dynamic(DynamicFunction {
+                index,
+                sig: signature,
+            }),
         )
     }
     /// Bind a function in the current scope

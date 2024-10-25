@@ -232,7 +232,6 @@ impl Compiler {
             referenced: false,
             global_index: local.index,
         });
-        let mut binding_code_words = binding.words.iter().filter(|w| w.value.is_code());
         let node = self.words(binding.words);
         let self_referenced = self.current_bindings.pop().unwrap().referenced;
         let node = node?;
@@ -364,7 +363,7 @@ impl Compiler {
             ModuleKind::Named(name) => ScopeKind::Module(name.value.clone()),
             ModuleKind::Test => ScopeKind::Test,
         };
-        let module = self.in_scope(scope_kind, |comp| {
+        let (module, ()) = self.in_scope(scope_kind, |comp| {
             comp.items(m.items, false)?;
             comp.end_enum()?;
             Ok(())

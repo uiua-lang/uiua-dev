@@ -158,25 +158,26 @@ node!(
     (6, Array { inner: Box<Node>, sig: Signature, boxed: bool, span: usize }),
     (7, Call(func(Function))),
     (8, CallGlobal(index(usize), sig(Signature))),
-    (9, BindGlobal { index: usize, span: usize }),
-    (10, Label(label(EcoString), span(usize))),
-    (11, RemoveLabel(span(usize))),
-    (12, Format(parts(EcoVec<EcoString>), span(usize))),
-    (13, MatchFormatPattern(parts(EcoVec<EcoString>), span(usize))),
-    (14, CustomInverse(cust(Box<CustomInverse>), span(usize))),
-    (15, Switch {
+    (9, CallMacro(index(usize), sig(Signature), args(EcoVec<SigNode>))),
+    (10, BindGlobal { index: usize, span: usize }),
+    (11, Label(label(EcoString), span(usize))),
+    (12, RemoveLabel(span(usize))),
+    (13, Format(parts(EcoVec<EcoString>), span(usize))),
+    (14, MatchFormatPattern(parts(EcoVec<EcoString>), span(usize))),
+    (15, CustomInverse(cust(Box<CustomInverse>), span(usize))),
+    (16, Switch {
         branches: EcoVec<SigNode>,
         sig: Signature,
         under_cond: bool,
         span: usize,
     }),
-    (16, Unpack { count: usize, boxed: bool, span: usize }),
-    (17, SetOutputComment { i: usize, n: usize }),
-    (18, Dynamic(func(DynamicFunction)))
+    (17, Unpack { count: usize, boxed: bool, span: usize }),
+    (18, SetOutputComment { i: usize, n: usize }),
+    (19, Dynamic(func(DynamicFunction)))
 );
 
 /// A node argument
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct SigNode {
     pub node: Node,
     pub sig: Signature,
@@ -191,14 +192,15 @@ impl SigNode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CustomInverse {
     pub normal: SigNode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub un: Option<SigNode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub under: Option<(SigNode, SigNode)>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub anti: Option<SigNode>,
 }
 
@@ -278,6 +280,24 @@ impl Node {
             }
         } else if len == 0 {
             *self = Node::default();
+        }
+    }
+    /// Split the node at the given index
+    #[track_caller]
+    pub fn split_off(&mut self, index: usize) -> Self {
+        if let Node::Run(nodes) = self {
+            let removed = EcoVec::from(&nodes[index..]);
+            nodes.truncate(index);
+            Node::Run(removed)
+        } else if index == 0 {
+            take(self)
+        } else if index == 1 {
+            Node::empty()
+        } else {
+            panic!(
+                "Index {index} out of bounds of node with length {}",
+                self.len()
+            );
         }
     }
     /// Mutably iterate over the nodes of this node
@@ -427,6 +447,13 @@ impl fmt::Debug for Node {
             } => write!(f, "[{}{}]", Primitive::Len, sig.outputs),
             Node::Call(func) => write!(f, "call {}", func.id),
             Node::CallGlobal(index, _) => write!(f, "<call global {index}>"),
+            Node::CallMacro(index, _, args) => {
+                let mut tuple = f.debug_tuple(&format!("<call macro {index}>"));
+                for node in args {
+                    tuple.field(node);
+                }
+                tuple.finish()
+            }
             Node::BindGlobal { index, .. } => write!(f, "<bind global {index}>"),
             Node::Label(label, _) => write!(f, "${label}"),
             Node::RemoveLabel(_) => write!(f, "remove label"),

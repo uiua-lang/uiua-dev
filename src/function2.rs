@@ -76,25 +76,25 @@ pub struct DynamicFunction {
     /// An index used to look up the function
     pub(crate) index: usize,
     /// The function's signature
-    pub(crate) signature: Signature,
+    pub(crate) sig: Signature,
 }
 
 impl From<(usize, Signature)> for DynamicFunction {
-    fn from((index, signature): (usize, Signature)) -> Self {
-        Self { index, signature }
+    fn from((index, sig): (usize, Signature)) -> Self {
+        Self { index, sig }
     }
 }
 
 impl From<DynamicFunction> for (usize, Signature) {
     fn from(func: DynamicFunction) -> Self {
-        (func.index, func.signature)
+        (func.index, func.sig)
     }
 }
 
 impl DynamicFunction {
     /// Get the function's signature
     pub fn signature(&self) -> Signature {
-        self.signature
+        self.sig
     }
 }
 

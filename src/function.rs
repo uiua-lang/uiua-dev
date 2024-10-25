@@ -152,7 +152,7 @@ impl Add<usize> for FuncSlice {
 }
 
 /// A function stack signature
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 #[serde(from = "(usize, usize)", into = "(usize, usize)")]
 pub struct Signature {
     /// The number of arguments the function pops off the stack

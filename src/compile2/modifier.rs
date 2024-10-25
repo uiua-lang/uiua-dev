@@ -1,6 +1,8 @@
 //! Compiler code for modifiers
 #![allow(clippy::redundant_closure_call)]
 
+use std::slice;
+
 use crate::lsp::SetInverses;
 
 use super::*;
@@ -127,203 +129,176 @@ impl Compiler {
         operand: &Sp<Word>,
         subscript: Option<usize>,
     ) -> UiuaResult<Option<Node>> {
-        Ok(
-            if let Some(word) = self.desugar_function_pack_inner(modifier, operand)? {
-                let span = modifier.span.clone().merge(operand.span.clone());
-                Some(self.word(span.sp(word))?)
-            } else if let Word::Pack(pack @ FunctionPack { .. }) = &operand.value {
-                Some(match &modifier.value {
-                    Modifier::Primitive(Primitive::Switch) => self.switch(
-                        (pack.branches.iter().cloned())
-                            .map(|sp| sp.map(Word::Func))
-                            .collect(),
-                        modifier.span.clone(),
-                    )?,
-                    Modifier::Primitive(Primitive::Obverse) => {
-                        let mut funcs = Vec::new();
-                        for br in &pack.branches {
-                            let word = br.clone().map(Word::Func);
-                            let span = word.span.clone();
-                            let (nf, sig) = self.compile_operand_word(word)?;
-                            let func = self.make_function(span.into(), sig, nf);
-                            funcs.push(func);
+        let node = if let Some(word) = self.desugar_function_pack_inner(modifier, operand)? {
+            let span = modifier.span.clone().merge(operand.span.clone());
+            self.word(span.sp(word))?
+        } else if let Word::Pack(pack @ FunctionPack { .. }) = &operand.value {
+            match &modifier.value {
+                Modifier::Primitive(Primitive::Switch) => self.switch(
+                    (pack.branches.iter().cloned())
+                        .map(|sp| sp.map(Word::Func))
+                        .collect(),
+                    modifier.span.clone(),
+                )?,
+                Modifier::Primitive(Primitive::Obverse) => {
+                    let mut nodes = Vec::new();
+                    let mut spans = Vec::new();
+                    for br in &pack.branches {
+                        let word = br.clone().map(Word::Func);
+                        let span = word.span.clone();
+                        let sn = self.word_sig(word)?;
+                        nodes.push(sn);
+                        spans.push(span);
+                    }
+                    let mut cust = CustomInverse::default();
+                    match nodes.as_slice() {
+                        [a, b] => {
+                            cust.normal = a.clone();
+                            if a.sig == b.sig.inverse() {
+                                cust.un = Some(b.clone());
+                            } else if a.sig.anti().is_some_and(|sig| sig == b.sig) {
+                                cust.anti = Some(b.clone());
+                            } else {
+                                cust.under = Some((a.clone(), b.clone()));
+                            }
                         }
-                        let mut cust = CustomInverse::default();
-                        let f;
-                        match funcs.as_slice() {
-                            [a, b] => {
-                                f = a.clone();
-                                if a.signature() == b.signature().inverse() {
-                                    cust.un = Some(b.clone());
-                                } else if a
-                                    .signature()
-                                    .anti()
-                                    .is_some_and(|sig| sig == b.signature())
-                                {
-                                    cust.anti = Some(b.clone());
-                                } else {
-                                    cust.under = Some((a.clone(), b.clone()));
-                                }
+                        [a, b, c] => {
+                            cust.normal = a.clone();
+                            if !b.node.is_empty() && !c.node.is_empty() {
+                                cust.under = Some((b.clone(), c.clone()));
                             }
-                            [a, b, c] => {
-                                f = a.clone();
-                                if !b.instrs(&self.asm).is_empty()
-                                    && !c.instrs(&self.asm).is_empty()
-                                {
-                                    cust.under = Some((b.clone(), c.clone()));
-                                }
-                            }
-                            [a, b, c, d] => {
-                                f = a.clone();
-                                if !b.instrs(&self.asm).is_empty() {
-                                    if !a.signature().is_compatible_with(b.signature().inverse()) {
-                                        self.emit_diagnostic(
+                        }
+                        [a, b, c, d] => {
+                            cust.normal = a.clone();
+                            if !b.node.is_empty() {
+                                if !a.sig.is_compatible_with(b.sig.inverse()) {
+                                    self.emit_diagnostic(
                                         format!(
                                             "First and second functions must have opposite signatures, \
                                             but their signatures are {} and {}",
-                                            a.signature(),
-                                            b.signature()
+                                            a.sig,
+                                            b.sig
                                         ),
                                         DiagnosticKind::Warning,
                                         modifier.span.clone(),
                                     );
-                                    }
-                                    cust.un = Some(b.clone());
                                 }
-                                if !d.instrs(&self.asm).is_empty() {
-                                    if !c.instrs(&self.asm).is_empty() {
-                                        cust.under = Some((c.clone(), d.clone()));
-                                    }
-                                    if a.signature().anti().is_some_and(|sig| sig == d.signature())
-                                    {
-                                        cust.anti = Some(d.clone());
-                                    }
-                                }
+                                cust.un = Some(b.clone());
                             }
-                            [a, b, c, d, e] => {
-                                f = a.clone();
-                                if !b.instrs(&self.asm).is_empty() {
-                                    if !a.signature().is_compatible_with(b.signature().inverse()) {
-                                        self.emit_diagnostic(
-                                        format!(
-                                            "First and second functions must have opposite signatures, \
-                                            but their signatures are {} and {}",
-                                            a.signature(),
-                                            b.signature()
-                                        ),
-                                        DiagnosticKind::Warning,
-                                        modifier.span.clone(),
-                                    );
-                                    }
-                                    cust.un = Some(b.clone());
-                                }
-                                if !c.instrs(&self.asm).is_empty()
-                                    && !d.instrs(&self.asm).is_empty()
-                                {
+                            if !d.node.is_empty() {
+                                if !c.node.is_empty() {
                                     cust.under = Some((c.clone(), d.clone()));
                                 }
-                                if !e.instrs(&self.asm).is_empty() {
-                                    match a.signature().anti() {
-                                        None => self.emit_diagnostic(
-                                            format!(
-                                                "An anti inverse is specified, but the first \
+                                if a.sig.anti().is_some_and(|sig| sig == d.sig) {
+                                    cust.anti = Some(d.clone());
+                                }
+                            }
+                        }
+                        [a, b, c, d, e] => {
+                            cust.normal = a.clone();
+                            if !b.node.is_empty() {
+                                if !a.sig.is_compatible_with(b.sig.inverse()) {
+                                    self.emit_diagnostic(
+                                        format!(
+                                            "First and second functions must have opposite signatures, \
+                                            but their signatures are {} and {}",
+                                            a.sig,
+                                            b.sig
+                                        ),
+                                        DiagnosticKind::Warning,
+                                        modifier.span.clone(),
+                                    );
+                                }
+                                cust.un = Some(b.clone());
+                            }
+                            if !c.node.is_empty() && !d.node.is_empty() {
+                                cust.under = Some((c.clone(), d.clone()));
+                            }
+                            if !e.node.is_empty() {
+                                match a.sig.anti() {
+                                    None => self.emit_diagnostic(
+                                        format!(
+                                            "An anti inverse is specified, but the first \
                                             function's signature {} cannot have an anti inverse",
-                                                a.signature()
+                                            a.sig
+                                        ),
+                                        DiagnosticKind::Warning,
+                                        modifier.span.clone(),
+                                    ),
+                                    Some(sig) if sig != e.sig => {
+                                        self.emit_diagnostic(
+                                            format!(
+                                                "The first function's signature implies an \
+                                                anti inverse with signature {sig}, but the \
+                                                fifth function's signature is {}",
+                                                e.sig
                                             ),
                                             DiagnosticKind::Warning,
                                             modifier.span.clone(),
-                                        ),
-                                        Some(sig) if sig != e.signature() => {
-                                            self.emit_diagnostic(
-                                                format!(
-                                                    "The first function's signature implies an \
-                                                anti inverse with signature {sig}, but the \
-                                                fifth function's signature is {}",
-                                                    e.signature()
-                                                ),
-                                                DiagnosticKind::Warning,
-                                                modifier.span.clone(),
-                                            );
-                                        }
-                                        Some(_) => {}
+                                        );
                                     }
-                                    cust.anti = Some(e.clone());
+                                    Some(_) => {}
                                 }
+                                cust.anti = Some(e.clone());
                             }
-                            funcs => {
-                                return Err(self.fatal_error(
-                                    modifier.span.clone(),
-                                    format!(
-                                        "Obverse requires between 1 and 5 branches, \
+                        }
+                        funcs => {
+                            return Err(self.fatal_error(
+                                modifier.span.clone(),
+                                format!(
+                                    "Obverse requires between 1 and 5 branches, \
                                     but {} were provided",
-                                        funcs.len()
-                                    ),
-                                ))
-                            }
-                        };
-                        let set_inverses = SetInverses {
-                            un: cust.un.is_some(),
-                            anti: cust.anti.is_some(),
-                            under: cust.under.is_some(),
-                        };
-                        self.code_meta
-                            .obverses
-                            .insert(modifier.span.clone(), set_inverses);
-                        for f in funcs {
-                            if let FunctionId::Anonymous(span) = f.id {
-                                if let Some(sig_decl) = self.code_meta.function_sigs.get_mut(&span)
-                                {
-                                    sig_decl.set_inverses = set_inverses;
-                                }
-                            }
+                                    funcs.len()
+                                ),
+                            ))
                         }
-                        let sig = f.signature();
-                        let spandex = self.add_span(modifier.span.clone());
-                        let instrs =
-                            eco_vec![Instr::PushFunc(f), Instr::CustomInverse(cust, spandex)];
-                        if call {
-                            self.push_nodes(instrs);
-                        } else {
-                            let func = self.make_function(
-                                FunctionId::Anonymous(modifier.span.clone()),
-                                sig,
-                                instrs.into(),
-                            );
-                            self.push_node(Instr::PushFunc(func));
+                    };
+                    let set_inverses = SetInverses {
+                        un: cust.un.is_some(),
+                        anti: cust.anti.is_some(),
+                        under: cust.under.is_some(),
+                    };
+                    self.code_meta
+                        .obverses
+                        .insert(modifier.span.clone(), set_inverses);
+                    for span in spans {
+                        if let Some(sig_decl) = self.code_meta.function_sigs.get_mut(&span) {
+                            sig_decl.set_inverses = set_inverses;
                         }
-                        Ok(true)
                     }
-                    m if m.args() >= 2 => {
-                        let new = Modified {
-                            modifier: modifier.clone(),
-                            operands: pack
-                                .branches
-                                .iter()
-                                .cloned()
-                                .map(|w| w.map(Word::Func))
-                                .collect(),
-                        };
-                        self.modified(new, subscript)?;
-                        Ok(true)
-                    }
-                    m => {
-                        if let Modifier::Ref(name) = m {
-                            if let Ok(Some((_, local))) = self.ref_local(name) {
-                                if self.code_macros.contains_key(&local.index) {
-                                    return Ok(false);
-                                }
+                    let span = self.add_span(modifier.span.clone());
+                    Node::CustomInverse(cust.into(), span)
+                }
+                m if m.args() >= 2 => {
+                    let new = Modified {
+                        modifier: modifier.clone(),
+                        operands: pack
+                            .branches
+                            .iter()
+                            .cloned()
+                            .map(|w| w.map(Word::Func))
+                            .collect(),
+                    };
+                    self.modified(new, subscript)?
+                }
+                m => {
+                    if let Modifier::Ref(name) = m {
+                        if let Ok(Some((_, local))) = self.ref_local(name) {
+                            if self.code_macros.contains_key(&local.index) {
+                                return Ok(None);
                             }
                         }
-                        Err(self.fatal_error(
-                            modifier.span.clone().merge(operand.span.clone()),
-                            format!("{m} cannot use a function pack"),
-                        ))
                     }
-                })
-            } else {
-                None
-            },
-        )
+                    return Err(self.fatal_error(
+                        modifier.span.clone().merge(operand.span.clone()),
+                        format!("{m} cannot use a function pack"),
+                    ));
+                }
+            }
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(node))
     }
     #[allow(clippy::collapsible_match)]
     pub(crate) fn modified(
@@ -484,12 +459,7 @@ impl Compiler {
         }
 
         // Compile operands
-        let ops: EcoVec<SigNode> = modified
-            .operands
-            .into_iter()
-            .filter(|w| w.value.is_code())
-            .map(|w| self.word_sig(w))
-            .collect::<UiuaResult<_>>()?;
+        let ops = self.args(modified.operands)?;
 
         Ok(Node::Mod(prim, ops, span))
     }
@@ -528,6 +498,24 @@ impl Compiler {
         self.print_diagnostics = print_diagnostics;
         res
     }
+    fn monadic_modifier_op(&mut self, m: &Modified) -> UiuaResult<(SigNode, CodeSpan)> {
+        let operand = m.code_operands().next().unwrap().clone();
+        let span = operand.span.clone();
+        self.word_sig(operand).map(|sn| (sn, span))
+    }
+    fn dyadic_modifier_ops(
+        &mut self,
+        m: &Modified,
+    ) -> UiuaResult<(SigNode, SigNode, CodeSpan, CodeSpan)> {
+        let mut operands = m.code_operands().cloned();
+        let a_op = operands.next().unwrap();
+        let b_op = operands.next().unwrap();
+        let a_span = a_op.span.clone();
+        let b_span = b_op.span.clone();
+        let a = self.word_sig(a_op)?;
+        let b = self.word_sig(b_op)?;
+        Ok((a, b, a_span, b_span))
+    }
     pub(super) fn inline_modifier(
         &mut self,
         modified: &Modified,
@@ -543,9 +531,8 @@ impl Compiler {
         self.handle_primitive_deprecation(prim, &modified.modifier.span);
 
         Ok(Some(match prim {
-            Backward => wrap!(|| {
-                let operand = modified.code_operands().next().unwrap().clone();
-                let SigNode { node, sig } = self.word_sig(operand)?;
+            Backward => {
+                let (SigNode { mut node, sig }, _) = self.monadic_modifier_op(modified)?;
                 if sig.args != 2 {
                     self.add_error(
                         modified.modifier.span.clone(),
@@ -559,108 +546,53 @@ impl Compiler {
                 let span = self.add_span(modified.modifier.span.clone());
                 node.prepend(Node::Prim(Flip, span));
                 node
-            }),
-            Repeat => wrap!(|| {
-                if let Some(n) = subscript {
-                    self.push_node(Instr::push(n));
-                }
-                let operand = modified.code_operands().next().unwrap().clone();
-                let (new_func, sig) = self.compile_operand_word(operand)?;
-                let flags = new_func.flags;
+            }
+            Repeat => {
+                let (sn, span) = self.monadic_modifier_op(modified)?;
                 let spandex = self.add_span(modified.modifier.span.clone());
-                let instrs = 'instrs: {
-                    if let Some(curr) = self.new_functions.last_mut() {
-                        if let [.., Instr::Push(val)] = curr.instrs.as_slice() {
-                            if let Ok(n) = val.as_int(&IgnoreError, "") {
-                                if n >= 0 && n.unsigned_abs() * new_func.instrs.len() <= 20 {
-                                    curr.instrs.pop();
-                                    break 'instrs repeat(&new_func.instrs)
-                                        .take(n.unsigned_abs())
-                                        .flatten()
-                                        .cloned()
-                                        .collect();
-                                }
-                            }
-                        }
+                let mut node = if let Some((inv, inv_sig)) = sn
+                    .node
+                    .un_inverse(&self.asm)
+                    .ok()
+                    .and_then(|inv| inv.sig().ok().map(|sig| (inv, sig)))
+                    .filter(|(_, inv_sig)| sn.sig.is_compatible_with(*inv_sig))
+                {
+                    // If an inverse for repeat's function exists we use a special
+                    // implementation that allows for negative repeatition counts
+                    if sn.sig.inverse() != inv_sig {
+                        self.add_error(
+                            span,
+                            format!(
+                                "Repeated function's inverse must have \
+                                the inverse signature, but their signatures \
+                                are {} and {}",
+                                sn.sig, inv_sig
+                            ),
+                        )
                     }
-                    if let Some((inverse, inv_sig)) = invert_instrs(&new_func.instrs, self)
-                        .ok()
-                        .and_then(|inv| instrs_signature(&inv).ok().map(|sig| (inv, sig)))
-                        .filter(|(_, inv_sig)| sig.is_compatible_with(*inv_sig))
-                    {
-                        // If an inverse for repeat's function exists we use a special
-                        // implementation that allows for negative repeatition counts
-                        let id = FunctionId::Anonymous(modified.modifier.span.clone());
-                        let func = self.make_function(id, sig, new_func);
-                        let inv_id = FunctionId::Anonymous(modified.modifier.span.clone());
-                        let inv_new_func = NewFunction {
-                            instrs: inverse,
-                            flags,
-                        };
-                        let inv = self.make_function(inv_id, inv_sig, inv_new_func);
-                        if func.signature().inverse() != inv.signature() {
-                            self.add_error(
-                                modified.modifier.span.clone(),
-                                format!(
-                                    "Repeated function's inverse must have \
-                                    the inverse signature, but their signatures \
-                                    are {} and {}",
-                                    func.signature(),
-                                    inv.signature()
-                                ),
-                            )
-                        }
-                        eco_vec![
-                            Instr::PushFunc(inv),
-                            Instr::PushFunc(func),
-                            Instr::ImplPrim(ImplPrimitive::RepeatWithInverse, spandex)
-                        ]
-                    } else {
-                        let id = FunctionId::Anonymous(modified.modifier.span.clone());
-                        let func = self.make_function(id, sig, new_func);
-                        eco_vec![Instr::PushFunc(func), Instr::Prim(Repeat, spandex)]
-                    }
-                };
-                let new_func = NewFunction { instrs, flags };
-                if call {
-                    self.push_nodes(new_func);
+                    Node::ImplMod(
+                        ImplPrimitive::RepeatWithInverse,
+                        eco_vec![sn, SigNode::new(inv, inv_sig)],
+                        spandex,
+                    )
                 } else {
-                    let sig = self.sig_of(&new_func.instrs, &modified.modifier.span)?;
-                    let func =
-                        self.make_function(modified.modifier.span.clone().into(), sig, new_func);
-                    self.push_node(Instr::PushFunc(func));
+                    Node::Mod(Primitive::Repeat, eco_vec![sn], spandex)
+                };
+                if let Some(n) = subscript {
+                    node.prepend(Node::new_push(n));
                 }
-            }),
-            Un if !self.in_inverse => wrap!(|| {
-                let f = modified.code_operands().next().unwrap().clone();
-                let span = f.span.clone();
-
-                let in_inverse = self.in_inverse;
-                self.in_inverse = !in_inverse;
-                let f_res = self.compile_operand_word(f);
-                self.in_inverse = in_inverse;
-                let (mut new_func, _) = f_res?;
-
-                let spandex = self.add_span(span.clone());
-                match invert_instrs(&new_func.instrs, self) {
-                    Ok(inverted) => {
-                        let sig = self.sig_of(&inverted, &span)?;
-                        new_func.instrs = inverted;
-                        finish!(new_func, sig, spandex);
-                    }
+                node
+            }
+            Un => {
+                let (sn, span) = self.monadic_modifier_op(modified)?;
+                match sn.node.un_inverse(&self.asm) {
+                    Ok(inv) => inv,
                     Err(e) => return Err(self.fatal_error(span, e)),
                 }
-            }),
-            Anti if !self.in_inverse => wrap!(|| {
-                let f = modified.code_operands().next().unwrap().clone();
-                let span = f.span.clone();
-
-                let in_inverse = self.in_inverse;
-                self.in_inverse = !in_inverse;
-                let f_res = self.compile_operand_word(f);
-                self.in_inverse = in_inverse;
-                let (mut new_func, f_sig) = f_res?;
-                if f_sig.args < 2 {
+            }
+            Anti => {
+                let (sn, span) = self.monadic_modifier_op(modified)?;
+                if sn.sig.args < 2 {
                     self.emit_diagnostic(
                         format!(
                             "Prefer {} over {} for functions \
@@ -672,96 +604,38 @@ impl Compiler {
                         span.clone(),
                     );
                 }
-
-                match anti_instrs(&new_func.instrs, self) {
-                    Ok(inverted) => {
-                        let sig = self.sig_of(&inverted, &span)?;
-                        new_func.instrs = inverted;
-                        finish!(new_func, sig);
-                    }
+                match sn.node.anti_inverse(&self.asm) {
+                    Ok(inv) => inv,
                     Err(e) => return Err(self.fatal_error(span, e)),
                 }
-            }),
-            Under if !self.in_inverse => wrap!(|| {
-                let mut operands = modified.code_operands().cloned();
-                let f = operands.next().unwrap();
-                let f_span = f.span.clone();
-                let g = operands.next().unwrap();
-
-                // The not inverted function
-                let (g_new_func, g_sig) = self.compile_operand_word(g)?;
-
-                // The inverted function
-                self.in_inverse = !self.in_inverse;
-                let f_res = self.compile_operand_word(f);
-                self.in_inverse = !self.in_inverse;
-                let (f_new_func, f_new_sig) = f_res?;
-
-                // Under pop diagnostic
-                if let [Instr::Prim(Pop, _)] = f_new_func.instrs.as_slice() {
-                    self.emit_diagnostic(
-                        format!("Prefer {} over `⍜◌` for clarity", Dip.format()),
-                        DiagnosticKind::Style,
-                        modified.modifier.span.clone().merge(f_span.clone()),
-                    );
-                }
-
-                match under_instrs(&f_new_func.instrs, g_sig, self) {
-                    Ok((f_before, f_after)) => {
-                        let mut instrs = f_before;
-                        instrs.extend(g_new_func.instrs.iter().cloned());
-                        instrs.extend(f_after);
-
-                        // Register undered functions
-                        let span = self.add_span(modified.modifier.span.clone());
-                        self.undered_funcs.insert(
-                            instrs.clone(),
-                            UnderedFunctions {
-                                f: f_new_func.instrs,
-                                f_sig: f_new_sig,
-                                g: g_new_func.instrs,
-                                g_sig,
-                                span,
-                            },
-                        );
-
-                        let new_func = NewFunction {
-                            instrs,
-                            flags: f_new_func.flags | g_new_func.flags,
-                        };
-                        if call {
-                            self.push_nodes(new_func);
-                        } else {
-                            let sig = self.sig_of(&new_func.instrs, &modified.modifier.span)?;
-                            let func = self.make_function(
-                                modified.modifier.span.clone().into(),
-                                sig,
-                                new_func,
-                            );
-                            self.push_node(Instr::PushFunc(func));
-                        }
-                    }
-                    Err(e) => return Err(self.fatal_error(f_span, e)),
-                }
-            }),
-            Obverse => wrap!(|| {
+            }
+            Under => {
+                let (f, g, f_span, _) = self.dyadic_modifier_ops(modified)?;
+                let (f_before, f_after) = f
+                    .node
+                    .under_inverse(g.sig, &self.asm)
+                    .map_err(|e| self.fatal_error(f_span.clone(), e))?;
+                let mut node = f_before;
+                node.push(g.node);
+                node.push(f_after);
+                node
+            }
+            Obverse => {
                 // Rectify case, where only one function is supplied
-                let operand = modified.code_operands().next().unwrap().clone();
-                let span = operand.span.clone();
-                let spandex = self.add_span(span.clone());
                 let in_inverse = replace(&mut self.in_inverse, false);
-                let (func, sig) = self.compile_operand_word(operand)?;
+                let (sn, span) = self.monadic_modifier_op(modified)?;
                 self.in_inverse = in_inverse;
-                let func = self.make_function(span.clone().into(), sig, func);
+                let spandex = self.add_span(span.clone());
                 let mut cust = CustomInverse {
-                    under: Some((func.clone(), func.clone())),
+                    normal: sn.clone(),
+                    under: Some((sn.clone(), sn.clone())),
                     ..Default::default()
                 };
-                if sig == sig.inverse() {
-                    cust.un = Some(func.clone());
+                if sn.sig == sn.sig.inverse() {
+                    cust.un = Some(sn.clone());
                 }
-                if sig.anti() == Some(sig) {
-                    cust.anti = Some(func.clone());
+                if sn.sig.anti() == Some(sn.sig) {
+                    cust.anti = Some(sn.clone());
                 }
                 let set_inverses = SetInverses {
                     un: cust.un.is_some(),
@@ -771,176 +645,114 @@ impl Compiler {
                 self.code_meta
                     .obverses
                     .insert(modified.modifier.span.clone(), set_inverses);
-                if let FunctionId::Anonymous(span) = &func.id {
-                    if let Some(sig_decl) = self.code_meta.function_sigs.get_mut(span) {
-                        sig_decl.set_inverses = set_inverses;
-                    }
+                if let Some(sig_decl) = self.code_meta.function_sigs.get_mut(&span) {
+                    sig_decl.set_inverses = set_inverses;
                 }
-                let instrs = eco_vec![Instr::PushFunc(func), Instr::CustomInverse(cust, spandex)];
-                if call {
-                    self.push_nodes(instrs);
-                } else {
-                    let func = self.make_function(FunctionId::Anonymous(span), sig, instrs.into());
-                    self.push_node(Instr::PushFunc(func));
-                }
-            }),
-            Try => wrap!(|| {
-                let mut operands = modified.code_operands().cloned();
-                let tried = operands.next().unwrap();
-                let handler = operands.next().unwrap();
-                let tried_span = tried.span.clone();
-                let handler_span = handler.span.clone();
+                Node::CustomInverse(cust.into(), spandex)
+            }
+            Try => {
                 let in_try = replace(&mut self.in_try, true);
-                let (mut handler_new_func, mut handler_sig) = self.compile_operand_word(handler)?;
-                let (mut try_new_func, mut try_sig) = self.compile_operand_word(tried)?;
-                let span = self.add_span(modified.modifier.span.clone());
+                let nodes = self.dyadic_modifier_ops(modified);
+                self.in_try = in_try;
+                let (mut tried, mut handler, _, handler_span) = nodes?;
 
-                match try_sig.outputs.cmp(&handler_sig.outputs) {
+                match tried.sig.outputs.cmp(&handler.sig.outputs) {
                     Ordering::Equal => {}
                     Ordering::Less => {
-                        try_sig.args += handler_sig.outputs - try_sig.outputs;
-                        try_sig.outputs = handler_sig.outputs;
-                        try_new_func.instrs.insert(
-                            0,
-                            Instr::TouchStack {
-                                count: try_sig.args,
-                                span,
-                            },
-                        );
+                        tried.sig.args += handler.sig.outputs - tried.sig.outputs;
+                        tried.sig.outputs = handler.sig.outputs;
                     }
                     Ordering::Greater => {
-                        handler_sig.args += try_sig.outputs - handler_sig.outputs;
-                        handler_sig.outputs = try_sig.outputs;
-                        handler_new_func.instrs.insert(
-                            0,
-                            Instr::TouchStack {
-                                count: handler_sig.args,
-                                span,
-                            },
-                        );
+                        handler.sig.args += tried.sig.outputs - handler.sig.outputs;
+                        handler.sig.outputs = tried.sig.outputs;
                     }
                 }
 
-                if handler_sig.args > try_sig.args + 1 {
+                if handler.sig.args > tried.sig.args + 1 {
                     self.add_error(
                         handler_span.clone(),
                         format!(
                             "Handler function must have at most \
                             one more argument than the tried function, \
-                            but their signatures are {handler_sig} and \
-                            {try_sig} respectively."
+                            but their signatures are {} and \
+                            {} respectively.",
+                            handler.sig, tried.sig
                         ),
                     );
                 }
 
-                let tried_func = self.make_function(tried_span.into(), try_sig, try_new_func);
-                self.in_try = in_try;
-                let handler_func =
-                    self.make_function(handler_span.into(), handler_sig, handler_new_func);
-                finish!(
-                    eco_vec![
-                        Instr::PushFunc(handler_func),
-                        Instr::PushFunc(tried_func),
-                        Instr::Prim(Primitive::Try, span),
-                    ],
-                    try_sig
-                );
-            }),
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::Mod(Primitive::Try, eco_vec![tried, handler], span)
+            }
             Switch => self.switch(
                 modified.code_operands().cloned().collect(),
                 modified.modifier.span.clone(),
             )?,
-            Fill => wrap!(|| {
+            Fill => {
                 let mut operands = modified.code_operands().rev().cloned();
-                if !call {
-                    self.new_functions.push(NewFunction::default());
-                }
 
                 // Filled function
                 let mode = replace(&mut self.pre_eval_mode, PreEvalMode::Lsp);
-                let res = self.word(operands.next().unwrap(), false);
+                let f = self.word_sig(operands.next().unwrap());
                 self.pre_eval_mode = mode;
-                res?;
+                let f = f?;
 
                 // Get-fill function
                 let in_inverse = replace(&mut self.in_inverse, false);
                 let fill_word = operands.next().unwrap();
                 let fill_span = fill_word.span.clone();
-                let fill = self.compile_operand_word(fill_word);
+                let fill = self.word_sig(fill_word);
                 self.in_inverse = in_inverse;
-                let (fill_instrs, fill_sig) = fill?;
-                if fill_sig.outputs > 1 && !self.scope.fill_sig_error {
+                let fill = fill?;
+                if fill.sig.outputs > 1 && !self.scope.fill_sig_error {
                     self.scope.fill_sig_error = true;
                     self.add_error(
                         fill_span,
                         format!(
                             "{} function can have at most 1 output, but its signature is {}",
                             Primitive::Fill.format(),
-                            fill_sig
+                            fill.sig
                         ),
                     );
                 }
-                let fill_func = self.make_function(
-                    modified.modifier.span.clone().into(),
-                    fill_sig,
-                    fill_instrs,
-                );
-                self.push_node(Instr::PushFunc(fill_func));
 
                 let span = self.add_span(modified.modifier.span.clone());
-                self.push_node(Instr::Prim(Primitive::Fill, span));
-                if !call {
-                    let new_func = self.new_functions.pop().unwrap();
-                    let sig = self.sig_of(&new_func.instrs, &modified.modifier.span)?;
-                    let func =
-                        self.make_function(modified.modifier.span.clone().into(), sig, new_func);
-                    self.push_node(Instr::PushFunc(func));
-                }
-            }),
+                Node::Mod(Primitive::Fill, eco_vec![f, fill], span)
+            }
             Comptime => {
                 let word = modified.code_operands().next().unwrap().clone();
-                self.do_comptime(prim, word, &modified.modifier.span)?;
+                self.do_comptime(prim, word, &modified.modifier.span)?
             }
-            Reduce => wrap!(|| -> UiuaResult<bool> {
+            Reduce => {
                 // Reduce content
                 let operand = modified.code_operands().next().unwrap().clone();
                 let Word::Modified(m) = &operand.value else {
-                    return Ok(false);
+                    return Ok(None);
                 };
                 let Modifier::Primitive(Content) = &m.modifier.value else {
-                    return Ok(false);
+                    return Ok(None);
                 };
                 if m.code_operands().count() != 1 {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 let content_op = m.code_operands().next().unwrap().clone();
-                let (content_instrs, content_sig) = self.compile_operand_word(content_op)?;
-                let content_func =
-                    self.make_function(m.modifier.span.clone().into(), content_sig, content_instrs);
+                let inner = self.word_sig(content_op)?;
                 let span = self.add_span(modified.modifier.span.clone());
-                let instrs = eco_vec![
-                    Instr::PushFunc(content_func),
-                    Instr::ImplPrim(ImplPrimitive::ReduceContent, span),
-                ];
-                let reduce_sig = Signature::new(
-                    content_sig.args.saturating_sub(content_sig.outputs),
-                    content_sig.outputs,
-                );
-                finish!(instrs, reduce_sig);
-                Ok(true)
-            }),
-            Each => wrap!(|| -> UiuaResult<bool> {
+                Node::ImplMod(ImplPrimitive::ReduceContent, eco_vec![inner], span)
+            }
+            Each => {
                 // Each pervasive
                 let operand = modified.code_operands().next().unwrap().clone();
                 if !words_look_pervasive(slice::from_ref(&operand)) {
-                    return Ok(false);
+                    return Ok(None);
                 }
-                let (new_func, sig) = self.compile_operand_word(operand)?;
-                let span = modified.modifier.span.clone();
+                let op_span = operand.span.clone();
+                let sn = self.word_sig(operand)?;
                 self.emit_diagnostic(
-                    if let Some((prim, _)) =
-                        instrs_as_flipped_primitive(&new_func.instrs, &self.asm)
-                            .filter(|(prim, _)| prim.class().is_pervasive())
+                    if let Some((prim, _)) = sn
+                        .node
+                        .as_flipped_primitive()
+                        .filter(|(prim, _)| prim.class().is_pervasive())
                     {
                         format!(
                             "{} is pervasive, so {} is redundant here.",
@@ -955,22 +767,19 @@ impl Compiler {
                         )
                     },
                     DiagnosticKind::Advice,
-                    span,
+                    modified.modifier.span.clone().merge(op_span),
                 );
-                finish!(new_func, sig);
-                Ok(true)
-            }),
-            Table => wrap!(|| -> UiuaResult<bool> {
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::Mod(Primitive::Each, eco_vec![sn], span)
+            }
+            Table => {
                 // Normal table compilation, but get some diagnostics
-                let operand = modified.code_operands().next().unwrap().clone();
-                let op_span = operand.span.clone();
-                let instrs_len = self.asm.instrs.len();
-                let (_, sig) = self.compile_operand_word(operand)?;
-                match sig.args {
+                let (sn, span) = self.monadic_modifier_op(modified)?;
+                match sn.sig.args {
                     0 => self.emit_diagnostic(
                         format!("{} of 0 arguments is redundant", Table.format()),
                         DiagnosticKind::Advice,
-                        op_span,
+                        span,
                     ),
                     1 => self.emit_diagnostic(
                         format!(
@@ -980,39 +789,15 @@ impl Compiler {
                             rows = Rows.format()
                         ),
                         DiagnosticKind::Advice,
-                        op_span,
+                        span,
                     ),
                     _ => {}
                 }
-                self.asm.instrs.truncate(instrs_len);
-                Ok(false)
-            }),
-            Content => wrap!(|| {
-                let operand = modified.code_operands().next().unwrap().clone();
-                let (mut new_func, sig) = self.compile_operand_word(operand)?;
-                let mut prefix = EcoVec::new();
-                let span = self.add_span(modified.modifier.span.clone());
-                if sig.args > 0 {
-                    if sig.args > 1 {
-                        prefix.push(Instr::push_inline(sig.args - 1, span));
-                        for _ in 0..sig.args - 1 {
-                            prefix.extend([
-                                Instr::ImplPrim(ImplPrimitive::UnBox, span),
-                                Instr::pop_inline(1, span),
-                            ]);
-                        }
-                    }
-                    prefix.push(Instr::ImplPrim(ImplPrimitive::UnBox, span));
-                }
-                prefix.extend(new_func.instrs);
-                new_func.instrs = prefix;
-                finish!(new_func, sig);
-            }),
-            Fold => wrap!(|| {
-                let operand = modified.code_operands().next().unwrap().clone();
-                let op_span = operand.span.clone();
-                let (new_func, sig) = self.compile_operand_word(operand)?;
-                if sig.args <= sig.outputs {
+                return Ok(None);
+            }
+            Fold => {
+                let (sn, _) = self.monadic_modifier_op(modified)?;
+                if sn.sig.args <= sn.sig.outputs {
                     self.experimental_error(&modified.modifier.span, || {
                         format!(
                             "{} with arguments ≤ outputs is experimental. To use it, \
@@ -1021,68 +806,9 @@ impl Compiler {
                         )
                     });
                 }
-                let func = self.make_function(op_span.into(), sig, new_func);
-                let spandex = self.add_span(modified.modifier.span.clone());
-                let instrs = eco_vec![Instr::PushFunc(func), Instr::Prim(Primitive::Fold, spandex)];
-                finish!(instrs, sig);
-            }),
-            Stringify => wrap!(|| {
-                let operand = modified.code_operands().next().unwrap();
-                let s = format_word(operand, &self.asm.inputs);
-                let instr = Instr::Push(s.into());
-                finish!(eco_vec![instr], Signature::new(0, 1));
-            }),
-            Quote => wrap!(|| {
-                let operand = modified.code_operands().next().unwrap().clone();
-                self.new_functions.push(NewFunction::default());
-                self.do_comptime(prim, operand, &modified.modifier.span, true)?;
-                let new_func = self.new_functions.pop().unwrap();
-                let code: String = match new_func.instrs.as_slice() {
-                    [Instr::Push(Value::Char(chars))] if chars.rank() == 1 => {
-                        chars.data.iter().collect()
-                    }
-                    [Instr::Push(Value::Char(chars))] => {
-                        return Err(self.fatal_error(
-                            modified.modifier.span.clone(),
-                            format!(
-                                "quote's argument compiled to a \
-                                rank {} array rather than a string",
-                                chars.rank()
-                            ),
-                        ))
-                    }
-                    [Instr::Push(value)] => {
-                        return Err(self.fatal_error(
-                            modified.modifier.span.clone(),
-                            format!(
-                                "quote's argument compiled to a \
-                                {} array rather than a string",
-                                value.type_name()
-                            ),
-                        ))
-                    }
-                    _ => {
-                        return Err(self.fatal_error(
-                            modified.modifier.span.clone(),
-                            "quote's argument did not compile to a string",
-                        ));
-                    }
-                };
-                self.quote(&code, &"quote".into(), &modified.modifier.span)?;
-            }),
-            Sig => wrap!(|| {
-                let operand = modified.code_operands().next().unwrap().clone();
-                let (_, sig) = self.compile_operand_word(operand)?;
-                let instrs = eco_vec![
-                    Instr::Push(sig.outputs.into()),
-                    Instr::Push(sig.args.into()),
-                ];
-                finish!(instrs, Signature::new(0, 2));
-            }),
-            Struct => self.struct_(
-                &modified.modifier.span,
-                modified.code_operands().next().unwrap(),
-            )?,
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::Mod(Primitive::Fold, eco_vec![sn], span)
+            }
             _ => return Ok(None),
         }))
     }
@@ -1108,19 +834,16 @@ impl Compiler {
         if self.macro_depth > MAX_MACRO_DEPTH {
             return Err(self.fatal_error(modifier_span.clone(), "Macro recurs too deep"));
         }
-        if let Some(mut mac) = self.index_macros.get(&local.index).cloned() {
+        let node = if let Some(mut mac) = self.index_macros.get(&local.index).cloned() {
             // Index macros
             match self.scope.kind {
                 ScopeKind::Temp(Some(mac_local)) if mac_local.macro_index == local.index => {
                     // Recursive
-                    let new_func = self.compile_words(operands, false)?;
-                    self.push_nodes(new_func);
+                    let args = self.args(operands)?;
                     if let Some(sig) = mac.sig {
-                        self.push_node(Instr::CallGlobal {
-                            index: mac_local.expansion_index,
-                            call,
-                            sig,
-                        });
+                        Node::CallMacro(mac_local.expansion_index, sig, args)
+                    } else {
+                        Node::empty()
                     }
                 }
                 _ => {
@@ -1157,31 +880,21 @@ impl Compiler {
                         }
                     });
                     // Compile
-                    let mut new_func = self.suppress_diagnostics(|comp| {
-                        comp.temp_scope(mac.names, macro_local, |comp| {
-                            comp.compile_words(mac.words, true)
-                        })
+                    let mut node = self.suppress_diagnostics(|comp| {
+                        comp.temp_scope(mac.names, macro_local, |comp| comp.words(mac.words))
                     })?;
-                    new_func.flags |= mac.flags;
                     // Add
-                    let sig = self.sig_of(&new_func.instrs, &modifier_span)?;
-                    let mut func = self.make_function(
+                    let sig = self.sig_of(&node, &modifier_span)?;
+                    let mut func = self.asm.add_function(
                         FunctionId::Macro(r.name.value, r.name.span),
                         sig,
-                        new_func,
+                        node,
                     );
-                    if mac.recursive {
-                        func.flags |= FunctionFlags::RECURSIVE;
-                    }
                     if let Some(macro_local) = macro_local {
                         self.asm.bindings.make_mut()[macro_local.expansion_index].kind =
                             BindingKind::Func(func.clone());
                     }
-                    self.push_node(Instr::PushFunc(func));
-                    if call {
-                        let span = self.add_span(modifier_span);
-                        self.push_node(Instr::Call(span));
-                    }
+                    Node::Call(func)
                 }
             }
         } else if let Some(mac) = self.code_macros.get(&local.index).cloned() {
@@ -1203,29 +916,26 @@ impl Compiler {
                     word => vec![operand.span.sp(word)],
                 };
             }
-            let op_sigs = if mac.function.signature().args == 2 {
+            let op_sigs = if mac.function.sig().args == 2 {
                 // If the macro function has 2 arguments, we pass the signatures
                 // of the operands as well
                 let mut sig_data: EcoVec<u8> = EcoVec::with_capacity(operands.len() * 2);
                 // Track the length of the instructions and spans so
                 // they can be discarded after signatures are calculated
-                let instrs_len = self.asm.instrs.len();
                 let spans_len = self.asm.spans.len();
                 for op in &operands {
-                    let (_, sig) = self.compile_operand_word(op.clone()).map_err(|e| {
+                    let sn = self.word_sig(op.clone()).map_err(|e| {
                         let message = format!(
                             "This error occurred while compiling a macro operand. \
-                                    This was attempted because the macro function's \
-                                    signature is {}.",
+                            This was attempted because the macro function's \
+                            signature is {}.",
                             Signature::new(2, 1)
                         );
                         e.with_info([(message, None)])
                     })?;
-                    sig_data.extend_from_slice(&[sig.args as u8, sig.outputs as u8]);
+                    sig_data.extend_from_slice(&[sn.sig.args as u8, sn.sig.outputs as u8]);
                 }
                 // Discard unnecessary instructions and spans
-                self.asm.instrs.truncate(instrs_len);
-                self.asm.spans.truncate(spans_len);
                 Some(Array::<u8>::new([operands.len(), 2], sig_data))
             } else {
                 None
@@ -1245,8 +955,7 @@ impl Compiler {
 
             let mut code = String::new();
             (|| -> UiuaResult {
-                if let Some(index) = instrs_unbound_index(mac.function.instrs(&self.asm), &self.asm)
-                {
+                if let Some(index) = node_unbound_index(&self.asm[&mac.function], &self.asm) {
                     let name = self.scope.names.iter().find_map(|(name, local)| {
                         if local.index == index {
                             Some(name)
@@ -1306,7 +1015,7 @@ impl Compiler {
                 comp.temp_scope(mac.names, None, |comp| {
                     comp.quote(&code, &r.name.value, &modifier_span)
                 })
-            })?;
+            })?
         } else if let Some(m) =
             (self.asm.bindings.get(local.index)).and_then(|binfo| match &binfo.kind {
                 BindingKind::Module(m) => Some(m),
@@ -1319,393 +1028,16 @@ impl Compiler {
             self.in_scope(ScopeKind::AllInModule, move |comp| {
                 comp.scope.names.extend(names);
                 comp.words(operands)
-            })?;
+            })?
+            .1
         } else {
             // Recursive positional macro inside itself
-            if !call {
-                self.new_functions.push(NewFunction::default());
-            }
-            self.words(operands, false)?;
-            self.ident(r.name.value.clone(), r.name.span, true, r.in_macro_arg)?;
-            if !call {
-                let new_func = self.new_functions.pop().unwrap();
-                let sig = self.sig_of(&new_func.instrs, &modifier_span)?;
-                let func = self.make_function(modifier_span.into(), sig, new_func);
-                self.push_node(Instr::PushFunc(func));
-            }
-        }
+            let _ = self.words(operands)?;
+            let _ = self.ident(r.name.value.clone(), r.name.span, true)?;
+            todo!("recursive positional macro inside itself")
+        };
         self.macro_depth -= 1;
-        Ok(())
-    }
-    fn struct_(&mut self, modifier_span: &CodeSpan, operand: &Sp<Word>) -> UiuaResult {
-        if !self.current_bindings.is_empty() {
-            self.add_error(
-                modifier_span.clone(),
-                "struct cannot be used inside a binding",
-            );
-        }
-        let operand = operand.clone();
-        match operand.value {
-            Word::Array(arr) => {
-                struct Field {
-                    name: EcoString,
-                    name_span: CodeSpan,
-                    span: usize,
-                    global_index: usize,
-                    type_num: Option<u8>,
-                    init: Option<(EcoVec<Instr>, Signature)>,
-                }
-                let mut fields = Vec::new();
-                let module_name = if let ScopeKind::Module(name) = &self.scope.kind {
-                    Some(name.clone())
-                } else {
-                    None
-                };
-                // Collect fields
-                let mut invalid_syntax = false;
-                for word in (arr.lines.into_iter().flatten()).filter(|word| word.value.is_code()) {
-                    match word.value {
-                        Word::Ref(r) if r.path.is_empty() => {
-                            let span = self.add_span(word.span.clone());
-                            fields.push(Field {
-                                name: r.name.value,
-                                name_span: word.span,
-                                span,
-                                global_index: 0,
-                                type_num: None,
-                                init: None,
-                            });
-                        }
-                        Word::Func(func) if !fields.is_empty() => {
-                            let field = fields.last_mut().unwrap();
-                            if field.init.is_some() {
-                                self.add_error(
-                                    word.span,
-                                    "Cannot have multiple initializers for a struct field",
-                                );
-                                continue;
-                            }
-                            let (_, sig, new_func) =
-                                self.compile_func_instrs(func, word.span.clone(), true)?;
-                            let mut instrs = new_func.instrs;
-                            let sig = sig.unwrap();
-                            if sig == (1, 0) {
-                                instrs.insert(0, Instr::Prim(Primitive::Dup, field.span));
-                            } else if sig.outputs != 1 {
-                                self.add_error(
-                                    word.span,
-                                    format!(
-                                        "Field initializer must have one output, \
-                                        but its signature is {sig}"
-                                    ),
-                                );
-                            }
-                            field.init = Some((instrs, sig));
-                        }
-                        Word::Number(_, n) if !fields.is_empty() => {
-                            let field = fields.last_mut().unwrap();
-                            if field.type_num.is_some() {
-                                self.add_error(
-                                    word.span,
-                                    "Cannot have multiple types for a struct field",
-                                );
-                                continue;
-                            }
-                            if n.fract() != 0.0 || !(0.0..4.0).contains(&n) {
-                                self.add_error(word.span, format!("Invalid type number {n}"));
-                            } else {
-                                field.type_num = Some(n as u8);
-                            }
-                        }
-                        Word::Primitive(Primitive::Complex) if !fields.is_empty() => {
-                            let field = fields.last_mut().unwrap();
-                            if field.type_num.is_some() {
-                                self.add_error(
-                                    word.span,
-                                    "Cannot have multiple types for a struct field",
-                                );
-                                continue;
-                            }
-                            field.type_num = Some(1);
-                        }
-                        Word::Primitive(Primitive::Box) if !fields.is_empty() => {
-                            let field = fields.last_mut().unwrap();
-                            if field.type_num.is_some() {
-                                self.add_error(
-                                    word.span,
-                                    "Cannot have multiple types for a struct field",
-                                );
-                                continue;
-                            }
-                            field.type_num = Some(3);
-                        }
-                        _ if !invalid_syntax => {
-                            self.add_error(word.span.clone(), "invalid struct syntax");
-                            invalid_syntax = true;
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Make getters
-                for (i, field) in fields.iter_mut().enumerate() {
-                    let name = &field.name;
-                    let id = FunctionId::Named(name.clone());
-                    let span = field.span;
-                    let mut instrs = eco_vec![Instr::push(i), Instr::Prim(Primitive::Pick, span)];
-                    if arr.boxes {
-                        instrs.push(Instr::ImplPrim(ImplPrimitive::UnBox, span));
-                        instrs.push(Instr::Label {
-                            label: name.clone(),
-                            span,
-                            remove: true,
-                        });
-                    }
-                    if let Some(type_num) = field.type_num {
-                        instrs.push(Instr::ValidateType {
-                            index: i + 1,
-                            name: field.name.clone(),
-                            type_num,
-                            span,
-                        });
-                    }
-                    let new_func = NewFunction {
-                        instrs,
-                        flags: FunctionFlags::TRACK_CALLER,
-                    };
-                    let func = self.make_function(id, Signature::new(1, 1), new_func);
-                    let local = LocalName {
-                        index: self.next_global,
-                        public: true,
-                    };
-                    field.global_index = local.index;
-                    self.next_global += 1;
-                    let comment = if let Some(module_name) = &module_name {
-                        format!("Get `{module_name}`'s `{name}`")
-                    } else {
-                        format!("Get `{name}`")
-                    };
-                    self.compile_bind_function(name.clone(), local, func, span, Some(&comment))?;
-                    self.code_meta
-                        .global_references
-                        .insert(field.name_span.clone(), local.index);
-                }
-
-                // Make field names
-                let span = self.add_span(operand.span.clone());
-                let local = LocalName {
-                    index: self.next_global,
-                    public: true,
-                };
-                self.next_global += 1;
-                let comment =
-                    (module_name.as_ref()).map(|name| format!("Names of `{name}`'s fields"));
-                let name = Ident::from("Fields");
-                self.compile_bind_const(
-                    name,
-                    local,
-                    Some(Array::from_iter(fields.iter().map(|f| f.name.as_str())).into()),
-                    span,
-                    comment.as_deref(),
-                );
-
-                // Make constructor
-                let mut instrs = eco_vec![Instr::BeginArray];
-                let constructor_args: usize = fields
-                    .iter()
-                    .map(|f| f.init.as_ref().map(|(_, sig)| sig.args).unwrap_or(1))
-                    .sum();
-                let has_inits = fields.iter().any(|f| f.init.is_some());
-                if arr.boxes
-                    || constructor_args < fields.len()
-                    || fields.iter().any(|f| f.type_num.is_some())
-                {
-                    if has_inits {
-                        for field in &fields {
-                            if let Some((_, sig)) = field.init {
-                                if sig.args > 0 {
-                                    instrs.push(Instr::PushTemp {
-                                        stack: TempStack::Inline,
-                                        count: sig.args,
-                                        span,
-                                    })
-                                }
-                            } else {
-                                instrs.push(Instr::PushTemp {
-                                    stack: TempStack::Inline,
-                                    count: 1,
-                                    span,
-                                });
-                            }
-                        }
-                    } else if fields.len() > 1 {
-                        for _ in 0..fields.len() - 1 {
-                            instrs.push(Instr::PushTemp {
-                                stack: TempStack::Inline,
-                                count: 1,
-                                span,
-                            });
-                        }
-                    }
-                    for (i, field) in fields.iter().rev().enumerate() {
-                        if let Some((init, sig)) = &field.init {
-                            if sig.args > 0 {
-                                instrs.push(Instr::pop_inline(sig.args, span));
-                            }
-                            instrs.extend_from_slice(init);
-                        } else if i > 0 || has_inits {
-                            instrs.push(Instr::pop_inline(1, span));
-                            self.code_meta
-                                .global_references
-                                .insert(field.name_span.clone(), field.global_index);
-                        }
-                        if let Some(type_num) = field.type_num {
-                            instrs.push(Instr::ValidateType {
-                                index: i + 1,
-                                name: field.name.clone(),
-                                type_num,
-                                span,
-                            });
-                        }
-                        if arr.boxes {
-                            instrs.push(Instr::Label {
-                                label: field.name.clone(),
-                                span,
-                                remove: false,
-                            });
-                        }
-                    }
-                } else {
-                    instrs.push(Instr::TouchStack {
-                        count: fields.len(),
-                        span,
-                    });
-                }
-                instrs.push(Instr::EndArray {
-                    boxed: arr.boxes,
-                    span,
-                });
-                let name = Ident::from("New");
-                let id = FunctionId::Named(name.clone());
-                let new_func = NewFunction {
-                    instrs,
-                    flags: FunctionFlags::TRACK_CALLER,
-                };
-                let func = self.make_function(id, Signature::new(constructor_args, 1), new_func);
-                let local = LocalName {
-                    index: self.next_global,
-                    public: true,
-                };
-                self.next_global += 1;
-                let mut comment = module_name
-                    .as_ref()
-                    .map(|name| format!("Create a new `{name}`\n{name} "))
-                    .unwrap_or_default();
-                comment.push('?');
-                for field in &fields {
-                    match field.init.as_ref().map(|(_, sig)| sig.args) {
-                        Some(0) => continue,
-                        Some(1) | None => {
-                            comment.push(' ');
-                            comment.push_str(&field.name);
-                        }
-                        Some(n) => {
-                            for i in 0..n {
-                                comment.push(' ');
-                                comment.push_str(&field.name);
-                                let mut i = i + 1;
-                                while i > 0 {
-                                    comment.push(SUBSCRIPT_NUMS[i % 10]);
-                                    i /= 10;
-                                }
-                            }
-                        }
-                    }
-                }
-                self.compile_bind_function(name, local, func, span, Some(&comment))?;
-
-                // Make args
-                let args_module = self.in_scope(ScopeKind::Temp(None), |comp| {
-                    // Arg getters
-                    for field in &fields {
-                        let name = &field.name;
-                        let id = FunctionId::Named(name.clone());
-                        comp.new_functions.push(NewFunction::default());
-                        comp.push_node(Instr::ImplPrim(ImplPrimitive::UnPop, field.span));
-                        comp.global_index(field.global_index, field.name_span.clone(), true);
-                        let mut new_func = comp.new_functions.pop().unwrap();
-                        new_func.flags |= FunctionFlags::TRACK_CALLER;
-                        let func = comp.make_function(id, Signature::new(0, 1), new_func);
-                        let local = LocalName {
-                            index: comp.next_global,
-                            public: true,
-                        };
-                        comp.next_global += 1;
-                        let comment = if let Some(module_name) = &module_name {
-                            format!("`{module_name}`'s `{name}` argument")
-                        } else {
-                            format!("`{name}` argument")
-                        };
-                        comp.compile_bind_function(
-                            field.name.clone(),
-                            local,
-                            func,
-                            field.span,
-                            Some(&comment),
-                        )?;
-                    }
-                    Ok(())
-                })?;
-                let args_macro_index = self.next_global;
-                self.next_global += 1;
-                let span = &operand.span;
-                self.index_macros.insert(
-                    args_macro_index,
-                    IndexMacro {
-                        words: vec![span.clone().sp(Word::Modified(Box::new(Modified {
-                            modifier: span.clone().sp(Modifier::Primitive(Primitive::Fill)),
-                            operands: vec![
-                                span.clone().sp(Word::Ref(Ref {
-                                    path: Vec::new(),
-                                    name: span.clone().sp("New".into()),
-                                    in_macro_arg: false,
-                                })),
-                                span.clone().sp(Word::Placeholder(PlaceholderOp::Nth(0))),
-                            ],
-                        })))],
-                        names: args_module.names,
-                        sig: None,
-                        hygenic: false,
-                        recursive: false,
-                        flags: FunctionFlags::default(),
-                    },
-                );
-                let local = LocalName {
-                    index: args_macro_index,
-                    public: true,
-                };
-                self.scope.names.insert("Args!".into(), local);
-                self.asm.add_binding_at(
-                    local,
-                    BindingKind::IndexMacro(1),
-                    None,
-                    Some(DocComment::from(format!(
-                        "Take {} argument{} and bind {} to {} field name{}",
-                        fields.len(),
-                        if fields.len() == 1 { "" } else { "s" },
-                        if fields.len() == 1 { "it" } else { "them" },
-                        if let Some(name) = &module_name {
-                            format!("`{name}`'s")
-                        } else {
-                            "the".into()
-                        },
-                        if fields.len() == 1 { "" } else { "s" }
-                    ))),
-                );
-            }
-            _ => self.add_error(operand.span, "struct's argument must be stack array syntax"),
-        }
-        Ok(())
+        Ok(node)
     }
     /// Expand a positional macro
     fn expand_index_macro(
@@ -1720,74 +1052,11 @@ impl Compiler {
         if hygenic {
             set_in_macro_arg(&mut operands);
         }
-        // Collect placeholders
         let mut ops = collect_placeholder(macro_words);
         ops.reverse();
         let span = span.merge(operands.last().unwrap().span.clone());
-        // Initialize the placeholder stack
-        let mut ph_stack: Vec<Sp<Word>> =
-            operands.into_iter().filter(|w| w.value.is_code()).collect();
-        let initial_stack = ph_stack.clone();
-        let mut ignore_remaining = false;
-        let mut replaced = Vec::new();
-        // Run the placeholder operations
-        for op in ops {
-            let span = op.span;
-            let op = op.value;
-            if !matches!(op, PlaceholderOp::Nth(_)) {
-                self.emit_diagnostic(
-                    "Non-positional placeholders have been deprecated. \
-                    Use positional placeholders (^0, ^1, etc.) instead.",
-                    DiagnosticKind::Warning,
-                    span.clone(),
-                );
-            }
-            let mut pop = || {
-                (ph_stack.pop())
-                    .ok_or_else(|| self.fatal_error(span.clone(), "Operand stack is empty"))
-            };
-            match op {
-                PlaceholderOp::Call => replaced.push(pop()?),
-                PlaceholderOp::Dup => {
-                    let a = pop()?;
-                    ph_stack.push(a.clone());
-                    ph_stack.push(a);
-                }
-                PlaceholderOp::Flip => {
-                    let a = pop()?;
-                    let b = pop()?;
-                    ph_stack.push(a);
-                    ph_stack.push(b);
-                }
-                PlaceholderOp::Over => {
-                    let a = pop()?;
-                    let b = pop()?;
-                    ph_stack.push(b.clone());
-                    ph_stack.push(a);
-                    ph_stack.push(b);
-                }
-                PlaceholderOp::Nth(_) => {
-                    ignore_remaining = true;
-                }
-            }
-        }
-        // Warn if there are operands left
-        if !ignore_remaining && !ph_stack.is_empty() {
-            let span = (ph_stack.first().unwrap().span.clone())
-                .merge(ph_stack.last().unwrap().span.clone());
-            self.emit_diagnostic(
-                format!(
-                    "Macro operand stack has {} item{} left",
-                    ph_stack.len(),
-                    if ph_stack.len() == 1 { "" } else { "s" }
-                ),
-                DiagnosticKind::Warning,
-                span,
-            );
-        }
-        // Replace placeholders in the macro's words
-        replaced.reverse();
-        self.replace_placeholders(macro_words, &initial_stack, &replaced, &mut 0)?;
+        let operands: Vec<Sp<Word>> = operands.into_iter().filter(|w| w.value.is_code()).collect();
+        self.replace_placeholders(macro_words, &operands)?;
         // Format and store the expansion for the LSP
         let mut words_to_format = Vec::new();
         for word in &*macro_words {
@@ -1800,19 +1069,9 @@ impl Compiler {
         (self.code_meta.macro_expansions).insert(span, (name, formatted));
         Ok(())
     }
-    fn replace_placeholders(
-        &self,
-        words: &mut Vec<Sp<Word>>,
-        initial: &[Sp<Word>],
-        stack: &[Sp<Word>],
-        next: &mut usize,
-    ) -> UiuaResult {
+    fn replace_placeholders(&self, words: &mut Vec<Sp<Word>>, initial: &[Sp<Word>]) -> UiuaResult {
         let mut error = None;
         recurse_words_mut(words, &mut |word| match &mut word.value {
-            Word::Placeholder(PlaceholderOp::Call) => {
-                *word = stack[*next].clone();
-                *next += 1;
-            }
             Word::Placeholder(PlaceholderOp::Nth(n)) => {
                 if let Some(replacement) = initial.get(*n as usize) {
                     *word = replacement.clone();
@@ -1831,7 +1090,7 @@ impl Compiler {
         words.retain(|word| !matches!(word.value, Word::Placeholder(_)));
         error.map_or(Ok(()), Err)
     }
-    fn quote(&mut self, code: &str, name: &Ident, span: &CodeSpan, call: bool) -> UiuaResult {
+    fn quote(&mut self, code: &str, name: &Ident, span: &CodeSpan) -> UiuaResult<Node> {
         let (items, errors, _) = parse(
             code,
             InputSrc::Macro(span.clone().into()),
@@ -1843,7 +1102,7 @@ impl Compiler {
                 .trace_macro(name.clone(), span.clone()));
         }
 
-        let top_slices_start = self.asm.top_slices.len();
+        let root_node_len = self.asm.root.len();
         // Compile the generated items
         let temp_mode = self.pre_eval_mode.min(PreEvalMode::Line);
         let pre_eval_mod = replace(&mut self.pre_eval_mode, temp_mode);
@@ -1851,49 +1110,33 @@ impl Compiler {
             .items(items, true)
             .map_err(|e| e.trace_macro(name.clone(), span.clone()));
         self.pre_eval_mode = pre_eval_mod;
-        // Extract generated top-level instructions
-        let mut removed_slices = Vec::new();
-        for slice in (self.asm.top_slices)
-            .split_off(top_slices_start)
-            .into_iter()
-            .rev()
-        {
-            removed_slices.push(self.asm.instrs(slice));
-        }
+        // Extract generated root node
+        let node = self.asm.root.split_off(root_node_len);
         res?;
-        let instrs: EcoVec<_> = removed_slices
-            .into_iter()
-            .rev()
-            .flatten()
-            .cloned()
-            .collect();
-        if call {
-            self.push_nodes(instrs);
-        } else {
-            let sig = self.sig_of(&instrs, span)?;
-            let func = self.make_function(FunctionId::Anonymous(span.clone()), sig, instrs.into());
-            self.push_node(Instr::PushFunc(func));
-        }
-        Ok(())
+        Ok(node)
     }
-    fn do_comptime(&mut self, prim: Primitive, operand: Sp<Word>, span: &CodeSpan) -> UiuaResult {
+    fn do_comptime(
+        &mut self,
+        prim: Primitive,
+        operand: Sp<Word>,
+        span: &CodeSpan,
+    ) -> UiuaResult<Node> {
         if self.pre_eval_mode == PreEvalMode::Lsp {
             return self.word(operand);
         }
         let mut comp = self.clone();
-        let (mut new_func, sig) = comp.compile_operand_word(operand)?;
-        if sig.args > 0 {
+        let sn = self.word_sig(operand)?;
+        if sn.sig.args > 0 {
             return Err(self.fatal_error(
                 span.clone(),
                 format!(
                     "{}'s function must have no arguments, but it has {}",
                     prim.format(),
-                    sig.args
+                    sn.sig.args
                 ),
             ));
         }
-        new_func.instrs = optimize_instrs(new_func.instrs, true, &comp.asm);
-        if let Some(index) = instrs_unbound_index(&new_func.instrs, &comp.asm) {
+        if let Some(index) = node_unbound_index(&sn.node, &comp.asm) {
             let name = comp.scope.names.iter().find_map(|(ident, local)| {
                 if local.index == index {
                     Some(ident)
@@ -1908,35 +1151,21 @@ impl Compiler {
             };
             return Err(self.fatal_error(span.clone(), message));
         }
-        let start = comp.asm.instrs.len();
-        let len = new_func.instrs.len();
-        comp.asm.instrs.extend(new_func.instrs);
-        if len > 0 {
-            comp.asm.top_slices = vec![FuncSlice { start, len }];
-        }
         let values = match comp.macro_env.run_asm(&comp.asm) {
             Ok(_) => comp.macro_env.take_stack(),
             Err(e) => {
                 if self.errors.is_empty() {
                     self.add_error(span.clone(), format!("Compile-time evaluation failed: {e}"));
                 }
-                vec![Value::default(); sig.outputs]
+                vec![Value::default(); sn.sig.outputs]
             }
         };
-        if !call {
-            self.new_functions.push(NewFunction::default());
-        }
-        let val_count = sig.outputs;
+        let val_count = sn.sig.outputs;
+        let mut node = Node::empty();
         for value in values.into_iter().rev().take(val_count).rev() {
-            self.push_node(Instr::push(value));
+            node.push(Node::new_push(value));
         }
-        if !call {
-            let new_func = self.new_functions.pop().unwrap();
-            let sig = Signature::new(0, val_count);
-            let func = self.make_function(FunctionId::Anonymous(span.clone()), sig, new_func);
-            self.push_node(Instr::PushFunc(func));
-        }
-        Ok(())
+        Ok(node)
     }
     /// Run a function in a temporary scope with the given names.
     /// Newly created bindings will be added to the current scope after the function is run.
@@ -1964,25 +1193,17 @@ impl Compiler {
     }
 }
 
-fn instrs_unbound_index(instrs: &[Instr], asm: &Assembly) -> Option<usize> {
-    use Instr::*;
-    for instr in instrs {
-        match instr {
-            CallGlobal { index, .. }
-                if asm.bindings.get(*index).map_or(true, |binding| {
-                    matches!(binding.kind, BindingKind::Const(None))
-                }) =>
-            {
-                return Some(*index)
-            }
-            PushFunc(func) => {
-                let index = instrs_unbound_index(func.instrs(asm), asm);
-                if index.is_some() {
-                    return index;
-                }
-            }
-            _ => {}
+fn node_unbound_index(node: &Node, asm: &Assembly) -> Option<usize> {
+    match node {
+        Node::Run(nodes) => nodes.iter().find_map(|node| node_unbound_index(node, asm)),
+        Node::CallGlobal(index, _)
+            if asm.bindings.get(*index).map_or(true, |binding| {
+                matches!(binding.kind, BindingKind::Const(None))
+            }) =>
+        {
+            Some(*index)
         }
+        Node::Call(func) => node_unbound_index(&asm[func], asm),
+        _ => None,
     }
-    None
 }
