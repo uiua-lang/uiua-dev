@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     fmt,
     hash::{Hash, Hasher},
-    mem::{swap, take},
+    mem::{discriminant, swap, take},
     ops::Deref,
     slice::{self, SliceIndex},
 };
@@ -18,12 +18,9 @@ macro_rules! node {
     ($(
         $(#[$attr:meta])*
         $((#[$rep_attr:meta] rep),)?
-        (
-            $num:literal,
-            $name:ident
-            $(($($tup_name:ident($tup_type:ty)),* $(,)?))?
-            $({$($field_name:ident : $field_type:ty),* $(,)?})?
-        )
+        $name:ident
+        $(($($tup_name:ident($tup_type:ty)),* $(,)?))?
+        $({$($field_name:ident : $field_type:ty),* $(,)?})?
     ),* $(,)?) => {
         /// A Uiua execution tree node
         ///
@@ -35,7 +32,7 @@ macro_rules! node {
         pub enum Node {
             $(
                 $(#[$attr])*
-                $name $(($($tup_type),*))? $({$($field_name : $field_type),*})? = $num,
+                $name $(($($tup_type),*))? $({$($field_name : $field_type),*})?,
             )*
         }
 
@@ -100,7 +97,7 @@ macro_rules! node {
                 match self {
                     $(
                         Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
-                            $num.hash(state);
+                            discriminant(self).hash(state);
                             $($(hash_field!($field_name);)*)?
                             $($(hash_field!($tup_name);)*)?
                         }
@@ -149,40 +146,30 @@ macro_rules! node {
 }
 
 node!(
-    (0, Run(nodes(EcoVec<Node>))),
-    (1, Push(val(Value))),
-    (2, Prim(prim(Primitive), span(usize))),
-    (3, ImplPrim(prim(ImplPrimitive), span(usize))),
-    (4, Mod(prim(Primitive), args(Ops), span(usize))),
-    (5, ImplMod(prim(ImplPrimitive), args(Ops), span(usize))),
-    (6, Array { len: usize, inner: Box<Node>, boxed: bool, span: usize }),
-    (7, Call(func(Function), span(usize))),
-    (8, CallGlobal(index(usize), sig(Signature))),
-    (9, CallMacro(index(usize), sig(Signature), args(Ops))),
-    (10, BindGlobal { index: usize, span: usize }),
-    (11, Label(label(EcoString), span(usize))),
-    (12, RemoveLabel(span(usize))),
-    (13, Format(parts(EcoVec<EcoString>), span(usize))),
-    (14, MatchFormatPattern(parts(EcoVec<EcoString>), span(usize))),
-    (15, CustomInverse(cust(Box<CustomInverse>), span(usize))),
-    (16, Switch {
-        branches: Ops,
-        sig: Signature,
-        under_cond: bool,
-        span: usize,
-    }),
-    (17, Unpack { count: usize, unbox: bool, span: usize }),
-    (18, SetOutputComment { i: usize, n: usize }),
-    (19, ValidateType {
-        index: usize,
-        type_num: u8,
-        name: EcoString,
-        span: usize,
-    }),
-    (20, Dynamic(func(DynamicFunction))),
-    (21, PushUnder(n(usize), span(usize))),
-    (22, CopyToUnder(n(usize), span(usize))),
-    (23, PopUnder(n(usize), span(usize))),
+    Run(nodes(EcoVec<Node>)),
+    Push(val(Value)),
+    Prim(prim(Primitive), span(usize)),
+    ImplPrim(prim(ImplPrimitive), span(usize)),
+    Mod(prim(Primitive), args(Ops), span(usize)),
+    ImplMod(prim(ImplPrimitive), args(Ops), span(usize)),
+    Array { len: usize, inner: Box<Node>, boxed: bool, span: usize },
+    Call(func(Function), span(usize)),
+    CallGlobal(index(usize), sig(Signature)),
+    CallMacro(index(usize), sig(Signature), args(Ops)),
+    BindGlobal { index: usize, span: usize },
+    Label(label(EcoString), span(usize)),
+    RemoveLabel(span(usize)),
+    Format(parts(EcoVec<EcoString>), span(usize)),
+    MatchFormatPattern(parts(EcoVec<EcoString>), span(usize)),
+    CustomInverse(cust(Box<CustomInverse>), span(usize)),
+    Switch { branches: Ops, sig: Signature, under_cond: bool, span: usize },
+    Unpack { count: usize, unbox: bool, span: usize },
+    SetOutputComment { i: usize, n: usize },
+    ValidateType { index: usize, type_num: u8, name: EcoString, span: usize },
+    Dynamic(func(DynamicFunction)),
+    PushUnder(n(usize), span(usize)),
+    CopyToUnder(n(usize), span(usize)),
+    PopUnder(n(usize), span(usize)),
 );
 
 /// A node with a signature
