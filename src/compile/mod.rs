@@ -23,7 +23,7 @@ use crate::{
     ast::*,
     check::{nodes_sig, SigCheckError, SigCheckErrorKind},
     format::{format_word, format_words},
-    function::{DynamicFunction, FunctionFlags},
+    function::DynamicFunction,
     ident_modifier_args,
     lex::{CodeSpan, Sp, Span},
     lsp::{CodeMeta, ImportSrc, SigDecl},
@@ -110,7 +110,6 @@ impl Default for Compiler {
 
 #[derive(Default)]
 struct BindingPrelude {
-    flags: FunctionFlags,
     comment: Option<EcoString>,
 }
 
@@ -133,7 +132,6 @@ struct IndexMacro {
     sig: Option<Signature>,
     hygenic: bool,
     recursive: bool,
-    flags: FunctionFlags,
 }
 
 /// A code macro
@@ -577,10 +575,10 @@ code:
                         line.clear();
                     }
                     Word::SemanticComment(SemanticComment::NoInline) => {
-                        prelude.flags |= FunctionFlags::NO_INLINE;
+                        todo!()
                     }
                     Word::SemanticComment(SemanticComment::TrackCaller) => {
-                        prelude.flags |= FunctionFlags::TRACK_CALLER;
+                        todo!()
                     }
                     _ => *prelude = BindingPrelude::default(),
                 }
@@ -642,6 +640,7 @@ code:
                 }
                 Err(e) => self.scope.stack_height = Err(span.sp(e)),
             }
+            self.asm.root.push(line_node)
         }
         Ok(())
     }
@@ -656,14 +655,14 @@ code:
         let comment = comment.map(|text| {
             let comment = DocComment::from(text);
             if let Some(sig) = &comment.sig {
-                if !sig.matches_sig(function.sig()) {
+                if !sig.matches_sig(function.sig) {
                     self.emit_diagnostic(
                         format!(
                             "{}'s comment describes {}, \
                             but its code has signature {}",
                             name,
                             sig.sig_string(),
-                            function.sig(),
+                            function.sig,
                         ),
                         DiagnosticKind::Warning,
                         self.get_span(span).clone().code().unwrap(),
@@ -1039,7 +1038,7 @@ code:
                 }
                 self.code_meta.strands.insert(word.span.clone(), just_spans);
                 // Flatten instrs
-                let mut inner = Node::from_iter(op_nodes.into_iter().map(|sn| sn.node));
+                let inner = Node::from_iter(op_nodes.into_iter().map(|sn| sn.node));
 
                 // Normal strand
 
@@ -1068,7 +1067,7 @@ code:
                         })
                         .collect();
                     match Value::from_row_values(values, &(&word.span, &self.asm.inputs)) {
-                        Ok(val) => inner = Node::new_push(val),
+                        Ok(val) => return Ok(Node::new_push(val)),
                         Err(e) if e.is_fill => {}
                         Err(e) => return Err(e),
                     }
@@ -1158,7 +1157,7 @@ code:
                             self.code_meta
                                 .array_shapes
                                 .insert(word.span.clone(), val.shape().clone());
-                            inner = Node::new_push(val);
+                            return Ok(Node::new_push(val));
                         }
                         Err(e) if e.is_fill => {}
                         Err(e) => return Err(e),

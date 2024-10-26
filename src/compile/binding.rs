@@ -51,7 +51,6 @@ impl Compiler {
                 _ => None,
             })
         });
-        let flags = prelude.flags;
 
         // Handle macro
         let ident_margs = ident_modifier_args(&name);
@@ -185,7 +184,6 @@ impl Compiler {
                 hygenic: true,
                 sig: binding.signature.map(|s| s.value),
                 recursive,
-                flags,
             };
             self.index_macros.insert(local.index, mac);
             return Ok(());

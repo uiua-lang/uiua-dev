@@ -14,7 +14,6 @@ use slotmap::SlotMap;
 
 use crate::{
     compile::{LocalName, Module},
-    function::FunctionFlags,
     is_ident_char, CodeSpan, FunctionId, InputSrc, IntoInputSrc, Node, SigNode, Signature, Span,
     Uiua, UiuaResult, Value,
 };
@@ -43,8 +42,7 @@ pub struct Function {
     inner: FunctionKeyInner,
     pub id: FunctionId,
     hash: u64,
-    sig: Signature,
-    pub flags: FunctionFlags,
+    pub sig: Signature,
 }
 
 impl PartialEq for Function {
@@ -58,12 +56,6 @@ impl Eq for Function {}
 impl Hash for Function {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.hash.hash(state);
-    }
-}
-
-impl Function {
-    pub fn sig(&self) -> Signature {
-        self.sig
     }
 }
 
@@ -81,7 +73,6 @@ impl Assembly {
             id,
             hash,
             sig,
-            flags: FunctionFlags::default(),
         }
     }
     pub(crate) fn add_binding_at(
@@ -415,7 +406,7 @@ impl BindingKind {
     pub fn sig(&self) -> Option<Signature> {
         match self {
             Self::Const(_) => Some(Signature::new(0, 1)),
-            Self::Func(func) => Some(func.sig()),
+            Self::Func(func) => Some(func.sig),
             Self::Import { .. } => None,
             Self::Module(_) => None,
             Self::IndexMacro(_) => None,

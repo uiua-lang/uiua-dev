@@ -939,23 +939,10 @@ impl Primitive {
             | Primitive::Quote
             | Primitive::Sig
             | Primitive::Comptime
-            | Primitive::Dip
-            | Primitive::Gap
-            | Primitive::On
-            | Primitive::With
-            | Primitive::Off
-            | Primitive::By
-            | Primitive::Backward
-            | Primitive::Above
-            | Primitive::Below
             | Primitive::Un
             | Primitive::Anti
             | Primitive::Under
             | Primitive::Obverse
-            | Primitive::Content
-            | Primitive::Both
-            | Primitive::Fork
-            | Primitive::Bracket
             | Primitive::Switch
             | Primitive::Struct => {
                 return Err(env.error(format!(
@@ -985,6 +972,7 @@ impl Primitive {
     /// Run a primitive as a modifier
     pub fn run_mod(&self, ops: Ops, env: &mut Uiua) -> UiuaResult {
         match self {
+            // Looping
             Primitive::Reduce => reduce::reduce(ops, 0, env)?,
             Primitive::Scan => reduce::scan(ops, env)?,
             Primitive::Fold => reduce::fold(ops, env)?,
@@ -992,11 +980,84 @@ impl Primitive {
             Primitive::Rows => zip::rows(ops, false, env)?,
             Primitive::Table => table::table(ops, env)?,
             Primitive::Inventory => zip::rows(ops, true, env)?,
-            Primitive::Tuples => permute::tuples(ops, env)?,
             Primitive::Repeat => loops::repeat(ops, false, env)?,
             Primitive::Do => loops::do_(ops, env)?,
             Primitive::Group => loops::group(ops, env)?,
             Primitive::Partition => loops::partition(ops, env)?,
+            Primitive::Tuples => permute::tuples(ops, env)?,
+
+            // Stack
+            Primitive::Fork => {
+                let [f, g] = get_ops(ops, env)?;
+                let vals = env.copy_n(f.sig.args)?;
+                env.exec(g)?;
+                env.push_all(vals);
+                env.exec(f)?;
+            }
+            Primitive::Bracket => {
+                let [f, g] = get_ops(ops, env)?;
+                let vals = env.take_n(f.sig.args)?;
+                env.exec(g)?;
+                env.push_all(vals);
+                env.exec(f)?;
+            }
+            Primitive::Both => {
+                let [f] = get_ops(ops, env)?;
+                env.exec(f.node.clone())?;
+                let vals = env.take_n(f.sig.outputs)?;
+                env.exec(f.node)?;
+                env.push_all(vals);
+            }
+            Primitive::Dip => {
+                let [f] = get_ops(ops, env)?;
+                let val = env.pop(1)?;
+                env.exec(f)?;
+                env.push(val);
+            }
+            Primitive::On => {
+                let [f] = get_ops(ops, env)?;
+                let val = env.copy_nth(0)?;
+                env.exec(f)?;
+                env.push(val);
+            }
+            Primitive::By => {
+                let [f] = get_ops(ops, env)?;
+                env.dup_values(1, f.sig.args.max(1))?;
+                env.exec(f)?;
+            }
+            Primitive::Above => {
+                let [f] = get_ops(ops, env)?;
+                let vals = env.copy_n(f.sig.args)?;
+                env.exec(f)?;
+                env.push_all(vals);
+            }
+            Primitive::Below => {
+                let [f] = get_ops(ops, env)?;
+                env.dup_values(f.sig.args, f.sig.args)?;
+                env.exec(f)?;
+            }
+            Primitive::Off => {
+                let [f] = get_ops(ops, env)?;
+                let val = env.copy_nth(0)?;
+                env.exec(f.node)?;
+                env.push(val);
+                env.rotate_up(1, f.sig.outputs)?;
+            }
+            Primitive::With => {
+                let [f] = get_ops(ops, env)?;
+                let val = env.copy_nth(f.sig.args.saturating_sub(1))?;
+                env.exec(f)?;
+                env.push(val);
+            }
+            Primitive::Content => {
+                let [f] = get_ops(ops, env)?;
+                for val in env.n_mut(f.sig.args)? {
+                    val.unbox();
+                }
+                env.exec(f)?;
+            }
+
+            // Misc
             Primitive::Fill => fill!(ops, env, with_fill, without_fill_but),
             Primitive::Try => algorithm::try_(ops, env)?,
             Primitive::Case => {

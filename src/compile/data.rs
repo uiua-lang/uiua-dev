@@ -68,7 +68,6 @@ impl Compiler {
             /// (instrs, validation_only)
             validator: Option<(Node, bool, CodeSpan)>,
             init: Option<SigNode>,
-            flags: FunctionFlags,
         }
         let mut fields = Vec::new();
         let module_name = if let ScopeKind::Module(name) = &self.scope.kind {
@@ -96,7 +95,6 @@ impl Compiler {
                         .collect::<String>()
                 });
                 // Collect flags
-                let mut flags = FunctionFlags::default();
                 if let Some(default) = &mut data_field.init {
                     if let Some(word) = default.words.pop() {
                         match word.value {
@@ -106,10 +104,10 @@ impl Compiler {
                                 }
                             }
                             Word::SemanticComment(SemanticComment::NoInline) => {
-                                flags |= FunctionFlags::NO_INLINE;
+                                todo!()
                             }
                             Word::SemanticComment(SemanticComment::TrackCaller) => {
-                                flags |= FunctionFlags::TRACK_CALLER;
+                                todo!()
                             }
                             Word::SemanticComment(sem) => self.semantic_comment(sem, word.span),
                             _ => default.words.push(word),
@@ -176,12 +174,9 @@ impl Compiler {
                         .map(|(va_node, ..)| SigNode::new(va_node.clone(), Signature::new(1, 1)))
                 };
                 if let Some(mut comments) = data_field.comments {
-                    for (sem, flag) in [
-                        (SemanticComment::NoInline, FunctionFlags::NO_INLINE),
-                        (SemanticComment::TrackCaller, FunctionFlags::TRACK_CALLER),
-                    ] {
+                    for sem in [SemanticComment::NoInline, SemanticComment::TrackCaller] {
                         if comments.semantic.remove(&sem).is_some() {
-                            flags |= flag;
+                            todo!()
                         }
                     }
                     for (sem, span) in comments.semantic {
@@ -193,7 +188,6 @@ impl Compiler {
                     name_span: data_field.name.span,
                     global_index: 0,
                     comment,
-                    flags,
                     span,
                     validator,
                     init,
@@ -297,7 +291,6 @@ impl Compiler {
         );
 
         // Make constructor
-        let mut flags = FunctionFlags::default();
         let constructor_args: usize = fields
             .iter()
             .map(|f| f.init.as_ref().map(|sn| sn.sig.args).unwrap_or(1))
@@ -305,7 +298,7 @@ impl Compiler {
         let mut node = if has_fields {
             let mut args = EcoVec::new();
             for field in &fields {
-                flags |= field.flags;
+                // TODO: Handle field flags
                 let mut arg = if let Some(sn) = &field.init {
                     let mut arg = sn.clone();
                     if !boxed {
@@ -431,7 +424,7 @@ impl Compiler {
                     eco_vec![
                         SigNode::new(
                             Node::Call(constructor_func.clone(), span),
-                            constructor_func.sig()
+                            constructor_func.sig
                         ),
                         filled
                     ],

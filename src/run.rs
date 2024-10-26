@@ -97,7 +97,7 @@ impl AsMut<Assembly> for Uiua {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct StackFrame {
     pub(crate) sig: Signature,
     pub(crate) id: Option<FunctionId>,
@@ -200,11 +200,8 @@ impl Default for Runtime {
             stack: Vec::new(),
             temp_stacks: [Vec::new(), Vec::new()],
             call_stack: vec![StackFrame {
-                sig: Signature::new(0, 0),
-                id: None,
-                track_caller: false,
-                call_span: 0,
-                spans: Vec::new(),
+                id: Some(FunctionId::Main),
+                ..Default::default()
             }],
             recur_stack: Vec::new(),
             fill_stack: Vec::new(),
@@ -457,7 +454,7 @@ at {}",
         //         println!();
         //     }
         // }
-        // println!("\n    {:?}", instr);
+        // println!("\n    {node:?}");
 
         if self.rt.time_instrs {
             formatted_node = format!("{node:?}");
@@ -669,19 +666,8 @@ at {}",
                 );
             self.rt.last_time = self.rt.backend.now();
         }
-        if let Err(mut err) = res {
-            // Trace errors
-            let frame = self.rt.call_stack.pop().unwrap();
-            let span = self.asm.spans[frame.call_span].clone();
-            if frame.track_caller {
-                err.track_caller(span);
-            } else {
-                err.trace.push(TraceFrame { id: frame.id, span });
-            }
-            return Err(err);
-        }
         self.respect_execution_limit()?;
-        Ok(())
+        res
     }
     /// Timeout if an execution limit is set and has been exceeded
     pub fn respect_execution_limit(&self) -> UiuaResult {
@@ -730,11 +716,6 @@ at {}",
         self.call_with_span(f, call_span)
     }
     /// Call and truncate the stack to before the args were pushed if the call fails
-    pub(crate) fn call_clean_stack(&mut self, f: &Function) -> UiuaResult {
-        let sn = self.asm.sig_node(f);
-        self.exec_clean_stack(sn)
-    }
-    /// Call and truncate the stack to before the args were pushed if the call fails
     pub(crate) fn exec_clean_stack(&mut self, sn: SigNode) -> UiuaResult {
         let sig = sn.sig;
         let temp_sigs = sn
@@ -754,11 +735,6 @@ at {}",
             }
         }
         res
-    }
-    /// Call and maintaint the stack delta if the call fails
-    pub(crate) fn call_maintain_sig(&mut self, f: &Function) -> UiuaResult {
-        let sn = self.asm.sig_node(f);
-        self.exec_maintain_sig(sn)
     }
     /// Call and maintain the stack delta if the call fails
     pub(crate) fn exec_maintain_sig(&mut self, sn: SigNode) -> UiuaResult {
@@ -802,27 +778,26 @@ at {}",
         res
     }
     fn call_with_span(&mut self, f: &Function, call_span: usize) -> UiuaResult {
-        self.exec_with_frame_span(
-            self.asm[f].clone(),
-            StackFrame {
-                sig: f.sig(),
-                id: Some(f.id.clone()),
-                track_caller: f.flags.track_caller(),
+        self.without_fill(|env| {
+            env.exec_with_frame_span(
+                env.asm[f].clone(),
+                StackFrame {
+                    sig: f.sig,
+                    id: Some(f.id.clone()),
+                    call_span,
+                    ..Default::default()
+                },
                 call_span,
-                spans: Vec::new(),
-            },
-            call_span,
-        )
+            )
+        })
     }
     fn exec_with_span(&mut self, sn: SigNode, call_span: usize) -> UiuaResult {
         self.exec_with_frame_span(
             sn.node,
             StackFrame {
                 sig: sn.sig,
-                id: None,
-                track_caller: false,
                 call_span,
-                spans: Vec::new(),
+                ..Default::default()
             },
             call_span,
         )
@@ -835,7 +810,19 @@ at {}",
     ) -> UiuaResult {
         let start_height = self.rt.stack.len();
         let sig = frame.sig;
-        self.exec(node)?;
+        self.rt.call_stack.push(frame);
+        let res = self.exec(node);
+        let frame = self.rt.call_stack.pop().unwrap();
+        if let Err(mut err) = res {
+            // Trace errors
+            let span = self.asm.spans[frame.call_span].clone();
+            if frame.track_caller {
+                err.track_caller(span);
+            } else {
+                err.trace.push(TraceFrame { id: frame.id, span });
+            }
+            return Err(err);
+        }
         let height_diff = self.rt.stack.len() as isize - start_height as isize;
         let sig_diff = sig.outputs as isize - sig.args as isize;
         if height_diff != sig_diff {
@@ -945,14 +932,8 @@ at {}",
         self.pop_convert(Value::as_string)
     }
     /// Simulates popping a value and immediately pushing it back
-    pub(crate) fn touch_stack(&mut self, n: usize) -> UiuaResult {
-        if self.rt.stack.len() < n {
-            return Err(self.error(format!(
-                "Stack was empty evaluating argument {}",
-                self.rt.stack.len() + 1
-            )));
-        }
-        Ok(())
+    pub(crate) fn touch_stack(&self, n: usize) -> UiuaResult {
+        self.require_height(n)
     }
     pub(crate) fn make_array(&mut self, inner: SigNode, boxed: bool) -> UiuaResult {
         self.exec(inner.node)?;
@@ -980,6 +961,10 @@ at {}",
     pub(crate) fn push_temp(&mut self, temp: TempStack, val: Value) {
         self.rt.temp_stacks[temp as usize].push(val);
     }
+    /// Push several values onto the stack
+    pub fn push_all<V: Into<Value>>(&mut self, vals: impl IntoIterator<Item = V>) {
+        self.rt.stack.extend(vals.into_iter().map(Into::into));
+    }
     /// Take the entire stack
     pub fn take_stack(&mut self) -> Vec<Value> {
         for stack in &mut self.rt.temp_stacks {
@@ -992,6 +977,63 @@ at {}",
         let temp_stacks = take(&mut self.rt.temp_stacks);
         let stack = take(&mut self.rt.stack);
         (stack, temp_stacks)
+    }
+    /// Take some values from the stack
+    pub fn take_n(&mut self, n: usize) -> UiuaResult<Vec<Value>> {
+        self.require_height(n)?;
+        Ok(self.rt.stack.split_off(n))
+    }
+    /// Copy some values from the stack
+    pub fn copy_n(&self, n: usize) -> UiuaResult<Vec<Value>> {
+        self.require_height(n)?;
+        Ok(self.rt.stack[self.rt.stack.len() - n..].to_vec())
+    }
+    /// Get a value some amount from the top of the stack
+    pub fn copy_nth(&self, n: usize) -> UiuaResult<Value> {
+        self.require_height(n + 1)?;
+        Ok(self.rt.stack[self.rt.stack.len() - n - 1].clone())
+    }
+    /// Duplicate some values down the stack
+    ///
+    /// `depth` must be greater than or equal to `n`
+    pub fn dup_values(&mut self, n: usize, depth: usize) -> UiuaResult {
+        debug_assert!(depth >= n, "Cannot dup {n} values at depth {depth}");
+        self.require_height(depth)?;
+        let start = self.rt.stack.len() - depth;
+        for i in 0..n {
+            self.rt.stack.push(self.rt.stack[start + i].clone());
+        }
+        self.rt.stack.rotate_right(n);
+        Ok(())
+    }
+    /// Rotate the stack up at some depth
+    pub fn rotate_up(&mut self, n: usize, depth: usize) -> UiuaResult {
+        self.require_height(depth)?;
+        let start = self.rt.stack.len() - depth;
+        self.rt.stack[start..].rotate_right(n);
+        Ok(())
+    }
+    /// Rotate the stack down at some depth
+    pub fn rotate_down(&mut self, n: usize, depth: usize) -> UiuaResult {
+        self.require_height(depth)?;
+        let start = self.rt.stack.len() - depth;
+        self.rt.stack[start..].rotate_left(n);
+        Ok(())
+    }
+    /// Access n stack values mutably
+    pub fn n_mut(&mut self, n: usize) -> UiuaResult<&mut [Value]> {
+        self.require_height(n)?;
+        let start = self.rt.stack.len() - n;
+        Ok(&mut self.rt.stack[start..])
+    }
+    fn require_height(&self, n: usize) -> UiuaResult {
+        if self.rt.stack.len() < n {
+            return Err(self.error(format!(
+                "Stack was empty when getting argument {}",
+                self.rt.stack.len() + 1
+            )));
+        }
+        Ok(())
     }
     /// Get a reference to the stack
     pub fn stack(&self) -> &[Value] {
@@ -1036,19 +1078,6 @@ at {}",
             )));
         }
         Ok(self.rt.stack.iter().rev().take(n).rev().cloned().collect())
-    }
-    pub(crate) fn dup_n(&mut self, n: usize) -> UiuaResult {
-        if self.rt.stack.len() < n {
-            return Err(self.error(format!(
-                "Stack was empty evaluating argument {}",
-                n - self.rt.stack.len()
-            )));
-        }
-        let start = self.rt.stack.len() - n;
-        for i in 0..n {
-            self.push(self.rt.stack[start + i].clone());
-        }
-        Ok(())
     }
     pub(crate) fn monadic_ref<V: Into<Value>>(&mut self, f: fn(&Value) -> V) -> UiuaResult {
         let value = self.pop(1)?;
