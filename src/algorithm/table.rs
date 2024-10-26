@@ -215,10 +215,10 @@ pub fn table_list(f: SigNode, xs: Value, ys: Value, env: &mut Uiua) -> UiuaResul
             }
             Primitive::Div if !flipped => env.push(fast_table_list(xs, ys, div::byte_byte, env)?),
             #[cfg(feature = "opt")]
-            Primitive::Mod if flipped => {
+            Primitive::Modulus if flipped => {
                 env.push(fast_table_list(xs, ys, flip(modulus::byte_byte), env)?)
             }
-            Primitive::Mod if !flipped => {
+            Primitive::Modulus if !flipped => {
                 env.push(fast_table_list(xs, ys, modulus::byte_byte, env)?)
             }
             #[cfg(feature = "opt")]
@@ -355,11 +355,11 @@ macro_rules! table_math {
                 Primitive::Div if flipped => env.push(fast_table_list(xs, ys, flip(div::$f), env)?),
                 Primitive::Div if !flipped => env.push(fast_table_list(xs, ys, div::$f, env)?),
                 #[cfg(feature = "opt")]
-                Primitive::Mod if flipped => {
+                Primitive::Modulus if flipped => {
                     env.push(fast_table_list(xs, ys, flip(modulus::$f), env)?)
                 }
                 $(#[$attr])*
-                Primitive::Mod if !flipped => env.push(fast_table_list(xs, ys, modulus::$f, env)?),
+                Primitive::Modulus if !flipped => env.push(fast_table_list(xs, ys, modulus::$f, env)?),
                 #[cfg(feature = "opt")]
                 Primitive::Atan if flipped => {
                     env.push(fast_table_list(xs, ys, flip(atan2::$f), env)?)
@@ -500,7 +500,7 @@ fn reduce_table_bytes(
                 Primitive::Sub => env.push(frtl($xs, $ys, $ff, sub::$arith, $iden, fill)),
                 Primitive::Mul => env.push(frtl($xs, $ys, $ff, mul::$arith, $iden, fill)),
                 Primitive::Div => env.push(frtl($xs, $ys, $ff, div::$arith, $iden, fill)),
-                Primitive::Mod => env.push(frtl($xs, $ys, $ff, modulus::$arith, $iden, fill)),
+                Primitive::Modulus => env.push(frtl($xs, $ys, $ff, modulus::$arith, $iden, fill)),
                 #[cfg(feature = "opt")]
                 Primitive::Atan => env.push(frtl($xs, $ys, $ff, atan2::$arith, $iden, fill)),
                 Primitive::Eq => env.push(frtl($xs, $ys, $ff, to(is_eq::$cmp), $iden, fill)),
@@ -693,7 +693,7 @@ macro_rules! reduce_table_math {
                         Primitive::Sub => env.push(frtl(xs, ys, $ff, sub::$f, $iden.into(), fill)),
                         Primitive::Mul => env.push(frtl(xs, ys, $ff, mul::$f, $iden.into(), fill)),
                         Primitive::Div => env.push(frtl(xs, ys, $ff, div::$f, $iden.into(), fill)),
-                        Primitive::Mod => {
+                        Primitive::Modulus => {
                             env.push(frtl(xs, ys, $ff, modulus::$f, $iden.into(), fill))
                         }
                         #[cfg(feature = "opt")]

@@ -1,9 +1,16 @@
-use std::{cell::RefCell, collections::HashMap, error::Error, fmt};
+mod un;
+mod under;
+
+use std::{boxed, cell::RefCell, collections::HashMap, error::Error, fmt};
 
 use crate::{
     assembly::{Assembly, Function},
-    check::SigCheckError,
-    FunctionId, Node, Primitive, Signature, Uiua, UiuaResult,
+    check::{nodes_clean_sig, SigCheckError},
+    FunctionId,
+    ImplPrimitive::{self, *},
+    Node::{self, *},
+    Primitive::{self, *},
+    Purity, Signature, SysOp, Uiua, UiuaResult,
 };
 
 pub(crate) const DEBUG: bool = false;
@@ -15,26 +22,125 @@ macro_rules! dbgln {
         }
     }
 }
+use dbgln;
 
-impl Node {
-    pub fn un_inverse(&self, asm: &Assembly) -> InversionResult<Node> {
-        todo!("new un inversion")
-    }
-    pub fn anti_inverse(&self, asm: &Assembly) -> InversionResult<Node> {
-        todo!("new anti inversion")
-    }
-    pub fn under_inverse(&self, g_sig: Signature, asm: &Assembly) -> InversionResult<(Node, Node)> {
-        todo!("new under inversion")
+trait AsNode: fmt::Debug + Sync {
+    fn as_node(&self, span: usize) -> Node;
+}
+
+impl AsNode for Node {
+    fn as_node(&self, _: usize) -> Node {
+        self.clone()
     }
 }
+
+impl AsNode for Primitive {
+    fn as_node(&self, span: usize) -> Node {
+        Node::Prim(*self, span)
+    }
+}
+
+impl AsNode for ImplPrimitive {
+    fn as_node(&self, span: usize) -> Node {
+        Node::ImplPrim(*self, span)
+    }
+}
+
+impl AsNode for i32 {
+    fn as_node(&self, _: usize) -> Node {
+        Node::new_push(*self)
+    }
+}
+
+impl AsNode for crate::Complex {
+    fn as_node(&self, _: usize) -> Node {
+        Node::new_push(*self)
+    }
+}
+
+macro_rules! as_node {
+    ($($T:ident),*) => {
+        impl<$($T),*> AsNode for ($($T),*)
+        where
+            $($T: AsNode),*
+        {
+            #[allow(non_snake_case)]
+            fn as_node(&self, span: usize) -> Node {
+                let ($($T),*) = self;
+                Node::from_iter([$($T.as_node(span)),*])
+            }
+        }
+    };
+}
+as_node!(A, B);
+as_node!(A, B, C);
+as_node!(A, B, C, D);
+as_node!(A, B, C, D, E);
+as_node!(A, B, C, D, E, F, G, H, I);
+
+trait SpanFromNodes: Sized + fmt::Debug + Sync {
+    fn span_from_nodes<'a>(
+        &self,
+        nodes: &'a [Node],
+        asm: &Assembly,
+    ) -> Option<(&'a [Node], Option<usize>)>;
+}
+
+impl SpanFromNodes for Primitive {
+    fn span_from_nodes<'a>(
+        &self,
+        nodes: &'a [Node],
+        _: &Assembly,
+    ) -> Option<(&'a [Node], Option<usize>)> {
+        match nodes {
+            [Node::Prim(prim, span), rest @ ..] if self == prim => Some((rest, Some(*span))),
+            _ => None,
+        }
+    }
+}
+
+impl SpanFromNodes for ImplPrimitive {
+    fn span_from_nodes<'a>(
+        &self,
+        nodes: &'a [Node],
+        _: &Assembly,
+    ) -> Option<(&'a [Node], Option<usize>)> {
+        match nodes {
+            [Node::ImplPrim(prim, span), rest @ ..] if self == prim => Some((rest, Some(*span))),
+            _ => None,
+        }
+    }
+}
+
+macro_rules! span_from_nodes {
+    ($($T:ident),*) => {
+        impl<$($T),*> SpanFromNodes for ($($T),*)
+        where
+            $($T: SpanFromNodes),*
+        {
+            #[allow(non_snake_case)]
+            fn span_from_nodes<'a>(&self, mut nodes: &'a [Node], asm: &Assembly) -> Option<(&'a [Node], Option<usize>)> {
+                let ($($T),*) = self;
+                let mut span = None;
+                $(
+                    let (new, sp) = $T.span_from_nodes(nodes, asm)?;
+                    span = span.or(sp);
+                    nodes = new;
+                )*
+                Some((nodes, span))
+            }
+        }
+    };
+}
+span_from_nodes!(A, B);
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum InversionError {
     #[default]
     Generic,
-    TooManyInstructions,
+    TooManyNodeuctions,
     Signature(SigCheckError),
-    InnerFunc(Vec<FunctionId>, Box<Self>),
+    InnerFunc(Vec<FunctionId>, boxed::Box<Self>),
     AsymmetricUnderSig(Signature),
     ComplexInvertedUnder,
     UnderExperimental,
@@ -46,7 +152,7 @@ impl fmt::Display for InversionError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             InversionError::Generic => write!(f, "No inverse found"),
-            InversionError::TooManyInstructions => {
+            InversionError::TooManyNodeuctions => {
                 write!(f, "Function has too many instructions to invert")
             }
             InversionError::Signature(e) => write!(f, "Cannot invert invalid signature: {e}"),
@@ -81,13 +187,13 @@ impl fmt::Display for InversionError {
 }
 
 impl InversionError {
-    fn func(self, f: &Function) -> Self {
+    fn _func(self, f: &Function) -> Self {
         match self {
             InversionError::InnerFunc(mut ids, inner) => {
                 ids.push(f.id.clone());
                 InversionError::InnerFunc(ids, inner)
             }
-            e => InversionError::InnerFunc(vec![f.id.clone()], Box::new(e)),
+            e => InversionError::InnerFunc(vec![f.id.clone()], e.into()),
         }
     }
 }

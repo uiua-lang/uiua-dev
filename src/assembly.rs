@@ -37,12 +37,20 @@ slotmap::new_key_type! {
     struct FunctionKeyInner;
 }
 
+/// A Uiua function
+///
+/// This does not actually contain the function's code.
+/// It is a lightweight handle that can be used to look up the function's code in an [`Assembly`].
+///
+/// It also contains the function's [`FunctionId`] and [`Signature`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Function {
-    inner: FunctionKeyInner,
+    /// The function's id
     pub id: FunctionId,
-    hash: u64,
+    /// The function's signature
     pub sig: Signature,
+    inner: FunctionKeyInner,
+    hash: u64,
 }
 
 impl PartialEq for Function {
@@ -60,9 +68,11 @@ impl Hash for Function {
 }
 
 impl Assembly {
+    /// Get the [`SigNode`] for a function
     pub fn sig_node(&self, f: &Function) -> SigNode {
         SigNode::new(self[f].clone(), f.sig)
     }
+    /// Add a function to the assembly
     pub fn add_function(&mut self, id: FunctionId, sig: Signature, root: Node) -> Function {
         let mut hasher = DefaultHasher::new();
         root.hash(&mut hasher);

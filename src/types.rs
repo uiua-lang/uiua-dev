@@ -106,7 +106,7 @@ where
     }
     let mut rt = TypeRt {
         stack,
-        temp_stacks: Default::default(),
+        _temp_stacks: Default::default(),
         array_stack: Vec::new(),
     };
     match rt.node(&f.node, &env.asm) {
@@ -132,7 +132,7 @@ where
 
 struct TypeRt {
     stack: Vec<Type>,
-    temp_stacks: [Vec<Type>; TempStack::CARDINALITY],
+    _temp_stacks: [Vec<Type>; TempStack::CARDINALITY],
     array_stack: Vec<usize>,
 }
 
@@ -173,7 +173,7 @@ impl TypeRt {
                     let x = self.pop()?;
                     self.stack.push(x);
                 }
-                P::Add | P::Sub | P::Mul | P::Div | P::Pow | P::Mod | P::Log => {
+                P::Add | P::Sub | P::Mul | P::Div | P::Pow | P::Modulus | P::Log => {
                     let a = self.pop()?;
                     let b = self.pop()?;
                     let shape = if a.shape.len() > b.shape.len() {

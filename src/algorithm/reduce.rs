@@ -106,7 +106,7 @@ pub(crate) fn reduce_impl(f: SigNode, depth: usize, env: &mut Uiua) -> UiuaResul
                     fast_reduce_different(bytes, 1.0, fill, depth, div::num_num, div::num_byte)
                         .into()
                 }
-                Primitive::Mod if flipped => fast_reduce_different(
+                Primitive::Modulus if flipped => fast_reduce_different(
                     bytes,
                     1.0,
                     fill,
@@ -115,7 +115,7 @@ pub(crate) fn reduce_impl(f: SigNode, depth: usize, env: &mut Uiua) -> UiuaResul
                     flip(modulus::byte_num),
                 )
                 .into(),
-                Primitive::Mod => fast_reduce_different(
+                Primitive::Modulus => fast_reduce_different(
                     bytes,
                     1.0,
                     fill,
@@ -238,7 +238,7 @@ fn reduce_identity(node: &Node, mut val: Value) -> Option<Value> {
         }
         _ => match last {
             Node::Prim(Add | Sub, _) if init_sig() => Array::new(shape, eco_vec![0u8; len]).into(),
-            Node::Prim(Mul | Div | Mod, _) if init_sig() => {
+            Node::Prim(Mul | Div | Modulus, _) if init_sig() => {
                 Array::new(shape, eco_vec![1u8; len]).into()
             }
             Node::Prim(Max, _) if init_sig() => {
@@ -324,11 +324,11 @@ macro_rules! reduce_math {
                 #[cfg(feature = "opt")]
                 Primitive::Div => fast_reduce(xs, 1.0.into(), fill, depth, div::$f),
                 #[cfg(feature = "opt")]
-                Primitive::Mod if _flipped => {
+                Primitive::Modulus if _flipped => {
                     fast_reduce(xs, 1.0.into(), fill, depth, flip(modulus::$f))
                 }
                 #[cfg(feature = "opt")]
-                Primitive::Mod => fast_reduce(xs, 1.0.into(), fill, depth, modulus::$f),
+                Primitive::Modulus => fast_reduce(xs, 1.0.into(), fill, depth, modulus::$f),
                 #[cfg(feature = "opt")]
                 Primitive::Atan if _flipped => {
                     fast_reduce(xs, 0.0.into(), fill, depth, flip(atan2::$f))
@@ -671,8 +671,8 @@ pub fn scan(ops: Ops, env: &mut Uiua) -> UiuaResult {
                 Primitive::Mul => fast_scan(nums, mul::num_num),
                 Primitive::Div if flipped => fast_scan(nums, flip(div::num_num)),
                 Primitive::Div => fast_scan(nums, div::num_num),
-                Primitive::Mod if flipped => fast_scan(nums, flip(modulus::num_num)),
-                Primitive::Mod => fast_scan(nums, modulus::num_num),
+                Primitive::Modulus if flipped => fast_scan(nums, flip(modulus::num_num)),
+                Primitive::Modulus => fast_scan(nums, modulus::num_num),
                 Primitive::Atan if flipped => fast_scan(nums, flip(atan2::num_num)),
                 Primitive::Atan => fast_scan(nums, atan2::num_num),
                 Primitive::Max => fast_scan(nums, max::num_num),
@@ -696,10 +696,10 @@ pub fn scan(ops: Ops, env: &mut Uiua) -> UiuaResult {
                     env.push(fast_scan::<f64>(bytes.convert(), flip(div::num_num)))
                 }
                 Primitive::Div => env.push(fast_scan::<f64>(bytes.convert(), div::num_num)),
-                Primitive::Mod if flipped => {
+                Primitive::Modulus if flipped => {
                     env.push(fast_scan::<f64>(bytes.convert(), flip(modulus::num_num)))
                 }
-                Primitive::Mod => env.push(fast_scan::<f64>(bytes.convert(), modulus::num_num)),
+                Primitive::Modulus => env.push(fast_scan::<f64>(bytes.convert(), modulus::num_num)),
                 Primitive::Atan if flipped => {
                     env.push(fast_scan::<f64>(bytes.convert(), flip(atan2::num_num)))
                 }
@@ -1031,8 +1031,8 @@ pub fn adjacent(ops: Ops, env: &mut Uiua) -> UiuaResult {
             Primitive::Mul => fast_adjacent(nums, n, env, mul::num_num),
             Primitive::Div if flipped => fast_adjacent(nums, n, env, flip(div::num_num)),
             Primitive::Div => fast_adjacent(nums, n, env, div::num_num),
-            Primitive::Mod if flipped => fast_adjacent(nums, n, env, flip(modulus::num_num)),
-            Primitive::Mod => fast_adjacent(nums, n, env, modulus::num_num),
+            Primitive::Modulus if flipped => fast_adjacent(nums, n, env, flip(modulus::num_num)),
+            Primitive::Modulus => fast_adjacent(nums, n, env, modulus::num_num),
             Primitive::Atan if flipped => fast_adjacent(nums, n, env, flip(atan2::num_num)),
             Primitive::Atan => fast_adjacent(nums, n, env, atan2::num_num),
             Primitive::Max => fast_adjacent(nums, n, env, max::num_num),
@@ -1050,10 +1050,10 @@ pub fn adjacent(ops: Ops, env: &mut Uiua) -> UiuaResult {
                 fast_adjacent(bytes.convert(), n, env, flip(div::num_num))?.into()
             }
             Primitive::Div => fast_adjacent(bytes.convert(), n, env, div::num_num)?.into(),
-            Primitive::Mod if flipped => {
+            Primitive::Modulus if flipped => {
                 fast_adjacent(bytes.convert(), n, env, flip(modulus::num_num))?.into()
             }
-            Primitive::Mod => fast_adjacent(bytes.convert(), n, env, modulus::num_num)?.into(),
+            Primitive::Modulus => fast_adjacent(bytes.convert(), n, env, modulus::num_num)?.into(),
             Primitive::Atan if flipped => {
                 fast_adjacent(bytes.convert(), n, env, flip(atan2::num_num))?.into()
             }

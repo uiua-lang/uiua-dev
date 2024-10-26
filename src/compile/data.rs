@@ -319,12 +319,9 @@ impl Compiler {
                 }
                 args.push(arg);
             }
-            let inner = SigNode::new(
-                Node::Mod(Primitive::Bracket, args, span),
-                Signature::new(constructor_args, fields.len()),
-            );
             Node::Array {
-                inner: inner.into(),
+                len: fields.len(),
+                inner: Node::Mod(Primitive::Bracket, args, span).into(),
                 boxed,
                 span,
             }

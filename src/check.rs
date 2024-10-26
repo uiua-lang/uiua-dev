@@ -19,6 +19,11 @@ impl Node {
     pub fn sig(&self) -> Result<Signature, SigCheckError> {
         VirtualEnv::from_node(self).map(|env| env.sig())
     }
+    /// Convert this node to a [`SigNode`]
+    pub fn sig_node(self) -> Result<SigNode, SigCheckError> {
+        let sig = self.sig()?;
+        Ok(SigNode::new(self.clone(), sig))
+    }
     /// Get the signature of this node if there is no net temp stack change
     pub fn clean_sig(&self) -> Option<Signature> {
         nodes_clean_sig(slice::from_ref(self))
@@ -242,11 +247,11 @@ impl VirtualEnv {
         match node {
             Node::Run(nodes) => nodes.iter().try_for_each(|node| self.node(node))?,
             Node::Push(val) => self.push(BasicValue::from_val(val)),
-            Node::Array { inner, .. } => {
+            Node::Array { len, inner, .. } => {
                 self.array_depth += 1;
-                self.node(&inner.node)?;
+                self.node(inner)?;
                 self.array_depth -= 1;
-                let bottom = self.height - inner.sig.args as i32;
+                let bottom = self.height - *len as i32;
                 let stack_bottom = (bottom.max(0) as usize).min(self.stack.len());
                 let mut items: Vec<_> = (self.stack.drain(stack_bottom..))
                     .chain(repeat(BasicValue::Other).take((-bottom).max(0) as usize))

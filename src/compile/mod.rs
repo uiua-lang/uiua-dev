@@ -254,6 +254,7 @@ const MAX_PRE_EVAL_ELEMS: usize = 1000;
 const MAX_PRE_EVAL_RANK: usize = 4;
 
 impl PreEvalMode {
+    #[allow(unused)]
     fn matches_node(&self, node: &Node, asm: &Assembly) -> bool {
         if node.iter().any(|node| {
             matches!(
@@ -1074,7 +1075,8 @@ code:
                 }
                 let sig = self.sig_of(&inner, &word.span)?;
                 Node::Array {
-                    inner: SigNode::new(inner, sig).into(),
+                    len: sig.outputs,
+                    inner: inner.into(),
                     boxed: false,
                     span,
                 }
@@ -1166,7 +1168,8 @@ code:
                 // Normal case
                 let sig = self.sig_of(&inner, &word.span)?;
                 Node::Array {
-                    inner: SigNode::new(inner, sig).into(),
+                    len: sig.outputs,
+                    inner: inner.into(),
                     boxed: arr.boxes,
                     span,
                 }
@@ -1856,13 +1859,15 @@ code:
                     1 => self.primitive(Primitive::Fix, span),
                     2 => self.primitive(Primitive::Couple, span),
                     n => Node::Array {
-                        inner: SigNode::new(Node::empty(), Signature::new(n, n)).into(),
+                        len: n,
+                        inner: Node::empty().into(),
                         boxed: false,
                         span: self.add_span(span.clone()),
                     },
                 },
                 Primitive::Box => Node::Array {
-                    inner: SigNode::new(Node::empty(), Signature::new(n, n)).into(),
+                    len: n,
+                    inner: Node::empty().into(),
                     boxed: true,
                     span: self.add_span(span.clone()),
                 },

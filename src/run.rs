@@ -537,9 +537,12 @@ at {}",
                 }
                 Ok(())
             }
-            Node::Array { inner, boxed, span } => {
-                self.with_span(span, |env| env.make_array(*inner, boxed))
-            }
+            Node::Array {
+                len,
+                inner,
+                boxed,
+                span,
+            } => self.with_span(span, |env| env.make_array(len, *inner, boxed)),
             Node::Call(f, span) => self.call_with_span(&f, span),
             Node::CustomInverse(cust, span) => self.exec_with_span(cust.normal, span),
             Node::Switch {
@@ -935,9 +938,9 @@ at {}",
     pub(crate) fn touch_stack(&self, n: usize) -> UiuaResult {
         self.require_height(n)
     }
-    pub(crate) fn make_array(&mut self, inner: SigNode, boxed: bool) -> UiuaResult {
-        self.exec(inner.node)?;
-        let values = self.rt.stack.drain(inner.sig.outputs..).rev();
+    pub(crate) fn make_array(&mut self, len: usize, inner: Node, boxed: bool) -> UiuaResult {
+        self.exec(inner)?;
+        let values = self.rt.stack.drain(len..).rev();
         let values: Vec<Value> = if boxed {
             values.map(Boxed).map(Value::from).collect()
         } else {
