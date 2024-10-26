@@ -192,7 +192,12 @@ trait UnderPattern: fmt::Debug + Sync {
 }
 
 macro_rules! under {
-    ($(#[$attr:meta])* $($doc:literal)? $name:ident, $input:ident, $g_sig:tt, $asm:tt, $body:expr) => {
+    // Optional parens
+    ($(#[$attr:meta])* $($doc:literal,)? ($($tt:tt)*), $body:expr) => {
+        under!($(#[$attr])* $($doc,)? $($tt)*, $body);
+    };
+    // Main impl
+    ($(#[$attr:meta])* $($doc:literal,)? $name:ident, $input:ident, $g_sig:tt, $asm:tt, $body:expr) => {
         #[derive(Debug)]
         $(#[$attr])*
         $(#[doc = $doc])?
@@ -208,6 +213,7 @@ macro_rules! under {
             }
         }
     };
+    // Ref pattern
     ($(#[$attr:meta])* $($doc:literal)? $name:ident, $input:ident, $g_sig:tt, $asm:tt, ref, $pat:pat, $body:expr) => {
         under!($([$attr])* $($doc)? $name, $input, $g_sig, $asm, {
             let [$pat, ref $input @ ..] = $input else {
@@ -216,6 +222,7 @@ macro_rules! under {
             $body
         });
     };
+    // Non-ref pattern
     ($(#[$attr:meta])* $($doc:literal)? $name:ident, $input:ident, $g_sig:tt, $asm:tt, $pat:pat, $body:expr) => {
         under!($([$attr])* $($doc)? $name, $input, $g_sig, $asm, {
             let &[$pat, ref $input @ ..] = $input else {
@@ -224,6 +231,7 @@ macro_rules! under {
             $body
         });
     };
+    // Mod pattern
     ($(#[$attr:meta])* $($doc:literal)? $name:ident, $input:ident, $asm:tt, $g_sig:tt, $prim:ident, $span:ident, $args:pat, $body:expr) => {
         under!($([$attr])* $($doc)? $name, $input, $g_sig, $asm, ref, Mod($prim, args, $span), {
             let $args = args.as_slice() else {
@@ -236,54 +244,61 @@ macro_rules! under {
 }
 
 under!(
-    /// Derives under inverses from un inverses
-    FromUnPat, input, _, asm, {
-    for pat in UN_PATTERNS {
-        if let Ok((new, inv)) = pat.invert_extract(input, asm) {
-            let nodes = &input[..input.len() - new.len()];
-            return Ok((new, Node::from(nodes), inv));
+    "Derives under inverses from un inverses",
+    (FromUnPat, input, _, asm),
+    {
+        for pat in UN_PATTERNS {
+            if let Ok((new, inv)) = pat.invert_extract(input, asm) {
+                let nodes = &input[..input.len() - new.len()];
+                return Ok((new, Node::from(nodes), inv));
+            }
         }
+        generic()
     }
-    generic()
-});
+);
 
 under!(
-    /// Derives under inverses from anti inverses
-    StashAntiPat, input, _, asm, {
-    for pat in ANTI_PATTERNS {
-        if let Ok((new, inv)) = pat.invert_extract(input, asm) {
-            let nodes = &input[..input.len() - new.len()];
-            let span = nodes
-                .iter()
-                .find_map(Node::span)
-                .or_else(|| inv.span())
-                .unwrap_or(0);
-            let before = Node::from_iter([CopyToUnder(1, span), Node::from(nodes)]);
-            let after = Node::from_iter([PopUnder(1, span), inv]);
-            return Ok((new, before, after));
+    "Derives under inverses from anti inverses",
+    (StashAntiPat, input, _, asm),
+    {
+        for pat in ANTI_PATTERNS {
+            if let Ok((new, inv)) = pat.invert_extract(input, asm) {
+                let nodes = &input[..input.len() - new.len()];
+                let span = nodes
+                    .iter()
+                    .find_map(Node::span)
+                    .or_else(|| inv.span())
+                    .unwrap_or(0);
+                let before = Node::from_iter([CopyToUnder(1, span), Node::from(nodes)]);
+                let after = Node::from_iter([PopUnder(1, span), inv]);
+                return Ok((new, before, after));
+            }
         }
+        generic()
     }
-    generic()
-});
+);
 
 under!(
-    /// Derives under inverses from contra inverses
-    StashContraPat, input, _, asm, {
-    for pat in CONTRA_PATTERNS {
-        if let Ok((new, inv)) = pat.invert_extract(input, asm) {
-            let nodes = &input[..input.len() - new.len()];
-            let span = nodes
-                .iter()
-                .find_map(Node::span)
-                .or_else(|| inv.span())
-                .unwrap_or(0);
-            let before = Node::from_iter([Prim(Over, span), PushUnder(1, span), Node::from(nodes)]);
-            let after = Node::from_iter([PopUnder(1, span), Prim(Flip, span), inv]);
-            return Ok((new, before, after));
+    "Derives under inverses from contra inverses",
+    (StashContraPat, input, _, asm),
+    {
+        for pat in CONTRA_PATTERNS {
+            if let Ok((new, inv)) = pat.invert_extract(input, asm) {
+                let nodes = &input[..input.len() - new.len()];
+                let span = nodes
+                    .iter()
+                    .find_map(Node::span)
+                    .or_else(|| inv.span())
+                    .unwrap_or(0);
+                let before =
+                    Node::from_iter([Prim(Over, span), PushUnder(1, span), Node::from(nodes)]);
+                let after = Node::from_iter([PopUnder(1, span), Prim(Flip, span), inv]);
+                return Ok((new, before, after));
+            }
         }
+        generic()
     }
-    generic()
-});
+);
 
 /// Copy some values to the under stack at the beginning of the "do" step
 /// and pop them at the beginning of the "undo" step
