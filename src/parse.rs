@@ -6,7 +6,7 @@ use ecow::EcoString;
 
 use crate::{
     ast::*,
-    function::{FunctionId, Signature},
+    function::Signature,
     lex::{AsciiToken::*, Token::*, *},
     Diagnostic, DiagnosticKind, Ident, Inputs, Primitive,
 };
@@ -1238,9 +1238,7 @@ impl<'i> Parser<'i> {
                 } else {
                     start
                 };
-                let id = FunctionId::Anonymous(span.clone());
                 branches.push(span.sp(Func {
-                    id,
                     signature,
                     lines,
                     closed: true,
@@ -1253,9 +1251,7 @@ impl<'i> Parser<'i> {
             let (first_sig, first_lines, first_func_span) = first;
             let outer_span = start.clone().merge(end.span);
             if branches.is_empty() {
-                let id = FunctionId::Anonymous(outer_span.clone());
                 outer_span.sp(Word::Func(Func {
-                    id,
                     signature: first_sig,
                     lines: first_lines,
                     closed: end.value,
@@ -1275,9 +1271,7 @@ impl<'i> Parser<'i> {
                 } else {
                     first_func_span.unwrap_or(start)
                 };
-                let first_id = FunctionId::Anonymous(first_span.clone());
                 let first = first_span.sp(Func {
-                    id: first_id,
                     signature: first_sig,
                     lines: first_lines,
                     closed: true,

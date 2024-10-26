@@ -196,8 +196,6 @@ pub enum FunctionId {
     Primitive(Primitive),
     /// A named function
     Named(Ident),
-    /// An anonymous function
-    Anonymous(CodeSpan),
     /// A macro expansion
     Macro(Ident, CodeSpan),
     /// The top-level function
@@ -205,17 +203,6 @@ pub enum FunctionId {
     #[doc(hidden)]
     /// Implementation detail
     Unnamed,
-}
-
-impl FunctionId {
-    /// Get the span of the function id, if it has one
-    pub fn span(&self) -> Option<&CodeSpan> {
-        match self {
-            FunctionId::Anonymous(span) => Some(span),
-            FunctionId::Macro(_, span) => Some(span),
-            _ => None,
-        }
-    }
 }
 
 impl PartialEq<&str> for FunctionId {
@@ -239,17 +226,10 @@ impl From<Primitive> for FunctionId {
     }
 }
 
-impl From<CodeSpan> for FunctionId {
-    fn from(span: CodeSpan) -> Self {
-        Self::Anonymous(span)
-    }
-}
-
 impl fmt::Display for FunctionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FunctionId::Named(name) => write!(f, "{name}"),
-            FunctionId::Anonymous(span) => write!(f, "fn from {span}"),
             FunctionId::Primitive(prim) => write!(f, "{prim}"),
             FunctionId::Macro(name, span) => write!(f, "macro expansion of {name} at {span}"),
             FunctionId::Main => write!(f, "main"),
