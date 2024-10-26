@@ -1085,8 +1085,7 @@ code:
                 }
                 let sig = self.sig_of(&inner, &word.span)?;
                 Node::Array {
-                    inner: inner.into(),
-                    sig,
+                    inner: SigNode::new(inner, sig).into(),
                     boxed: false,
                     span,
                 }
@@ -1178,8 +1177,7 @@ code:
                 // Normal case
                 let sig = self.sig_of(&inner, &word.span)?;
                 Node::Array {
-                    inner: inner.into(),
-                    sig,
+                    inner: SigNode::new(inner, sig).into(),
                     boxed: arr.boxes,
                     span,
                 }
@@ -1818,7 +1816,7 @@ code:
                 },
             },
             Word::Primitive(prim) => match prim {
-                prim if prim.signature().is_some_and(|sig| sig == (2, 1))
+                prim if prim.sig().is_some_and(|sig| sig == (2, 1))
                     && prim.subscript_sig(Some(2)).is_some_and(|sig| sig == (1, 1)) =>
                 {
                     Node::from_iter([
@@ -1869,15 +1867,13 @@ code:
                     1 => self.primitive(Primitive::Fix, span),
                     2 => self.primitive(Primitive::Couple, span),
                     n => Node::Array {
-                        inner: Node::empty().into(),
-                        sig: Signature::new(n, n),
+                        inner: SigNode::new(Node::empty(), Signature::new(n, n)).into(),
                         boxed: false,
                         span: self.add_span(span.clone()),
                     },
                 },
                 Primitive::Box => Node::Array {
-                    inner: Node::empty().into(),
-                    sig: Signature::new(n, n),
+                    inner: SigNode::new(Node::empty(), Signature::new(n, n)).into(),
                     boxed: true,
                     span: self.add_span(span.clone()),
                 },

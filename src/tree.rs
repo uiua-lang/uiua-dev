@@ -154,7 +154,7 @@ node!(
     (3, ImplPrim(prim(ImplPrimitive), span(usize))),
     (4, Mod(prim(Primitive), args(Ops), span(usize))),
     (5, ImplMod(prim(ImplPrimitive), args(Ops), span(usize))),
-    (6, Array { inner: Box<Node>, sig: Signature, boxed: bool, span: usize }),
+    (6, Array { inner: Box<SigNode>, boxed: bool, span: usize }),
     (7, Call(func(Function), span(usize))),
     (8, CallGlobal(index(usize), sig(Signature))),
     (9, CallMacro(index(usize), sig(Signature), args(Ops))),
@@ -170,7 +170,7 @@ node!(
         under_cond: bool,
         span: usize,
     }),
-    (17, Unpack { count: usize, boxed: bool, span: usize }),
+    (17, Unpack { count: usize, unbox: bool, span: usize }),
     (18, SetOutputComment { i: usize, n: usize }),
     (19, ValidateType {
         index: usize,
@@ -453,11 +453,13 @@ impl fmt::Debug for Node {
                 tuple.finish()
             }
             Node::Array {
-                sig, boxed: true, ..
-            } => write!(f, "{{{}{}}}", Primitive::Len, sig.outputs),
+                inner, boxed: true, ..
+            } => write!(f, "{{{}{}}}", Primitive::Len, inner.sig.outputs),
             Node::Array {
-                sig, boxed: false, ..
-            } => write!(f, "[{}{}]", Primitive::Len, sig.outputs),
+                inner,
+                boxed: false,
+                ..
+            } => write!(f, "[{}{}]", Primitive::Len, inner.sig.outputs),
             Node::Call(func, _) => write!(f, "call {}", func.id),
             Node::CallGlobal(index, _) => write!(f, "<call global {index}>"),
             Node::CallMacro(index, _, args) => {
@@ -496,11 +498,11 @@ impl fmt::Debug for Node {
             }
             Node::Unpack {
                 count,
-                boxed: false,
+                unbox: false,
                 ..
             } => write!(f, "<unpack {count}>"),
             Node::Unpack {
-                count, boxed: true, ..
+                count, unbox: true, ..
             } => write!(f, "<unpack (unbox) {count}>"),
             Node::SetOutputComment { i, n, .. } => write!(f, "<set output comment {i}({n})>"),
             Node::ValidateType { type_num, name, .. } => {

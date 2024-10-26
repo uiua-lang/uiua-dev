@@ -242,11 +242,11 @@ impl VirtualEnv {
         match node {
             Node::Run(nodes) => nodes.iter().try_for_each(|node| self.node(node))?,
             Node::Push(val) => self.push(BasicValue::from_val(val)),
-            Node::Array { inner, sig, .. } => {
+            Node::Array { inner, .. } => {
                 self.array_depth += 1;
-                self.node(inner)?;
+                self.node(&inner.node)?;
                 self.array_depth -= 1;
-                let bottom = self.height - sig.args as i32;
+                let bottom = self.height - inner.sig.args as i32;
                 let stack_bottom = (bottom.max(0) as usize).min(self.stack.len());
                 let mut items: Vec<_> = (self.stack.drain(stack_bottom..))
                     .chain(repeat(BasicValue::Other).take((-bottom).max(0) as usize))
@@ -480,6 +480,7 @@ impl VirtualEnv {
                 }
             },
             Node::SetOutputComment { .. } => {}
+            Node::ValidateType { .. } => self.handle_args_outputs(1, 1),
         }
         // println!("{instr:?} -> {}/{}", -(self.min_height as i32), self.height);
         Ok(())

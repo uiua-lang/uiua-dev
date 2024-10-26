@@ -590,7 +590,6 @@ pub fn switch(
 pub fn try_(ops: Ops, env: &mut Uiua) -> UiuaResult {
     let [f, handler] = get_ops(ops, env)?;
     let f_sig = f.sig;
-    env.touch_array_stack(f_sig.args)?;
     let handler_sig = handler.sig;
     if env.stack_height() < f_sig.args {
         for i in 0..f_sig.args {

@@ -838,7 +838,7 @@ pub fn rows_windows(ops: Ops, env: &mut Uiua) -> UiuaResult {
         env.push(xs.first_dim_zero());
         return Ok(());
     }
-    if let Some(Primitive::Box) = f.as_primitive(&env.asm) {
+    if let Some(Primitive::Box) = f.node.as_primitive() {
         let win_count = xs.row_count() - (n - 1);
         let arr = Array::from_iter(
             (0..win_count).map(|win_start| Boxed(xs.slice_rows(win_start, win_start + n))),

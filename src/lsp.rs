@@ -11,9 +11,8 @@ use std::{
 };
 
 use crate::{
-    algorithm::invert::{instrs_are_invertible, under_instrs},
     ast::{Item, Modifier, ModuleKind, PlaceholderOp, Ref, RefComponent, Word},
-    ident_modifier_args, instrs_are_pure, is_custom_glyph,
+    ident_modifier_args, is_custom_glyph,
     lex::{CodeSpan, Sp},
     parse::parse,
     Assembly, BindingInfo, BindingKind, Compiler, DocComment, Ident, InputSrc, Inputs, PreEvalMode,
@@ -104,7 +103,7 @@ pub fn spans_with_compiler(input: &str, compiler: &Compiler) -> (Vec<Sp<SpanKind
         code_meta: compiler.code_meta,
         errors: Vec::new(),
         diagnostics: Vec::new(),
-        inversion_compiler: ThreadLocal::new(),
+        inversion_asm: ThreadLocal::new(),
     };
     (spanner.items_spans(&items), spanner.asm.inputs.clone())
 }
@@ -230,7 +229,7 @@ struct Spanner {
     errors: Vec<UiuaError>,
     #[allow(dead_code)]
     diagnostics: Vec<crate::Diagnostic>,
-    inversion_compiler: ThreadLocal<RefCell<Compiler>>,
+    inversion_asm: ThreadLocal<RefCell<Assembly>>,
 }
 
 impl Spanner {
@@ -248,7 +247,7 @@ impl Spanner {
             code_meta: compiler.code_meta,
             errors,
             diagnostics,
-            inversion_compiler: ThreadLocal::new(),
+            inversion_asm: ThreadLocal::new(),
         }
     }
     fn inputs(&self) -> &Inputs {
@@ -465,34 +464,30 @@ impl Spanner {
         let kind = match &binfo.kind {
             BindingKind::Const(val) => BindingDocsKind::Constant(val.clone()),
             BindingKind::Func(f) => BindingDocsKind::Function {
-                sig: f.signature(),
+                sig: f.sig(),
                 invertible: {
-                    let instrs = f.instrs(&self.asm);
-                    let compiler = self
-                        .inversion_compiler
-                        .get_or(|| Compiler::new().with_assembly(self.asm.clone()).into());
-                    let mut compiler = compiler.borrow_mut();
-                    let instr_count = compiler.asm.instrs.len();
-                    let invertible = instrs_are_invertible(instrs, &mut compiler);
-                    if compiler.asm.instrs.len() > instr_count {
-                        compiler.asm.instrs.truncate(instr_count);
+                    let node = &self.asm[f];
+                    let asm = self.inversion_asm.get_or(|| self.asm.clone().into());
+                    let mut asm = asm.borrow_mut();
+                    let start_len = asm.root.len();
+                    let invertible = node.un_inverse(&mut asm).is_ok();
+                    if asm.root.len() > start_len {
+                        asm.root.truncate(start_len);
                     }
                     invertible
                 },
                 underable: {
-                    let instrs = f.instrs(&self.asm);
-                    let compiler = self
-                        .inversion_compiler
-                        .get_or(|| Compiler::new().with_assembly(self.asm.clone()).into());
-                    let mut compiler = compiler.borrow_mut();
-                    let instr_count = compiler.asm.instrs.len();
-                    let underable = under_instrs(instrs, (1, 1).into(), &mut compiler).is_ok();
-                    if compiler.asm.instrs.len() > instr_count {
-                        compiler.asm.instrs.truncate(instr_count);
+                    let node = &self.asm[f];
+                    let asm = self.inversion_asm.get_or(|| self.asm.clone().into());
+                    let mut asm = asm.borrow_mut();
+                    let start_len = asm.root.len();
+                    let invertible = node.under_inverse(Signature::new(1, 1), &mut asm).is_ok();
+                    if asm.root.len() > start_len {
+                        asm.root.truncate(start_len);
                     }
-                    underable
+                    invertible
                 },
-                pure: instrs_are_pure(f.instrs(&self.asm), &self.asm, Purity::Pure),
+                pure: self.asm[f].is_pure(Purity::Pure, &self.asm),
             },
             BindingKind::IndexMacro(args) => BindingDocsKind::Modifier(*args),
             BindingKind::CodeMacro(_) => {
@@ -501,7 +496,7 @@ impl Spanner {
             BindingKind::Import(_) => BindingDocsKind::Module { sig: None },
             BindingKind::Module(m) => {
                 let sig = if let Some(local) = m.names.get("Call").or_else(|| m.names.get("New")) {
-                    self.asm.bindings[local.index].kind.signature()
+                    self.asm.bindings[local.index].kind.sig()
                 } else {
                     None
                 };
@@ -1169,7 +1164,7 @@ mod server {
                     label: name.clone(),
                     kind: Some(kind),
                     label_details: Some(CompletionItemLabelDetails {
-                        description: (binding.kind.signature())
+                        description: (binding.kind.sig())
                             .map(|sig| format!("{:<4}", sig.to_string())),
                         ..Default::default()
                     }),
@@ -1263,7 +1258,7 @@ mod server {
                                 ..Default::default()
                             })
                         } else {
-                            prim.signature().map(|sig| CompletionItemLabelDetails {
+                            prim.sig().map(|sig| CompletionItemLabelDetails {
                                 description: Some(format!("{:<4}", sig.to_string())),
                                 ..Default::default()
                             })
@@ -2369,7 +2364,7 @@ mod server {
 
     fn full_prim_doc_markdown(prim: Primitive) -> String {
         let sig = prim
-            .signature()
+            .sig()
             .map(|sig| format!(" {}", sig))
             .unwrap_or_default();
         let mut value = format!("```uiua\n{}{}\n```", prim.format(), sig);

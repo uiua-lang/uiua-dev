@@ -19,8 +19,7 @@ use enum_iterator::{all, Sequence};
 use thread_local::ThreadLocal;
 
 use crate::{
-    algorithm::{self, invert, validate_size_impl},
-    check::instrs_temp_signatures,
+    algorithm::{self, validate_size_impl},
     fill::Fill,
     instr::*,
     lex::Span,
@@ -101,7 +100,7 @@ impl AsMut<Assembly> for Uiua {
 #[derive(Debug, Clone)]
 pub(crate) struct StackFrame {
     pub(crate) sig: Signature,
-    pub(crate) id: FunctionId,
+    pub(crate) id: Option<FunctionId>,
     track_caller: bool,
     /// The span at which the function was called
     pub(crate) call_span: usize,
@@ -180,7 +179,7 @@ impl Default for Runtime {
             temp_stacks: [Vec::new(), Vec::new()],
             call_stack: vec![StackFrame {
                 sig: Signature::new(0, 0),
-                id: FunctionId::Main,
+                id: None,
                 track_caller: false,
                 call_span: 0,
                 spans: Vec::new(),
@@ -342,7 +341,7 @@ impl Uiua {
         let backup = compiler.clone();
         self.rt.backend = compiler.backend();
         let res = self.run_asm(compiler.finish());
-        let mut asm = self.take_asm();
+        let asm = self.take_asm();
         match res {
             Ok(()) => {
                 *compiler.assembly_mut() = asm;
@@ -359,7 +358,7 @@ impl Uiua {
         fn run_asm(env: &mut Uiua, asm: Assembly) -> UiuaResult {
             env.asm = asm;
             env.rt.execution_start = env.rt.backend.now();
-            let mut res = env.run_top_slices();
+            let mut res = env.exec(env.asm.root.clone());
             let mut push_error = |te: UiuaError| match &mut res {
                 Ok(()) => res = Err(te),
                 Err(e) => e.multi.push(te),
@@ -392,22 +391,6 @@ impl Uiua {
             res
         }
         run_asm(self, asm.into())
-    }
-    pub(crate) fn run_top_slices(&mut self) -> UiuaResult {
-        let top_slices = take(&mut self.asm.top_slices);
-        let mut res = Ok(());
-        if let Err(e) = self.catching_crash("", |env| {
-            for &slice in &top_slices {
-                res = env.call_slice(slice);
-                if res.is_err() {
-                    break;
-                }
-            }
-        }) {
-            res = Err(e);
-        }
-        self.asm.top_slices = top_slices;
-        res
     }
     fn catching_crash<T>(
         &mut self,
@@ -447,16 +430,6 @@ code:
         //     print!("(empty) ");
         // }
         // println!();
-        // if !self.rt.array_stack.is_empty() {
-        //     print!("array: ");
-        //     for val in &self.rt.array_stack {
-        //         print!("{:?} ", val);
-        //     }
-        //     println!();
-        // }
-        // if !self.rt.function_stack.is_empty() {
-        //     println!("{} function(s)", self.rt.function_stack.len());
-        // }
         // for temp in enum_iterator::all::<TempStack>() {
         //     if !self.rt.temp_stacks[temp as usize].is_empty() {
         //         print!("{temp}: ");
@@ -482,8 +455,18 @@ code:
                     res
                 })
             }
+            Node::Run(nodes) => (|| {
+                for node in nodes {
+                    self.exec(node)?;
+                }
+                Ok(())
+            })(),
             Node::Prim(prim, span) => self.with_prim_span(span, Some(prim), |env| prim.run(env)),
             Node::ImplPrim(prim, span) => self.with_span(span, |env| prim.run(env)),
+            Node::Mod(prim, args, span) => {
+                self.with_prim_span(span, Some(prim), |env| prim.run_mod(args, env))
+            }
+            Node::ImplMod(prim, args, span) => self.with_span(span, |env| prim.run_mod(args, env)),
             Node::Push(val) => {
                 self.rt.stack.push(val);
                 Ok(())
@@ -521,6 +504,7 @@ code:
                     )),
                 }
             }
+            Node::CallMacro(..) => todo!("call macro"),
             Node::BindGlobal { span, index } => {
                 let local = LocalName {
                     index,
@@ -543,14 +527,11 @@ code:
                 }
                 Ok(())
             }
-            Node::Array {
-                inner,
-                sig,
-                boxed,
-                span,
-            } => self.with_span(span, |env| env.make_array(boxed, sig, *inner)),
+            Node::Array { inner, boxed, span } => {
+                self.with_span(span, |env| env.make_array(*inner, boxed))
+            }
             Node::Call(f, span) => self.call_with_span(&f, span),
-            Node::CustomInverse(cust, span) => self.call_with_span(&cust.normal, span),
+            Node::CustomInverse(cust, span) => self.exec_with_span(cust.normal, span),
             Node::Switch {
                 branches,
                 sig,
@@ -620,7 +601,7 @@ code:
                     Ok(())
                 })
             }
-            &Instr::Dynamic(df) => (|| {
+            Node::Dynamic(df) => (|| {
                 self.asm
                     .dynamic_functions
                     .get(df.index)
@@ -629,7 +610,7 @@ code:
                     })?
                     .clone()(self)
             })(),
-            &Instr::Unpack { count, span, unbox } => self.with_span(span, |env| {
+            Node::Unpack { count, span, unbox } => self.with_span(span, |env| {
                 let arr = env.pop(1)?;
                 if arr.row_count() != count {
                     return Err(env.error(format!(
@@ -651,40 +632,7 @@ code:
                 }
                 Ok(())
             }),
-            &Instr::TouchStack { count, span } => {
-                self.with_span(span, |env| env.touch_array_stack(count))
-            }
-            &Instr::PushTemp { stack, count, span } => self.with_span(span, |env| {
-                for i in 0..count {
-                    let value = env.pop(i + 1)?;
-                    env.rt.temp_stacks[stack as usize].push(value);
-                }
-                Ok(())
-            }),
-            &Instr::PopTemp {
-                stack, count, span, ..
-            } => self.with_span(span, |env| {
-                for _ in 0..count {
-                    let value = env.rt.temp_stacks[stack as usize].pop().ok_or_else(|| {
-                        env.error(format!(
-                            "Stack was empty when getting saved {} value",
-                            format!("{stack:?}").to_lowercase()
-                        ))
-                    })?;
-                    env.push(value);
-                }
-
-                Ok(())
-            }),
-            &Instr::CopyToTemp { stack, count, span } => self.with_span(span, |env| {
-                env.touch_array_stack(count)?;
-                for i in 0..count {
-                    let value = env.rt.stack[env.rt.stack.len() - i - 1].clone();
-                    env.rt.temp_stacks[stack as usize].push(value);
-                }
-                Ok(())
-            }),
-            &Instr::SetOutputComment { i, n } => {
+            Node::SetOutputComment { i, n } => {
                 let values = self.stack()[self.stack().len().saturating_sub(n)..].to_vec();
                 let stack_values = self.rt.output_comments.entry(i).or_default();
                 if stack_values.is_empty() {
@@ -720,7 +668,6 @@ code:
             }
             return Err(err);
         }
-        self.rt.call_stack.last_mut().unwrap().pc += 1;
         self.respect_execution_limit()?;
         Ok(())
     }
@@ -842,12 +789,12 @@ code:
         }
         res
     }
-    #[inline]
     fn call_with_span(&mut self, f: &Function, call_span: usize) -> UiuaResult {
-        self.call_with_frame_span(
+        self.exec_with_frame_span(
+            self.asm[f].clone(),
             StackFrame {
                 sig: f.sig(),
-                id: f.id.clone(),
+                id: Some(f.id.clone()),
                 track_caller: f.flags.track_caller(),
                 call_span,
                 spans: Vec::new(),
@@ -855,11 +802,28 @@ code:
             call_span,
         )
     }
-    #[inline]
-    fn call_with_frame_span(&mut self, frame: StackFrame, call_span: usize) -> UiuaResult {
+    fn exec_with_span(&mut self, sn: SigNode, call_span: usize) -> UiuaResult {
+        self.exec_with_frame_span(
+            sn.node,
+            StackFrame {
+                sig: sn.sig,
+                id: None,
+                track_caller: false,
+                call_span,
+                spans: Vec::new(),
+            },
+            call_span,
+        )
+    }
+    fn exec_with_frame_span(
+        &mut self,
+        node: Node,
+        frame: StackFrame,
+        call_span: usize,
+    ) -> UiuaResult {
         let start_height = self.rt.stack.len();
         let sig = frame.sig;
-        self.exec(frame)?;
+        self.exec(node)?;
         let height_diff = self.rt.stack.len() as isize - start_height as isize;
         let sig_diff = sig.outputs as isize - sig.args as isize;
         if height_diff != sig_diff {
@@ -985,14 +949,15 @@ code:
         }
         Ok(())
     }
-    pub(crate) fn make_array(&mut self, boxed: bool, sig: Signature, inner: Node) -> UiuaResult {
-        let values = self.rt.stack.drain(start..).rev();
+    pub(crate) fn make_array(&mut self, inner: SigNode, boxed: bool) -> UiuaResult {
+        self.exec(inner.node)?;
+        let values = self.rt.stack.drain(inner.sig.outputs..).rev();
         let values: Vec<Value> = if boxed {
             values.map(Boxed).map(Value::from).collect()
         } else {
             values.collect()
         };
-        let mut val = if values.is_empty() && boxed {
+        let val = if values.is_empty() && boxed {
             Array::<Boxed>::default().into()
         } else {
             let elems: usize = values.iter().map(Value::element_count).sum();

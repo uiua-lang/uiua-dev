@@ -136,7 +136,7 @@ The following configuration options are available:
                 fn from_file(file_path: PathBuf) -> UiuaResult<Self> {
                     let asm = Compiler::new().print_diagnostics(false).load_file(file_path)?.finish();
                     let mut env = Uiua::with_backend(SafeSys::default());
-                    env.run_asm(&asm)?;
+                    env.run_asm(asm)?;
                     let mut bindings = env.bound_values();
                     $(
                         let $name = {
