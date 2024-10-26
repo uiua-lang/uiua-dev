@@ -19,8 +19,8 @@ use crate::{
     is_ident_start,
     lex::{CodeSpan, Loc, Sp},
     parse::{flip_unsplit_lines, parse, split_words, trim_spaces},
-    Compiler, FunctionId, Ident, InputSrc, Inputs, PreEvalMode, Primitive, RunMode, SafeSys,
-    Signature, Uiua, UiuaErrorKind, UiuaResult, Value, SUBSCRIPT_NUMS,
+    Compiler, Ident, InputSrc, Inputs, PreEvalMode, Primitive, RunMode, SafeSys, Signature, Uiua,
+    UiuaErrorKind, UiuaResult, Value, SUBSCRIPT_NUMS,
 };
 
 trait ConfigValue: Sized {
@@ -688,8 +688,7 @@ impl<'a> Formatter<'a> {
                 } else {
                     lines.push(Vec::new());
                     self.format_words(
-                        &[span.clone().sp(Word::Func(Func {
-                            id: FunctionId::Anonymous(span),
+                        &[span.sp(Word::Func(Func {
                             signature: None,
                             lines,
                             closed: true,
@@ -747,8 +746,7 @@ impl<'a> Formatter<'a> {
                                     .unwrap_or_else(|| span.clone());
                                 lines.push(Vec::new());
                                 self.format_words(
-                                    &[span.clone().sp(Word::Func(Func {
-                                        id: FunctionId::Anonymous(span),
+                                    &[span.sp(Word::Func(Func {
                                         signature: None,
                                         lines,
                                         closed: true,

@@ -515,15 +515,10 @@ code:
                     // Binding is a constant
                     self.asm.bind_const(local, Some(value), span, None);
                 } else {
-                    // Binding is an empty function
-                    let id = match self.get_span(span) {
-                        Span::Code(span) => FunctionId::Anonymous(span),
-                        Span::Builtin => FunctionId::Unnamed,
-                    };
-                    let func = self
-                        .asm
-                        .add_function(id, Signature::new(0, 0), Node::empty());
-                    self.asm.bind_function(local, func, span, None);
+                    return Err(self.error(
+                        "No values on the stack for binding. \
+                        This is a bug in the interpreter",
+                    ));
                 }
                 Ok(())
             }

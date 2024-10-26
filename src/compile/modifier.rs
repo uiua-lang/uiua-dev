@@ -34,7 +34,6 @@ impl Compiler {
                     new = Modified {
                         modifier: modifier.clone(),
                         operands: vec![branch.span.clone().sp(Word::Func(Func {
-                            id: FunctionId::Anonymous(branch.span.clone()),
                             signature: None,
                             lines,
                             closed: true,
@@ -59,7 +58,6 @@ impl Compiler {
                     new = Modified {
                         modifier: modifier.clone(),
                         operands: vec![branch.span.clone().sp(Word::Func(Func {
-                            id: FunctionId::Anonymous(branch.span.clone()),
                             signature: None,
                             lines,
                             closed: true,
@@ -104,7 +102,6 @@ impl Compiler {
                     }))));
                 }
                 Ok(Some(Word::Func(Func {
-                    id: FunctionId::Anonymous(span.clone()),
                     signature: None,
                     lines: vec![words],
                     closed: true,
@@ -313,7 +310,6 @@ impl Compiler {
             let span = modified.modifier.span.clone();
             for _ in 0..missing {
                 modified.operands.push(span.clone().sp(Word::Func(Func {
-                    id: FunctionId::Anonymous(span.clone()),
                     signature: None,
                     lines: Vec::new(),
                     closed: false,

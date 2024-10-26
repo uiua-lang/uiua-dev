@@ -9,8 +9,6 @@ use enum_iterator::Sequence;
 use serde::*;
 
 use crate::{
-    algorithm::invert::CustomInverse,
-    check::instrs_signature,
     function::*,
     primitive::{ImplPrimitive, Primitive},
     value::Value,

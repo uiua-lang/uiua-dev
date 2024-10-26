@@ -539,8 +539,6 @@ impl fmt::Debug for Arr {
 /// An inline function
 #[derive(Clone)]
 pub struct Func {
-    /// The function's id
-    pub id: FunctionId,
     /// The function's signature
     pub signature: Option<Sp<Signature>>,
     /// The function's code
