@@ -579,6 +579,7 @@ impl Compiler {
             }
             Un => {
                 let (sn, span) = self.monadic_modifier_op(modified)?;
+                self.add_span(span.clone());
                 match sn.node.un_inverse(&self.asm) {
                     Ok(inv) => inv,
                     Err(e) => return Err(self.fatal_error(span, e)),

@@ -121,7 +121,7 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &DipPat,
     &OnPat,
     &ByPat,
-    &InnerAntiPat,
+    &InnerAnti,
     &(Sqrt, (Dup, Mul)),
     &((Dup, Add), (2, Div)),
     &((Dup, Mul), Sqrt),
@@ -133,34 +133,7 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &((Val, ValidateType), ValidateType),
     &((Val, TagVariant), ValidateVariant),
     &((Val, ValidateVariant), TagVariant),
-    &(
-        (Val, Min),
-        (
-            Over,
-            Lt,
-            Deshape,
-            Deduplicate,
-            Not,
-            0,
-            Complex,
-            crate::Complex::ONE,
-            MatchPattern,
-        ),
-    ),
-    &(
-        (Val, Max),
-        (
-            Over,
-            Gt,
-            Deshape,
-            Deduplicate,
-            Not,
-            0,
-            Complex,
-            crate::Complex::ONE,
-            MatchPattern,
-        ),
-    ),
+    &MatchConst,
 ];
 
 pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
@@ -179,8 +152,8 @@ pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Log, (Flip, Pow)),
     &((Flip, Log), (Flip, 1, Flip, Div, Pow)),
     &(Complex, (crate::Complex::I, Mul, Sub)),
-    &(Min, Min),
-    &(Max, Max),
+    &(Min, MatchGe),
+    &(Max, MatchLe),
     &(Orient, AntiOrient),
     &(Drop, AntiDrop),
     &(Select, AntiSelect),
@@ -213,9 +186,20 @@ pub trait InvertPattern: fmt::Debug + Sync {
 }
 
 macro_rules! inverse {
-    ($name:ident, $input:ident, $asm:tt, $body:expr) => {
+    // Optional parens
+    ($(#[$attr:meta])* $($doc:literal,)? ($($tt:tt)*), $body:expr) => {
+        inverse!($(#[$attr])* $($doc,)? $($tt)*, $body);
+    };
+    ($(#[$attr:meta])* $($doc:literal,)? ($($tt:tt)*), ref, $pat:pat, $body:expr) => {
+        inverse!($(#[$attr])* $($doc,)? $($tt)*, ref, $pat, $body);
+    };
+    ($(#[$attr:meta])* $($doc:literal,)? ($($tt:tt)*), $pat:pat, $body:expr) => {
+        inverse!($(#[$attr])* $($doc,)? $($tt)*, $pat, $body);
+    };
+    // Main impl
+    ($(#[$attr:meta])* $($doc:literal,)? $name:ident, $input:ident, $asm:tt, $body:expr) => {
         #[derive(Debug)]
-        pub struct $name;
+        pub(crate) struct $name;
         impl InvertPattern for $name {
             fn invert_extract<'a>(
                 &self,
@@ -226,24 +210,24 @@ macro_rules! inverse {
             }
         }
     };
-    ($name:ident, $input:ident, $asm:tt, ref, $pat:pat, $body:expr) => {
-        inverse!($name, $input, $asm, {
+    ($(#[$attr:meta])* $($doc:literal,)? $name:ident, $input:ident, $asm:tt, ref, $pat:pat, $body:expr) => {
+        inverse!($([$attr])* $($doc)? $name, $input, $asm, {
             let [$pat, ref $input @ ..] = $input else {
                 return generic();
             };
             $body
         });
     };
-    ($name:ident, $input:ident, $asm:tt, $pat:pat, $body:expr) => {
-        inverse!($name, $input, $asm, {
+    ($(#[$attr:meta])* $($doc:literal,)? $name:ident, $input:ident, $asm:tt, $pat:pat, $body:expr) => {
+        inverse!($([$attr])* $($doc)? $name, $input, $asm, {
             let &[$pat, ref $input @ ..] = $input else {
                 return generic();
             };
             $body
         });
     };
-    ($name:ident, $input:ident, $asm:tt, $prim:ident, $span:ident, $args:pat, $body:expr) => {
-        inverse!($name, $input, $asm, ref, Mod($prim, args, $span), {
+    ($(#[$attr:meta])* $($doc:literal,)? $name:ident, $input:ident, $asm:tt, $prim:ident, $span:ident, $args:pat, $body:expr) => {
+        inverse!($([$attr])* $($doc)? $name, $input, $asm, ref, Mod($prim, args, $span), {
             let $args = args.as_slice() else {
                 return generic();
             };
@@ -254,9 +238,7 @@ macro_rules! inverse {
 }
 
 inverse!(
-    ArrayPat,
-    input,
-    asm,
+    (ArrayPat, input, asm),
     ref,
     Array {
         len,
@@ -290,21 +272,29 @@ inverse!(ByPat, input, asm, Dip, span, [f], {
     Ok((input, Mod(By, eco_vec![inv], span)))
 });
 
-inverse!(InnerAntiPat, input, asm, {
-    let (input, mut node) = Val.invert_extract(input, asm)?;
-    for end in 1..=input.len() {
-        if let Ok(inv) = anti_inverse(&input[..end], asm) {
-            node.push(inv);
-            return Ok((&input[end..], node));
-        }
-    }
-    generic()
+inverse!("Match a constant exactly", (MatchConst, input, asm), {
+    let (input, mut val) = Val.invert_extract(input, asm)?;
+    val.push(ImplPrim(MatchPattern, asm.spans.len() - 1));
+    Ok((input, val))
 });
 
 inverse!(
-    UnpackPat,
-    input,
-    asm,
+    "Matches an anti inverse with the first argument as part of the input",
+    (InnerAnti, input, asm),
+    {
+        let (input, mut node) = Val.invert_extract(input, asm)?;
+        for end in 1..=input.len() {
+            if let Ok(inv) = anti_inverse(&input[..end], asm) {
+                node.push(inv);
+                return Ok((&input[end..], node));
+            }
+        }
+        generic()
+    }
+);
+
+inverse!(
+    (UnpackPat, input, asm),
     Unpack {
         count,
         unbox,

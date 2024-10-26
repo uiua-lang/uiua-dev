@@ -242,6 +242,8 @@ impl fmt::Display for ImplPrimitive {
             RowsWindows => write!(f, "{Rows}(…){Windows}"),
             CountUnique => write!(f, "{Len}{Deduplicate}"),
             MatchPattern => write!(f, "pattern match"),
+            MatchLe => write!(f, "match ≤"),
+            MatchGe => write!(f, "match ≥"),
             AstarFirst => write!(f, "{First}{Astar}"),
             &ReduceDepth(n) => {
                 for _ in 0..n {
@@ -480,18 +482,11 @@ impl Primitive {
                 "use new {} instead, which has its arguments flipped",
                 MemberOf.format()
             ),
-            Coordinate => format!(
-                "use {} {} {} instead",
-                First.format(),
-                Where.format(),
-                Find.format(),
-            ),
             Chunks => format!("use {Windows} with a rank-2 window size instead"),
             Sys(SysOp::HttpsWrite) => format!("use {} instead", Sys(SysOp::TlsConnect).format()),
             Choose => format!("use {Tuples}{Lt} instead"),
             Permute => format!("use {Tuples}{Ne} instead"),
             Triangle => format!("use {Tuples} instead"),
-            Struct => "use new data definitions instead".into(),
             _ => return None,
         })
     }
@@ -504,8 +499,7 @@ impl Primitive {
             self,
             (Off | Backward | Above | Around)
                 | (Tuples | Choose | Permute)
-                | Struct
-                | (Last | Sort | Chunks | Base | Coordinate | Fft | Case | Layout)
+                | (Last | Sort | Chunks | Base | Fft | Case | Layout)
                 | (Astar | Triangle)
                 | Sys(Ffi | MemCopy | MemFree | TlsListen)
                 | (Stringify | Quote | Sig)
@@ -778,7 +772,6 @@ impl Primitive {
             Primitive::Find => env.dyadic_rr_env(Value::find)?,
             Primitive::Mask => env.dyadic_rr_env(Value::mask)?,
             Primitive::IndexOf => env.dyadic_rr_env(Value::index_of)?,
-            Primitive::Coordinate => env.dyadic_rr_env(Value::coordinate)?,
             Primitive::Choose => {
                 env.dyadic_rr_env(|k, val, env| k.choose(val, false, false, env))?
             }
@@ -943,8 +936,7 @@ impl Primitive {
             | Primitive::Anti
             | Primitive::Under
             | Primitive::Obverse
-            | Primitive::Switch
-            | Primitive::Struct => {
+            | Primitive::Switch => {
                 return Err(env.error(format!(
                     "{} was not inlined. This is a bug in the interpreter",
                     self.format()
@@ -1436,7 +1428,93 @@ impl ImplPrimitive {
                 env.push(random());
             }
             ImplPrimitive::CountUnique => env.monadic_ref(Value::count_unique)?,
-            ImplPrimitive::MatchPattern => todo!(),
+            ImplPrimitive::MatchPattern => {
+                let expected = env.pop(1)?;
+                let got = env.pop(2)?;
+                if expected == got {
+                    return Ok(());
+                }
+                let message = match (
+                    expected.rank() <= 1 && expected.row_count() <= 10,
+                    got.rank() <= 1 && got.row_count() <= 10,
+                ) {
+                    (true, true) => format!("expected {expected} but got {got}"),
+                    (true, false) if expected.type_id() != got.type_id() => {
+                        format!("expected {expected} but got {}", got.type_name_plural())
+                    }
+                    (true, false) if expected.shape() != got.shape() => format!(
+                        "expected {expected} but got array with shape {}",
+                        got.shape()
+                    ),
+                    (true, false) => format!(
+                        "expected {expected} but found {} array with shape {}",
+                        got.type_name(),
+                        got.rank()
+                    ),
+                    (false, true) if expected.type_id() != got.type_id() => {
+                        format!("expected {} but got {got}", expected.type_name_plural())
+                    }
+                    (false, true) if expected.shape() != got.shape() => format!(
+                        "expected array with shape {} but got {got}",
+                        expected.shape()
+                    ),
+                    (false, true) => format!(
+                        "expected {} array with shape {} but got {got}",
+                        expected.type_name(),
+                        expected.rank()
+                    ),
+                    (false, false) if expected.type_id() != got.type_id() => {
+                        format!(
+                            "expected {} but got {}",
+                            expected.type_name_plural(),
+                            got.type_name_plural()
+                        )
+                    }
+                    (false, false) if expected.shape() != got.shape() => format!(
+                        "expected shape {} but got shape {}",
+                        expected.shape(),
+                        got.shape()
+                    ),
+                    (false, false) => format!(
+                        "expected {} array with shape {} but got {} array with shape {}",
+                        expected.type_name(),
+                        expected.rank(),
+                        got.type_name(),
+                        got.rank()
+                    ),
+                };
+                return Err(env.error(env.error(format!("Pattern match failed: {message}"))));
+            }
+            ImplPrimitive::MatchLe => {
+                let max = env.pop(1)?;
+                let val = env.pop(2)?;
+                let le = val.clone().is_le(max.clone(), 0, 0, env)?;
+                if le.all_true() {
+                    env.push(val);
+                    return Ok(());
+                }
+                let message = if max.rank() <= 1 && max.row_count() <= 10 {
+                    format!("Not all values are {} {max}", Primitive::Le)
+                } else {
+                    format!("Not all values are {}", Primitive::Le)
+                };
+                return Err(env.error(env.error(format!("Pattern match failed: {message}"))));
+            }
+            ImplPrimitive::MatchGe => {
+                let min = env.pop(1)?;
+                let val = env.pop(2)?;
+                let ge = val.clone().is_ge(min.clone(), 0, 0, env)?;
+                if ge.all_true() {
+                    env.push(val);
+                    return Ok(());
+                }
+                let message = if min.rank() <= 1 && min.row_count() <= 10 {
+                    format!("Not all values are {} {min}", Primitive::Ge)
+                } else {
+                    format!("Not all values are {}", Primitive::Ge)
+                };
+                return Err(env.error(env.error(format!("Pattern match failed: {message}"))));
+            }
             &ImplPrimitive::TransposeN(n) => env.monadic_mut(|val| val.transpose_depth(0, n))?,
             // Implementation details
             ImplPrimitive::ValidateType | ImplPrimitive::ValidateTypeConsume => {
