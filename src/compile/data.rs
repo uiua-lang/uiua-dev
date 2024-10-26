@@ -228,7 +228,7 @@ impl Compiler {
                 node.push(Node::RemoveLabel(span));
             }
             // Add validator
-            if let Some((va_instrs, validation_only, va_span)) = field.validator.take() {
+            if let Some((va_instrs, validation_only, _va_span)) = field.validator.take() {
                 let inverse = va_instrs.un_inverse(&self.asm);
                 let make_node = |node: Node| SigNode::new(node, Signature::new(1, 1)); // TODO: Track caller
                 match inverse {
@@ -326,9 +326,12 @@ impl Compiler {
                 }
                 args.push(arg);
             }
+            let inner = SigNode::new(
+                Node::Mod(Primitive::Bracket, args, span),
+                Signature::new(constructor_args, fields.len()),
+            );
             Node::Array {
-                inner: Node::Mod(Primitive::Bracket, args, span).into(),
-                sig: Signature::new(constructor_args, fields.len()),
+                inner: inner.into(),
                 boxed,
                 span,
             }

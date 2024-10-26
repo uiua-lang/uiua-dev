@@ -26,10 +26,9 @@ use rand::prelude::*;
 use serde::*;
 
 use crate::{
-    algorithm::{self, invert, loops, reduce, table, zip, *},
+    algorithm::{self, loops, reduce, table, zip, *},
     array::Array,
     boxed::Boxed,
-    check::instrs_signature,
     encode,
     lex::{AsciiToken, SUBSCRIPT_NUMS},
     sys::*,
@@ -436,7 +435,7 @@ impl Primitive {
         Self::all().find(|p| p.glyph() == Some(c))
     }
     /// Get the primitive's signature, if it is always well-defined
-    pub fn signature(&self) -> Option<Signature> {
+    pub fn sig(&self) -> Option<Signature> {
         let (args, outputs) = self.args().zip(self.outputs())?;
         Some(Signature { args, outputs })
     }
@@ -475,7 +474,7 @@ impl Primitive {
             (Couple | Box, Some(n)) => Signature::new(n, 1),
             (Couple, None) => Signature::new(2, 1),
             (Box, None) => Signature::new(1, 1),
-            (Transpose | Sqrt | Round | Floor | Ceil | Rand | Utf8, _) => return self.signature(),
+            (Transpose | Sqrt | Round | Floor | Ceil | Rand | Utf8, _) => return self.sig(),
             _ => return None,
         })
     }
@@ -724,7 +723,7 @@ impl Primitive {
             Primitive::Pi => env.push(pi()),
             Primitive::Tau => env.push(tau()),
             Primitive::Infinity => env.push(inf()),
-            Primitive::Identity => env.touch_array_stack(1)?,
+            Primitive::Identity => env.touch_stack(1)?,
             Primitive::Not => env.monadic_env(Value::not)?,
             Primitive::Neg => env.monadic_env(Value::neg)?,
             Primitive::Abs => env.monadic_env(Value::abs)?,
@@ -1206,7 +1205,7 @@ impl ImplPrimitive {
             }
             ImplPrimitive::UndoBase => env.dyadic_rr_env(Value::antibase)?,
             &ImplPrimitive::UndoReverse(n) => {
-                env.touch_array_stack(n)?;
+                env.touch_stack(n)?;
                 let end = env.stack_height() - n;
                 let vals = &mut env.stack_mut()[end..];
                 let max_rank = vals.iter().map(|v| v.rank()).max().unwrap_or(0);
@@ -1217,7 +1216,7 @@ impl ImplPrimitive {
                 }
             }
             &ImplPrimitive::UndoTransposeN(n, amnt) => {
-                env.touch_array_stack(n)?;
+                env.touch_stack(n)?;
                 let end = env.stack_height() - n;
                 let vals = &mut env.stack_mut()[end..];
                 let max_rank = vals.iter().map(|v| v.rank()).max().unwrap_or(0);
@@ -1228,7 +1227,7 @@ impl ImplPrimitive {
                 }
             }
             &ImplPrimitive::UndoRotate(n) => {
-                env.touch_array_stack(n + 1)?;
+                env.touch_stack(n + 1)?;
                 let mut amount = env.pop(1)?.scalar_neg(env)?;
                 if n == 1 {
                     let mut val = env.pop(2)?;
@@ -1379,7 +1378,7 @@ impl ImplPrimitive {
                 env.push(random());
             }
             ImplPrimitive::CountUnique => env.monadic_ref(Value::count_unique)?,
-            ImplPrimitive::MatchPattern => invert::match_pattern(env)?,
+            ImplPrimitive::MatchPattern => todo!(),
             &ImplPrimitive::TransposeN(n) => env.monadic_mut(|val| val.transpose_depth(0, n))?,
             // Implementation details
             ImplPrimitive::ValidateType | ImplPrimitive::ValidateTypeConsume => {
@@ -1461,6 +1460,19 @@ impl ImplPrimitive {
                 let res = tag.join(val, false, env)?;
                 env.push(res);
             }
+            prim => {
+                return Err(env.error(if prim.modifier_args().is_some() {
+                    format!(
+                        "{prim} was handled as a function. \
+                        This is a bug in the interpreter"
+                    )
+                } else {
+                    format!(
+                        "{prim} was not handled as a function. \
+                        This is a bug in the interpreter"
+                    )
+                }))
+            }
         }
         Ok(())
     }
@@ -1486,7 +1498,7 @@ impl ImplPrimitive {
                     )
                 } else {
                     format!(
-                        "{prim} was not handled as a function. \
+                        "{prim} was handled as a modifier. \
                         This is a bug in the interpreter"
                     )
                 }))
@@ -1653,11 +1665,11 @@ fn stack(env: &Uiua, inverse: bool) -> UiuaResult {
 
 fn dump(ops: Ops, env: &mut Uiua, inverse: bool) -> UiuaResult {
     let [f] = get_ops(ops, env)?;
-    if f.signature() != (1, 1) {
+    if f.sig != (1, 1) {
         return Err(env.error(format!(
             "{}'s function's signature must be |1, but it is {}",
             Primitive::Dump.format(),
-            f.signature()
+            f.sig
         )));
     }
     let span = if inverse {
@@ -1669,7 +1681,7 @@ fn dump(ops: Ops, env: &mut Uiua, inverse: bool) -> UiuaResult {
     let mut items = Vec::new();
     for item in unprocessed {
         env.push(item);
-        match env.call(f.clone()) {
+        match env.exec(f.clone()) {
             Ok(()) => items.push(env.pop("dump's function's processed result")?),
             Err(e) => items.push(e.value()),
         }
@@ -1714,7 +1726,7 @@ fn stack_boundaries(env: &Uiua) -> Vec<(usize, &FunctionId)> {
             reduced = before_sig.args as isize - before_sig.outputs as isize;
         }
         height = height.max(((frame.sig.args as isize) - reduced).max(0) as usize);
-        if matches!(frame.id, FunctionId::Main) {
+        if matches!(frame.id, Some(FunctionId::Main)) {
             break;
         }
         boundaries.push((env.stack_height().saturating_sub(height), &frame.id));

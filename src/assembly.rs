@@ -130,6 +130,208 @@ impl Assembly {
         let span = self.spans[span].clone();
         self.add_binding_at(local, BindingKind::Const(value), span.code(), comment);
     }
+    /// Parse a `.uasm` file into an assembly
+    pub fn from_uasm(_src: &str) -> Result<Self, String> {
+        // let rest = src;
+        // let (instrs_src, rest) = rest
+        //     .trim()
+        //     .split_once("TOP SLICES")
+        //     .ok_or("No top slices")?;
+        // let (top_slices_src, rest) = rest.split_once("BINDINGS").ok_or("No bindings")?;
+        // let (bindings_src, rest) = rest.trim().split_once("SPANS").ok_or("No spans")?;
+        // let (spans_src, rest) = rest.trim().split_once("FILES").ok_or("No files")?;
+        // let (files_src, rest) = rest
+        //     .trim()
+        //     .split_once("STRING INPUTS")
+        //     .unwrap_or((rest, ""));
+        // let strings_src = rest.trim();
+
+        // let mut instrs = EcoVec::new();
+        // for line in instrs_src.lines().filter(|line| !line.trim().is_empty()) {
+        //     let instr: Instr = serde_json::from_str(line)
+        //         .or_else(|e| {
+        //             let (key, val) = line.split_once(' ').ok_or("No key")?;
+        //             let json = format!("{{{key:?}: {val}}}");
+        //             serde_json::from_str(&json).map_err(|_| e.to_string())
+        //         })
+        //         .or_else(|e| {
+        //             let (key, val) = line.split_once(' ').ok_or("No key")?;
+        //             let json = format!("[{key:?},{val}]");
+        //             serde_json::from_str(&json).map_err(|_| e)
+        //         })
+        //         .or_else(|e| serde_json::from_str(&format!("\"{line}\"")).map_err(|_| e))
+        //         .unwrap();
+        //     instrs.push(instr);
+        // }
+
+        // let mut top_slices = Vec::new();
+        // for line in top_slices_src
+        //     .lines()
+        //     .filter(|line| !line.trim().is_empty())
+        // {
+        //     let (start, len) = line.split_once(' ').ok_or("No start")?;
+        //     let start = start.parse::<usize>().map_err(|e| e.to_string())?;
+        //     let len = len.parse::<usize>().map_err(|e| e.to_string())?;
+        //     top_slices.push(FuncSlice { start, len });
+        // }
+
+        // let mut bindings = EcoVec::new();
+        // for line in bindings_src.lines().filter(|line| !line.trim().is_empty()) {
+        //     let (public, line) = if let Some(line) = line.strip_prefix("private ") {
+        //         (false, line)
+        //     } else {
+        //         (true, line)
+        //     };
+        //     let kind: BindingKind = serde_json::from_str(line).or_else(|e| {
+        //         if let Some((key, val)) = line.split_once("\" ") {
+        //             let key = format!("{key}\"");
+        //             let json = format!("{{{key:?}: {val:?}}}");
+        //             serde_json::from_str(&json).map_err(|_| e.to_string())
+        //         } else if let Some((key, val)) = line.split_once(' ') {
+        //             let json = format!("{{{key:?}: {val}}}");
+        //             serde_json::from_str(&json).map_err(|_| e.to_string())
+        //         } else {
+        //             Err("No key".into())
+        //         }
+        //     })?;
+        //     bindings.push(BindingInfo {
+        //         kind,
+        //         public,
+        //         span: CodeSpan::dummy(),
+        //         comment: None,
+        //     });
+        // }
+
+        // let mut spans = EcoVec::new();
+        // spans.push(Span::Builtin);
+        // for line in spans_src.lines().filter(|line| !line.trim().is_empty()) {
+        //     if line.trim().is_empty() {
+        //         spans.push(Span::Builtin);
+        //     } else {
+        //         let (src_start, end) = line.trim().rsplit_once(' ').ok_or("invalid span")?;
+        //         let (src, start) = src_start.split_once(' ').ok_or("invalid span")?;
+        //         let src = serde_json::from_str(src).map_err(|e| e.to_string())?;
+        //         let start = serde_json::from_str(start).map_err(|e| e.to_string())?;
+        //         let end = serde_json::from_str(end).map_err(|e| e.to_string())?;
+        //         spans.push(Span::Code(CodeSpan { src, start, end }));
+        //     }
+        // }
+
+        // let files = DashMap::new();
+        // for line in files_src.lines().filter(|line| !line.trim().is_empty()) {
+        //     let (path, src) = line.split_once(": ").ok_or("No path")?;
+        //     let path = PathBuf::from(path);
+        //     let src: EcoString = serde_json::from_str(src).map_err(|e| e.to_string())?;
+        //     files.insert(path, src);
+        // }
+
+        // let mut strings = EcoVec::new();
+        // for line in strings_src.lines() {
+        //     let src: EcoString = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        //     strings.push(src);
+        // }
+
+        // Ok(Self {
+        //     instrs,
+        //     top_slices,
+        //     bindings,
+        //     spans,
+        //     inputs: Inputs {
+        //         files,
+        //         strings,
+        //         ..Inputs::default()
+        //     },
+        //     dynamic_functions: EcoVec::new(),
+        // })
+        todo!()
+    }
+    /// Serialize the assembly into a `.uasm` file
+    pub fn to_uasm(&self) -> String {
+        // let mut uasm = String::new();
+
+        // for instr in &self.instrs {
+        //     let json = serde_json::to_value(instr).unwrap();
+        //     match &json {
+        //         serde_json::Value::Object(map) => {
+        //             if map.len() == 1 {
+        //                 let key = map.keys().next().unwrap();
+        //                 let value = map.values().next().unwrap();
+        //                 uasm.push_str(&format!("{} {}\n", key, value));
+        //                 continue;
+        //             }
+        //         }
+        //         serde_json::Value::Array(arr) => {
+        //             if arr.len() == 2 {
+        //                 if let serde_json::Value::String(key) = &arr[0] {
+        //                     let value = &arr[1];
+        //                     uasm.push_str(&format!("{} {}\n", key, value));
+        //                     continue;
+        //                 }
+        //             }
+        //         }
+        //         serde_json::Value::String(s) => {
+        //             uasm.push_str(&format!("{s:?}"));
+        //             uasm.push('\n');
+        //             continue;
+        //         }
+        //         _ => (),
+        //     }
+        //     uasm.push_str(&json.to_string());
+        //     uasm.push('\n');
+        // }
+
+        // uasm.push_str("\nTOP SLICES\n");
+        // for slice in &self.top_slices {
+        //     uasm.push_str(&format!("{} {}\n", slice.start, slice.len));
+        // }
+
+        // uasm.push_str("\nBINDINGS\n");
+        // for binding in &self.bindings {
+        //     if !binding.public {
+        //         uasm.push_str("private ");
+        //     }
+        //     if let serde_json::Value::Object(map) = serde_json::to_value(&binding.kind).unwrap() {
+        //         if map.len() == 1 {
+        //             let key = map.keys().next().unwrap();
+        //             let value = map.values().next().unwrap();
+        //             uasm.push_str(&format!("{} {}\n", key, value));
+        //             continue;
+        //         }
+        //     }
+        //     uasm.push_str(&serde_json::to_string(&binding.kind).unwrap());
+        //     uasm.push('\n');
+        // }
+
+        // uasm.push_str("\nSPANS\n");
+        // for span in self.spans.iter().skip(1) {
+        //     if let Span::Code(span) = span {
+        //         uasm.push_str(&serde_json::to_string(&span.src).unwrap());
+        //         uasm.push(' ');
+        //         uasm.push_str(&serde_json::to_string(&span.start).unwrap());
+        //         uasm.push(' ');
+        //         uasm.push_str(&serde_json::to_string(&span.end).unwrap());
+        //     }
+        //     uasm.push('\n');
+        // }
+
+        // uasm.push_str("\nFILES\n");
+        // for entry in &self.inputs.files {
+        //     let key = entry.key();
+        //     let value = entry.value();
+        //     uasm.push_str(&format!("{}: {:?}\n", key.display(), value));
+        // }
+
+        // if !self.inputs.strings.is_empty() {
+        //     uasm.push_str("\nSTRING INPUTS\n");
+        //     for src in &self.inputs.strings {
+        //         uasm.push_str(&serde_json::to_string(src).unwrap());
+        //         uasm.push('\n');
+        //     }
+        // }
+
+        // uasm
+        todo!()
+    }
 }
 
 impl Index<&Function> for Assembly {
@@ -209,7 +411,7 @@ pub enum BindingKind {
 
 impl BindingKind {
     /// Get the signature of the binding
-    pub fn signature(&self) -> Option<Signature> {
+    pub fn sig(&self) -> Option<Signature> {
         match self {
             Self::Const(_) => Some(Signature::new(0, 1)),
             Self::Func(func) => Some(func.sig()),

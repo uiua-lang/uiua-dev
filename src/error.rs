@@ -76,7 +76,7 @@ pub type UiuaResult<T = ()> = Result<T, UiuaError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceFrame {
     /// The function that was called
-    pub id: FunctionId,
+    pub id: Option<FunctionId>,
     /// The span of the call
     pub span: Span,
 }
@@ -141,7 +141,7 @@ impl UiuaError {
     /// Add a span to the trace of the error
     pub fn trace(mut self, span: CodeSpan) -> Self {
         let frame = TraceFrame {
-            id: FunctionId::Anonymous(span.clone()),
+            id: None,
             span: Span::Code(span),
         };
         self.trace.push(frame);
@@ -149,7 +149,7 @@ impl UiuaError {
     }
     pub(crate) fn trace_macro(mut self, name: Ident, span: CodeSpan) -> Self {
         let frame = TraceFrame {
-            id: FunctionId::Macro(name, span.clone()),
+            id: Some(FunctionId::Macro(name, span.clone())),
             span: Span::Code(span),
         };
         self.trace.push(frame);
@@ -177,7 +177,7 @@ fn format_trace(trace: &[TraceFrame]) -> Vec<String> {
     let max_id_length = trace
         .iter()
         .filter(|frame| frame.span != Span::Builtin)
-        .map(|frame| frame.id.to_string().chars().count())
+        .map(|frame| (frame.id.as_ref()).map_or(0, |id| id.to_string().chars().count()))
         .max()
         .unwrap_or(0);
     let max_span_length = trace
@@ -192,7 +192,7 @@ fn format_trace(trace: &[TraceFrame]) -> Vec<String> {
     let mut i = 0;
     'outer: while i < trace.len() {
         let frame = &trace[i];
-        if frame.id == FunctionId::Main {
+        if frame.id == Some(FunctionId::Main) {
             i += 1;
             continue;
         }
@@ -230,13 +230,13 @@ fn format_trace(trace: &[TraceFrame]) -> Vec<String> {
                 continue 'outer;
             }
         }
+        let id = frame
+            .id
+            .as_ref()
+            .map_or_else(String::new, ToString::to_string);
         lines.push(match &frame.span {
-            Span::Code(span) => format!(
-                "  in {:max_id_length$} at {:max_span_length$}",
-                frame.id.to_string(),
-                span
-            ),
-            Span::Builtin => format!("  in {:max_id_length$}", frame.id.to_string()),
+            Span::Code(span) => format!("  in {id:max_id_length$} at {span:max_span_length$}"),
+            Span::Builtin => format!("  in {id:max_id_length$}"),
         });
         i += 1;
     }

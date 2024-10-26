@@ -1826,7 +1826,7 @@ fn prim_sig_class(prim: Primitive, subscript: Option<usize>) -> &'static str {
                 }
             } else {
                 prim.subscript_sig(subscript)
-                    .or(prim.signature())
+                    .or(prim.sig())
                     .map(sig_class)
                     .unwrap_or(code_font!(""))
             }

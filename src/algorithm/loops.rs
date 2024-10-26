@@ -948,7 +948,7 @@ fn collapse_groups<I>(
     firsts: impl Fn(Value, &[isize], &Uiua) -> UiuaResult<Value>,
     lasts: impl Fn(Value, &[isize], &Uiua) -> UiuaResult<Value>,
     lens: impl Fn(&[isize]) -> Array<f64>,
-    first_group: impl Fn(Value, &[isize]) -> Option<Value>,
+    _first_group: impl Fn(Value, &[isize]) -> Option<Value>,
     last_group: impl Fn(Value, &[isize]) -> Option<Value>,
     indices_error: &'static str,
     env: &mut Uiua,
