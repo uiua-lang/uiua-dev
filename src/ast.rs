@@ -4,6 +4,7 @@ use core::mem::discriminant;
 use std::{borrow::Cow, collections::HashMap, fmt};
 
 use ecow::EcoString;
+use serde::*;
 
 use crate::{
     function::{FunctionId, Signature},
@@ -13,7 +14,7 @@ use crate::{
 };
 
 /// A top-level item
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Item {
     /// Just some code
     Words(Vec<Vec<Sp<Word>>>),
@@ -28,7 +29,7 @@ pub enum Item {
 }
 
 /// A binding
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Binding {
     /// The name of the binding
     pub name: Sp<Ident>,
@@ -56,7 +57,7 @@ impl Binding {
 }
 
 /// A scoped module
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScopedModule {
     /// The span of the opening delimiter
     pub open_span: CodeSpan,
@@ -71,7 +72,7 @@ pub struct ScopedModule {
 }
 
 /// The kind of a module
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModuleKind {
     /// A named module
     Named(Sp<Ident>),
@@ -80,7 +81,7 @@ pub enum ModuleKind {
 }
 
 /// An import
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Import {
     /// The name given to the imported module
     pub name: Option<Sp<Ident>>,
@@ -93,7 +94,7 @@ pub struct Import {
 }
 
 /// A line of imported items
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportLine {
     /// The span of the ~
     pub tilde_span: CodeSpan,
@@ -119,7 +120,7 @@ impl Import {
 }
 
 /// A data definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataDef {
     /// The span of the ~ or |
     pub init_span: CodeSpan,
@@ -134,7 +135,7 @@ pub struct DataDef {
 }
 
 /// The fields of a data definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataFields {
     /// Whether the array is boxed
     pub boxed: bool,
@@ -149,7 +150,7 @@ pub struct DataFields {
 }
 
 /// A data field
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataField {
     /// Leading comments
     pub comments: Option<Comments>,
@@ -164,7 +165,7 @@ pub struct DataField {
 }
 
 /// A data field validator
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldValidator {
     /// The span of the colon (may be an open paren)
     pub open_span: CodeSpan,
@@ -175,7 +176,7 @@ pub struct FieldValidator {
 }
 
 /// A data field initializer
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldInit {
     /// The span of the assignment arrow
     pub arrow_span: CodeSpan,
@@ -243,7 +244,7 @@ impl DataField {
 }
 
 /// A cluster of comments
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Comments {
     /// The normal comment lines
     pub lines: Vec<Sp<EcoString>>,
@@ -252,7 +253,7 @@ pub struct Comments {
 }
 
 /// A word
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 #[allow(missing_docs)]
 pub enum Word {
     Number(String, f64),
@@ -409,7 +410,7 @@ impl fmt::Debug for Word {
 }
 
 /// A placeholder operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlaceholderOp {
     /// Pop and inline the top operand
     Call,
@@ -420,6 +421,7 @@ pub enum PlaceholderOp {
     /// Copy the 2nd-to-top operand to the top
     Over,
     /// Inline the nth operand
+    #[serde(untagged)]
     Nth(u8),
 }
 
@@ -449,7 +451,7 @@ impl fmt::Display for PlaceholderOp {
 }
 
 /// A refered-to item
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Ref {
     /// The module path of the item
     pub path: Vec<RefComponent>,
@@ -462,7 +464,7 @@ pub struct Ref {
 }
 
 /// A component of a reference
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RefComponent {
     /// The name of the module
     pub module: Sp<Ident>,
@@ -512,7 +514,7 @@ impl fmt::Display for Ref {
 }
 
 /// A stack array notation term
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Arr {
     /// The array's inner signature
     pub signature: Option<Sp<Signature>>,
@@ -537,7 +539,7 @@ impl fmt::Debug for Arr {
 }
 
 /// An inline function
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Func {
     /// The function's id
     pub id: FunctionId,
@@ -566,7 +568,7 @@ impl fmt::Debug for Func {
 }
 
 /// A function pack
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionPack {
     /// The branches of the pack
     pub branches: Vec<Sp<Func>>,
@@ -577,7 +579,7 @@ pub struct FunctionPack {
 }
 
 /// A modifier with operands
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Modified {
     /// The modifier itself
     pub modifier: Sp<Modifier>,
@@ -603,7 +605,8 @@ impl fmt::Debug for Modified {
 }
 
 /// A modifier
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Modifier {
     /// A primitive modifier
     Primitive(Primitive),
@@ -640,7 +643,7 @@ impl Modifier {
 }
 
 /// A subscript
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Subscript {
     /// The subscript number
     pub n: Sp<Option<usize>>,

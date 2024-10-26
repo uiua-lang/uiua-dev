@@ -25,9 +25,9 @@ use rustyline::{error::ReadlineError, DefaultEditor};
 use uiua::{
     format::{format_file, format_str, FormatConfig, FormatConfigSource},
     lsp::BindingDocsKind,
-    Assembly, CodeSpan, Compiler, NativeSys, PreEvalMode, PrimClass, PrimDocFragment, PrimDocLine,
-    Primitive, RunMode, SafeSys, SpanKind, Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value,
-    CONSTANTS,
+    Assembly, CodeSpan, Compiler, Inputs, NativeSys, PreEvalMode, PrimClass, PrimDocFragment,
+    PrimDocLine, Primitive, RunMode, SafeSys, SpanKind, Uiua, UiuaError, UiuaErrorKind, UiuaResult,
+    Value, CONSTANTS,
 };
 
 static PRESSED_CTRL_C: AtomicBool = AtomicBool::new(false);
@@ -257,7 +257,39 @@ fn main() {
                 }
             }
             #[cfg(feature = "lsp")]
-            App::Lsp => uiua::lsp::run_language_server(),
+            App::Lsp { command: None } => uiua::lsp::run_language_server(),
+            App::Lsp {
+                command: Some(command),
+            } => match command {
+                LspCommand::Ast { path, out } => {
+                    if let Some(path) = path {
+                        if path.extension().is_some_and(|ext| ext == "json") {
+                            eprintln!("Cannot convert to AST from a JSON file");
+                            exit(1);
+                        }
+                        let out = out.unwrap_or_else(|| path.with_extension("json"));
+                        let input = fs::read_to_string(&path).unwrap_or_else(|e| {
+                            eprintln!("Failed to read file: {e}");
+                            exit(1);
+                        });
+                        let mut inputs = Inputs::default();
+                        let (items, errors, _) = uiua::parse(&input, &path, &mut inputs);
+                        if !errors.is_empty() {
+                            fail::<()>(UiuaErrorKind::Parse(errors, inputs.into()).error());
+                        }
+                        let json = serde_json::to_string(&items).unwrap_or_else(|e| {
+                            eprintln!("Failed to convert to JSON: {e}");
+                            exit(1);
+                        });
+                        fs::write(out, json).unwrap_or_else(|e| {
+                            eprintln!("Failed to write file: {e}");
+                            exit(1);
+                        });
+                    } else {
+                        todo!()
+                    }
+                }
+            },
             App::Repl {
                 file,
                 formatter_options,
@@ -797,7 +829,10 @@ enum App {
     },
     #[cfg(feature = "lsp")]
     #[clap(about = "Run the Language Server")]
-    Lsp,
+    Lsp {
+        #[clap(subcommand)]
+        command: Option<LspCommand>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -808,6 +843,17 @@ enum ModuleCommand {
     Update {
         #[clap(help = "The module to update")]
         module: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum LspCommand {
+    #[clap(about = "Convert a Uiua file's AST to JSON")]
+    Ast {
+        #[clap(help = "The path to the Uiua file")]
+        path: Option<PathBuf>,
+        #[clap(help = "The path to the output file")]
+        out: Option<PathBuf>,
     },
 }
 
