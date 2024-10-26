@@ -25,15 +25,14 @@ use crate::{
     format::{format_word, format_words},
     function::{DynamicFunction, FunctionFlags},
     ident_modifier_args,
-    instr::*,
     lex::{CodeSpan, Sp, Span},
     lsp::{CodeMeta, ImportSrc, SigDecl},
     parse::{count_placeholders, flip_unsplit_lines, parse, split_words},
     Array, Assembly, BindingKind, Boxed, CustomInverse, Diagnostic, DiagnosticKind, DocComment,
     DocCommentSig, Function, FunctionId, GitTarget, Ident, ImplPrimitive, InputSrc, IntoInputSrc,
-    IntoSysBackend, Node, Primitive, RunMode, SemanticComment, SigNode, Signature, SysBackend,
-    Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value, CONSTANTS, EXAMPLE_UA, SUBSCRIPT_NUMS,
-    VERSION,
+    IntoSysBackend, Node, Primitive, Purity, RunMode, SemanticComment, SigNode, Signature,
+    SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value, CONSTANTS, EXAMPLE_UA,
+    SUBSCRIPT_NUMS, VERSION,
 };
 
 /// The Uiua compiler
@@ -162,15 +161,6 @@ struct CurrentBinding {
     signature: Option<Signature>,
     referenced: bool,
     global_index: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct UnderedFunctions {
-    pub f: EcoVec<Instr>,
-    pub f_sig: Signature,
-    pub g: EcoVec<Instr>,
-    pub g_sig: Signature,
-    pub span: usize,
 }
 
 /// A scope where names are defined

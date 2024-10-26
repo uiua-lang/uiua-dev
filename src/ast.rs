@@ -6,7 +6,7 @@ use std::{borrow::Cow, collections::HashMap, fmt};
 use ecow::EcoString;
 
 use crate::{
-    function::{FunctionId, Signature},
+    function::Signature,
     lex::{CodeSpan, Sp},
     parse::ident_modifier_args,
     Ident, Primitive, SemanticComment, SUBSCRIPT_NUMS,

@@ -330,7 +330,7 @@ pub(crate) fn optimize_instrs_mut(
         (
             [.., Instr::PushFunc(g), Instr::Prim(Table, _), Instr::PushFunc(f)],
             Instr::Prim(Reduce, span),
-        ) if g.signature() == (2, 1) && f.signature() == (2, 1) => {
+        ) if g.sig() == (2, 1) && f.sig() == (2, 1) => {
             let f = instrs.pop().unwrap();
             instrs.pop();
             instrs.push(f);

@@ -350,7 +350,7 @@ impl Compiler {
         }
 
         // Handle macros
-        let mut prim = match modified.modifier.value {
+        let prim = match modified.modifier.value {
             Modifier::Primitive(prim) => prim,
             Modifier::Ref(r) => {
                 return self.modifier_ref(r, modified.modifier.span, modified.operands)
@@ -395,54 +395,56 @@ impl Compiler {
             }
         }
 
-        let mut before = EcoVec::new();
-        let mut after = EcoVec::new();
-
         let span = self.add_span(modified.modifier.span.clone());
-        if let Some(n) = subscript {
-            match prim {
-                Primitive::Rows if n == 0 => {
-                    before = eco_vec![Instr::Prim(Primitive::Fix, span),];
-                    after = eco_vec![Instr::ImplPrim(ImplPrimitive::UndoFix, span),];
-                }
-                Primitive::Rows => {
-                    let stack = TempStack::Under;
-                    let count = 2;
-                    let n = -(n as i32);
-                    before = eco_vec![
-                        Instr::Prim(Primitive::Dup, span),
-                        Instr::Prim(Primitive::Shape, span),
-                        Instr::push(n),
-                        Instr::PushTemp { stack, count, span },
-                        Instr::push(n),
-                        Instr::Prim(Primitive::Rerank, span),
-                    ];
-                    after = eco_vec![
-                        Instr::PopTemp { stack, count, span },
-                        Instr::ImplPrim(ImplPrimitive::UndoRerank, span)
-                    ];
-                }
-                Primitive::Each => {
-                    let stack = TempStack::Under;
-                    let count = 2;
-                    prim = Primitive::Rows;
-                    before = eco_vec![
-                        Instr::Prim(Primitive::Dup, span),
-                        Instr::Prim(Primitive::Shape, span),
-                        Instr::push(n),
-                        Instr::PushTemp { stack, count, span },
-                        Instr::push(n),
-                        Instr::Prim(Primitive::Rerank, span),
-                    ];
-                    after = eco_vec![
-                        Instr::PopTemp { stack, count, span },
-                        Instr::ImplPrim(ImplPrimitive::UndoRerank, span)
-                    ];
-                }
-                Primitive::Tuples => before = eco_vec![Instr::push(n)],
-                _ => {}
-            }
-        }
+
+        // TODO:
+        // let mut before = EcoVec::new();
+        // let mut after = EcoVec::new();
+
+        // if let Some(n) = subscript {
+        //     match prim {
+        //         Primitive::Rows if n == 0 => {
+        //             before = eco_vec![Instr::Prim(Primitive::Fix, span),];
+        //             after = eco_vec![Instr::ImplPrim(ImplPrimitive::UndoFix, span),];
+        //         }
+        //         Primitive::Rows => {
+        //             let stack = TempStack::Under;
+        //             let count = 2;
+        //             let n = -(n as i32);
+        //             before = eco_vec![
+        //                 Instr::Prim(Primitive::Dup, span),
+        //                 Instr::Prim(Primitive::Shape, span),
+        //                 Instr::push(n),
+        //                 Instr::PushTemp { stack, count, span },
+        //                 Instr::push(n),
+        //                 Instr::Prim(Primitive::Rerank, span),
+        //             ];
+        //             after = eco_vec![
+        //                 Instr::PopTemp { stack, count, span },
+        //                 Instr::ImplPrim(ImplPrimitive::UndoRerank, span)
+        //             ];
+        //         }
+        //         Primitive::Each => {
+        //             let stack = TempStack::Under;
+        //             let count = 2;
+        //             prim = Primitive::Rows;
+        //             before = eco_vec![
+        //                 Instr::Prim(Primitive::Dup, span),
+        //                 Instr::Prim(Primitive::Shape, span),
+        //                 Instr::push(n),
+        //                 Instr::PushTemp { stack, count, span },
+        //                 Instr::push(n),
+        //                 Instr::Prim(Primitive::Rerank, span),
+        //             ];
+        //             after = eco_vec![
+        //                 Instr::PopTemp { stack, count, span },
+        //                 Instr::ImplPrim(ImplPrimitive::UndoRerank, span)
+        //             ];
+        //         }
+        //         Primitive::Tuples => before = eco_vec![Instr::push(n)],
+        //         _ => {}
+        //     }
+        // }
 
         // Compile operands
         let ops = self.args(modified.operands)?;
@@ -866,12 +868,12 @@ impl Compiler {
                         }
                     });
                     // Compile
-                    let mut node = self.suppress_diagnostics(|comp| {
+                    let node = self.suppress_diagnostics(|comp| {
                         comp.temp_scope(mac.names, macro_local, |comp| comp.words(mac.words))
                     })?;
                     // Add
                     let sig = self.sig_of(&node, &modifier_span)?;
-                    let mut func = self.asm.add_function(
+                    let func = self.asm.add_function(
                         FunctionId::Macro(r.name.value, r.name.span),
                         sig,
                         node,
@@ -909,7 +911,6 @@ impl Compiler {
                 let mut sig_data: EcoVec<u8> = EcoVec::with_capacity(operands.len() * 2);
                 // Track the length of the instructions and spans so
                 // they can be discarded after signatures are calculated
-                let spans_len = self.asm.spans.len();
                 for op in &operands {
                     let sn = self.word_sig(op.clone()).map_err(|e| {
                         let message = format!(

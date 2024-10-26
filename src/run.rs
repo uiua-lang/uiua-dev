@@ -16,12 +16,12 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use enum_iterator::{all, Sequence};
+use serde::*;
 use thread_local::ThreadLocal;
 
 use crate::{
-    algorithm::{self, validate_size_impl},
+    algorithm::{self, invert::match_format_pattern, validate_size_impl},
     fill::Fill,
-    instr::*,
     lex::Span,
     Array, Assembly, BindingKind, Boxed, CodeSpan, Compiler, Function, FunctionId, Ident,
     ImplPrimitive, Inputs, IntoSysBackend, LocalName, Node, Primitive, Report, SafeSys, SigNode,
@@ -168,6 +168,28 @@ impl FromStr for RunMode {
             "test" => Ok(RunMode::Test),
             "all" => Ok(RunMode::All),
             _ => Err(format!("unknown run mode `{}`", s)),
+        }
+    }
+}
+
+/// A type of temporary stacks
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Sequence, Serialize, Deserialize,
+)]
+pub enum TempStack {
+    /// A stack used to hold values need to undo a function
+    #[serde(rename = "u")]
+    Under,
+    /// A stack used when inlining some functions
+    #[serde(rename = "i")]
+    Inline,
+}
+
+impl fmt::Display for TempStack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Under => write!(f, "under"),
+            Self::Inline => write!(f, "inline"),
         }
     }
 }
@@ -358,7 +380,9 @@ impl Uiua {
         fn run_asm(env: &mut Uiua, asm: Assembly) -> UiuaResult {
             env.asm = asm;
             env.rt.execution_start = env.rt.backend.now();
-            let mut res = env.exec(env.asm.root.clone());
+            let mut res = env
+                .catching_crash(|env| env.exec(env.asm.root.clone()))
+                .unwrap_or_else(Err);
             let mut push_error = |te: UiuaError| match &mut res {
                 Ok(()) => res = Err(te),
                 Err(e) => e.multi.push(te),
@@ -390,13 +414,9 @@ impl Uiua {
             }
             res
         }
-        run_asm(self, asm.into())
+        run_asm(self, asm)
     }
-    fn catching_crash<T>(
-        &mut self,
-        input: impl fmt::Display,
-        f: impl FnOnce(&mut Self) -> T,
-    ) -> UiuaResult<T> {
+    fn catching_crash<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> UiuaResult<T> {
         match catch_unwind(AssertUnwindSafe(|| f(self))) {
             Ok(res) => Ok(res),
             Err(_) => Err(self.error(format!(
@@ -408,14 +428,12 @@ or on Discord at https://discord.gg/9CU2ME4kmn.
 
 Uiua version {VERSION}
 
-code:
-{}
-{}",
-                self.span(),
-                input
+at {}",
+                self.span()
             ))),
         }
     }
+    /// Execute a [`Node`]
     pub fn exec(&mut self, node: impl Into<Node>) -> UiuaResult {
         self.exec_impl(node.into())
     }
@@ -550,8 +568,7 @@ code:
                 })
             }
             Node::MatchFormatPattern(parts, span) => {
-                let parts = parts.clone();
-                self.with_span(span, |env| todo!())
+                self.with_span(span, |env| match_format_pattern(parts, env))
             }
             Node::Label(label, span) => self.with_span(span, |env| {
                 env.monadic_mut(|val| {
@@ -878,13 +895,6 @@ code:
         } else {
             self.error(message)
         }
-    }
-    pub(crate) fn pattern_match_error(&self) -> UiuaError {
-        UiuaErrorKind::Run(
-            self.span().sp("Pattern match failed".into()),
-            self.inputs().clone().into(),
-        )
-        .into()
     }
     /// Pop a value from the stack
     pub fn pop(&mut self, arg: impl StackArg) -> UiuaResult<Value> {

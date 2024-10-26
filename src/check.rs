@@ -15,17 +15,17 @@ use enum_iterator::Sequence;
 use crate::{Array, ImplPrimitive, Node, Primitive, SigNode, Signature, TempStack, Value};
 
 impl Node {
+    /// Get the signature of this node
     pub fn sig(&self) -> Result<Signature, SigCheckError> {
         VirtualEnv::from_node(self).map(|env| env.sig())
     }
+    /// Get the signature of this node if there is no net temp stack change
     pub fn clean_sig(&self) -> Option<Signature> {
         nodes_clean_sig(slice::from_ref(self))
     }
+    /// Get the signatures of this node on the temporary stacks
     pub fn temp_sigs(&self) -> Result<[Signature; TempStack::CARDINALITY], SigCheckError> {
         VirtualEnv::from_node(self).map(|env| env.temp_signatures())
-    }
-    pub fn all_sigs(&self) -> Result<AllSignatures, SigCheckError> {
-        nodes_all_sigs(slice::from_ref(self))
     }
 }
 
@@ -495,7 +495,7 @@ impl VirtualEnv {
         self.height += 1;
         self.stack.push(val);
     }
-    fn pop_temp(&mut self, stack: TempStack) -> BasicValue {
+    fn _pop_temp(&mut self, stack: TempStack) -> BasicValue {
         self.temp_heights[stack as usize] -= 1;
         self.temp_min_heights[stack as usize] = self.temp_min_heights[stack as usize]
             .max((-self.temp_heights[stack as usize]).max(0) as usize);

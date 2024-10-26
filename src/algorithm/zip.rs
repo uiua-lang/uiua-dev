@@ -330,7 +330,7 @@ fn prim_dy_fast_fn(prim: Primitive, span: usize) -> Option<ValueDyFn> {
     })
 }
 
-pub(crate) fn f_dy_fast_fn(nodes: &[Node], env: &Uiua) -> Option<(ValueDyFn, usize, usize)> {
+pub(crate) fn f_dy_fast_fn(nodes: &[Node]) -> Option<(ValueDyFn, usize, usize)> {
     use std::boxed::Box;
     use Primitive::*;
 
@@ -351,10 +351,10 @@ pub(crate) fn f_dy_fast_fn(nodes: &[Node], env: &Uiua) -> Option<(ValueDyFn, usi
             return Some((f, 0, 0));
         }
         [Node::Mod(Rows, args, _)] => {
-            return nest_dy_fast(f_dy_fast_fn(args[0].node.as_slice(), env)?, 1, 1)
+            return nest_dy_fast(f_dy_fast_fn(args[0].node.as_slice())?, 1, 1)
         }
         [Node::Prim(Flip, _), rest @ ..] => {
-            let (f, a, b) = f_dy_fast_fn(rest, env)?;
+            let (f, a, b) = f_dy_fast_fn(rest)?;
             let f = Box::new(move |a, b, ad, bd, env: &mut Uiua| f(b, a, bd, ad, env));
             return Some((f, a, b));
         }
@@ -430,7 +430,7 @@ fn each1(f: SigNode, mut xs: Value, env: &mut Uiua) -> UiuaResult {
 }
 
 fn each2(f: SigNode, mut xs: Value, mut ys: Value, env: &mut Uiua) -> UiuaResult {
-    if let Some((f, ..)) = f_dy_fast_fn(f.node.as_slice(), env) {
+    if let Some((f, ..)) = f_dy_fast_fn(f.node.as_slice()) {
         let xrank = xs.rank();
         let yrank = ys.rank();
         let val = f(xs, ys, xrank, yrank, env)?;
@@ -721,7 +721,7 @@ fn rows2(f: SigNode, mut xs: Value, mut ys: Value, inv: bool, env: &mut Uiua) ->
                 )));
             }
             if !inv {
-                if let Some((f, a, b)) = f_dy_fast_fn(f.node.as_slice(), env) {
+                if let Some((f, a, b)) = f_dy_fast_fn(f.node.as_slice()) {
                     let val = f(xs, ys, a + 1, b + 1, env)?;
                     env.push(val);
                     return Ok(());

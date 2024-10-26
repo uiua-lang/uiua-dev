@@ -158,10 +158,8 @@ mod fill;
 pub mod format;
 mod function;
 mod grid_fmt;
-mod instr;
 mod lex;
 pub mod lsp;
-mod optimize;
 mod parse;
 mod primitive;
 #[doc(hidden)]
@@ -189,7 +187,6 @@ pub use self::{
     error::*,
     ffi::*,
     function::*,
-    instr::*,
     lex::is_ident_char,
     lex::*,
     lsp::{spans, SpanKind},
