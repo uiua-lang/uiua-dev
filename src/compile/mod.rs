@@ -111,6 +111,8 @@ impl Default for Compiler {
 #[derive(Default)]
 struct BindingPrelude {
     comment: Option<EcoString>,
+    track_caller: bool,
+    no_inline: bool,
 }
 
 /// A Uiua module
@@ -575,11 +577,9 @@ code:
                         }
                         line.clear();
                     }
-                    Word::SemanticComment(SemanticComment::NoInline) => {
-                        todo!()
-                    }
+                    Word::SemanticComment(SemanticComment::NoInline) => prelude.no_inline = true,
                     Word::SemanticComment(SemanticComment::TrackCaller) => {
-                        todo!()
+                        prelude.track_caller = true
                     }
                     _ => *prelude = BindingPrelude::default(),
                 }
@@ -882,6 +882,12 @@ code:
     }
     fn words(&mut self, mut words: Vec<Sp<Word>>) -> UiuaResult<Node> {
         words.retain(|word| word.value.is_code());
+        let mut sem = None;
+        if let Some(word) = words.last() {
+            if let Word::SemanticComment(com) = word.value {
+                sem = Some(words.pop().unwrap().span.sp(com));
+            }
+        }
         words.reverse();
         #[derive(Debug, Clone)]
         struct PrevWord(Option<Primitive>, Option<Signature>, CodeSpan);
@@ -947,6 +953,9 @@ code:
             nodes.push(node);
             a = b;
             b = Some(PrevWord(prim, sig, span));
+        }
+        if let Some(sem) = sem {
+            nodes = self.semantic_comment(sem.value, sem.span, nodes);
         }
         Ok(nodes)
     }
@@ -1192,8 +1201,8 @@ code:
                 // We could error here, but it's easier to handle it higher up
                 Node::empty()
             }
-            Word::SemanticComment(sc) => {
-                self.semantic_comment(sc, word.span);
+            Word::SemanticComment(_) => {
+                // Semantic comments are handled higher up
                 Node::empty()
             }
             Word::OutputComment { i, n } => Node::SetOutputComment { i, n },
@@ -1201,19 +1210,18 @@ code:
             Word::Comment(_) | Word::Spaces | Word::BreakLine | Word::FlipLine => Node::empty(),
         })
     }
-    fn semantic_comment(&mut self, comment: SemanticComment, span: CodeSpan) {
+    #[must_use]
+    fn semantic_comment(&mut self, comment: SemanticComment, span: CodeSpan, inner: Node) -> Node {
         match comment {
             SemanticComment::Experimental => {
                 self.scope.experimental = true;
+                inner
             }
-            SemanticComment::NoInline => {
-                todo!("# No inline!")
-            }
-            SemanticComment::TrackCaller => {
-                todo!("# Track caller!")
-            }
+            SemanticComment::NoInline => Node::NoInline(inner.into()),
+            SemanticComment::TrackCaller => Node::TrackCaller(inner.into()),
             SemanticComment::Boo => {
                 self.add_error(span, "The compiler is scared!");
+                inner
             }
         }
     }

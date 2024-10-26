@@ -65,7 +65,6 @@ impl Compiler {
             span: usize,
             global_index: usize,
             comment: Option<String>,
-            /// (instrs, validation_only)
             validator: Option<(Node, bool, CodeSpan)>,
             init: Option<SigNode>,
         }
@@ -94,26 +93,6 @@ impl Compiler {
                         })
                         .collect::<String>()
                 });
-                // Collect flags
-                if let Some(default) = &mut data_field.init {
-                    if let Some(word) = default.words.pop() {
-                        match word.value {
-                            Word::Comment(com) => {
-                                if comment.is_none() {
-                                    comment = Some(com)
-                                }
-                            }
-                            Word::SemanticComment(SemanticComment::NoInline) => {
-                                todo!()
-                            }
-                            Word::SemanticComment(SemanticComment::TrackCaller) => {
-                                todo!()
-                            }
-                            Word::SemanticComment(sem) => self.semantic_comment(sem, word.span),
-                            _ => default.words.push(word),
-                        }
-                    }
-                }
                 // Compile validator
                 let validator = if let Some(validator) = data_field.validator {
                     let mut sn = self.words_sig(validator.words)?;
@@ -152,7 +131,21 @@ impl Compiler {
                 {
                     data_field.init = None;
                 }
-                let init = if let Some(init) = data_field.init {
+                let init = if let Some(mut init) = data_field.init {
+                    // Process comment
+                    let mut sem = None;
+                    if let Some(word) = init.words.pop() {
+                        match word.value {
+                            Word::Comment(com) => {
+                                if comment.is_none() {
+                                    comment = Some(com)
+                                }
+                            }
+                            Word::SemanticComment(com) => sem = Some(word.span.sp(com)),
+                            _ => init.words.push(word),
+                        }
+                    }
+                    // Compile words
                     let mut sn = self.words_sig(init.words)?;
                     if let Some((va_node, ..)) = &validator {
                         sn.node.push(va_node.clone());
@@ -167,22 +160,18 @@ impl Compiler {
                             ),
                         );
                     }
+                    if let Some(sem) = sem {
+                        sn = SigNode::new(
+                            self.semantic_comment(sem.value, sem.span, sn.node),
+                            sn.sig,
+                        );
+                    }
                     Some(sn)
                 } else {
                     validator
                         .as_ref()
                         .map(|(va_node, ..)| SigNode::new(va_node.clone(), Signature::new(1, 1)))
                 };
-                if let Some(mut comments) = data_field.comments {
-                    for sem in [SemanticComment::NoInline, SemanticComment::TrackCaller] {
-                        if comments.semantic.remove(&sem).is_some() {
-                            todo!()
-                        }
-                    }
-                    for (sem, span) in comments.semantic {
-                        self.semantic_comment(sem, span);
-                    }
-                }
                 fields.push(Field {
                     name: data_field.name.value,
                     name_span: data_field.name.span,

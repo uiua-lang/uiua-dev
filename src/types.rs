@@ -106,8 +106,9 @@ where
         stack,
         _under_stack: Vec::new(),
         array_stack: Vec::new(),
+        asm: &env.asm,
     };
-    match rt.node(&f.node, &env.asm) {
+    match rt.node(&f.node) {
         Ok(()) => {
             let per_meta = take(per_meta);
             let count = rt.stack.len();
@@ -128,19 +129,20 @@ where
     }
 }
 
-struct TypeRt {
+struct TypeRt<'a> {
     stack: Vec<Type>,
     _under_stack: Vec<Type>,
     array_stack: Vec<usize>,
+    asm: &'a Assembly,
 }
 
-impl TypeRt {
+impl<'a> TypeRt<'a> {
     #[allow(clippy::collapsible_match)]
-    fn node(&mut self, node: &Node, asm: &Assembly) -> Result<(), TypeError> {
+    fn node(&mut self, node: &Node) -> Result<(), TypeError> {
         use Primitive as P;
         match node {
             Node::Push(val) => self.stack.push(val.row_ty()),
-            Node::Call(f, _) => self.node(&asm[f], asm)?,
+            Node::Call(f, _) => self.node(&self.asm[f])?,
             Node::Prim(prim, _) => match prim {
                 P::Dup => {
                     let val = self.pop()?;
@@ -258,6 +260,7 @@ impl TypeRt {
                 }
                 _ => return Err(TypeError::NotSupported),
             },
+            Node::NoInline(inner) | Node::TrackCaller(inner) => self.node(inner)?,
             _ => return Err(TypeError::NotSupported),
         }
         Ok(())
