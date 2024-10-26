@@ -170,6 +170,8 @@ node!(
     PushUnder(n(usize), span(usize)),
     CopyToUnder(n(usize), span(usize)),
     PopUnder(n(usize), span(usize)),
+    NoInline(inner(Box<Node>)),
+    TrackCaller(inner(Box<Node>)),
 );
 
 /// A node with a signature
@@ -517,6 +519,10 @@ impl fmt::Debug for Node {
             Node::PushUnder(count, _) => write!(f, "push-u-{count}"),
             Node::CopyToUnder(count, _) => write!(f, "copy-u-{count}"),
             Node::PopUnder(count, _) => write!(f, "pop-u-{count}"),
+            Node::NoInline(inner) => f.debug_tuple("no-inline").field(inner.as_ref()).finish(),
+            Node::TrackCaller(inner) => {
+                f.debug_tuple("track-caller").field(inner.as_ref()).finish()
+            }
         }
     }
 }

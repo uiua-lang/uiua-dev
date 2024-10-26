@@ -650,6 +650,11 @@ at {}",
                 env.rt.stack.extend(env.rt.under_stack.drain(start..).rev());
                 Ok(())
             }),
+            Node::NoInline(inner) => self.exec(*inner),
+            Node::TrackCaller(inner) => {
+                self.rt.call_stack.last_mut().unwrap().track_caller = true;
+                self.exec(*inner)
+            }
         };
         if self.rt.time_instrs {
             let end_time = self.rt.backend.now();

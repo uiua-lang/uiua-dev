@@ -192,7 +192,7 @@ impl Compiler {
         // A non-macro binding
         let make_fn = {
             let name = name.clone();
-            move |node: Node, sig: Signature, comp: &mut Compiler| {
+            move |mut node: Node, sig: Signature, comp: &mut Compiler| {
                 // Diagnostic for function that doesn't consume its arguments
                 if let [Node::Prim(Primitive::Dup, span), rest @ ..] = node.as_slice() {
                     if let Span::Code(dup_span) = comp.get_span(*span) {
@@ -207,6 +207,12 @@ impl Compiler {
                             }
                         }
                     }
+                }
+                if prelude.track_caller {
+                    node = Node::TrackCaller(node.into());
+                }
+                if prelude.no_inline {
+                    node = Node::NoInline(node.into());
                 }
                 comp.asm.add_function(FunctionId::Named(name), sig, node)
             }

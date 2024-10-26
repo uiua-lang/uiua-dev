@@ -519,6 +519,7 @@ impl VirtualEnv {
                     self.stack.push(self.under.pop());
                 }
             }
+            Node::TrackCaller(inner) | Node::NoInline(inner) => self.node(inner)?,
         }
         // println!("{instr:?} -> {}/{}", -(self.min_height as i32), self.height);
         Ok(())
