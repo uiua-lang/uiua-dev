@@ -925,6 +925,16 @@ impl Value {
     pub fn count_unique(&self) -> usize {
         val_as_arr!(self, Array::count_unique)
     }
+    /// Check that all values are true
+    pub fn all_true(&self) -> bool {
+        match self {
+            Value::Num(arr) => arr.data.iter().all(|&n| n == 1.0),
+            Value::Byte(arr) => arr.data.iter().all(|&b| b == 1),
+            Value::Char(_) => false,
+            Value::Box(arr) => arr.data.iter().all(|Boxed(val)| val.all_true()),
+            Value::Complex(arr) => arr.data.iter().all(|&c| c.re == 1.0 && c.im == 1.0),
+        }
+    }
 }
 
 impl<T: ArrayValue> Array<T> {

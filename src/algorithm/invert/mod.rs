@@ -79,7 +79,6 @@ as_node!(A, B, C);
 as_node!(A, B, C, D);
 as_node!(A, B, C, D, E);
 as_node!(A, B, C, D, E, F);
-as_node!(A, B, C, D, E, F, G, H, I);
 
 trait SpanFromNodes: Sized + fmt::Debug + Sync {
     fn span_from_nodes<'a>(

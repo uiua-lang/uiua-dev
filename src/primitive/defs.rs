@@ -1750,30 +1750,6 @@ primitive!(
     ///
     /// See also: [choose]
     (2, Permute, DyadicArray, "permute"),
-    /// Find the first deep index of one array in another
-    ///
-    /// While [indexof] returns an array of top-level indices into the searched-in array, [coordinate] returns an array of multi-dimensional coordinates.
-    /// ex: # Experimental!
-    ///   : ⟔,, 14 ↯2_3_4⇡24
-    /// ex: # Experimental!
-    ///   : ⟔,, [4 5 6 7] ↯2_3_4⇡24
-    /// ex: # Experimental!
-    ///   : ⟔,, +12↯3_4⇡12 ↯2_3_4⇡24
-    /// ex: # Experimental!
-    ///   : ⟔,, [1 2 3] [2 1 4 5 3]
-    /// If the index cannot be found, the [shape] of the searched-in array is returned.
-    /// ex: # Experimental!
-    ///   : ⟔,, 100 ↯2_3_4⇡24
-    /// If you want to get multiple coordinates from an array, you may need to use [rows] and [fix].
-    /// ex: # Experimental!
-    ///   : ≡⟔⊙¤,, [1 2 3 4 5] [1_5_3 6_2_4]
-    /// You can use the returned indices with [pick] to get the rows that were found.
-    /// If you expect one of the searched-for rows to be missing, you can use [fill] to set a default value.
-    /// ex: # Experimental!
-    ///   : A ← [2 3 5 7 11 13]
-    ///   : .≡⟔⊙¤,A [1_2_3 4_5_6]
-    ///   : ⬚∞⊡:A
-    (2, Coordinate, DyadicArray, ("coordinate", '⟔')),
     /// Apply a reducing function to an array
     ///
     /// For reducing with an initial value, see [fold].
@@ -3120,65 +3096,6 @@ primitive!(
     /// At the moment, this is only useful for debugging.
     /// While theoretically, it could be used in a macro to choose a branch of a [switch] appropriate for the function, this is not yet possible because of the way that macros and signature checking work.
     (0(2)[1], Sig, Comptime, "signature"),
-    /// Generate a constructor and getters for a struct
-    ///
-    /// The argument must be stack array syntax using either `[]` or `{}`.
-    /// The array must contain only names.
-    /// A `New` function will be generated, as well as a getter for each name.
-    /// The `New` function creates an array of as many items as there are names.
-    /// Because the functions are created in the current scope, [struct] is meant to be used in a module.
-    /// ex: # Experimental!
-    ///   : ---Person
-    ///   :   struct{Name Age}
-    ///   : ---
-    ///   : Person~New "Dan" 31
-    ///   : Person~Name .
-    /// You can use [under] to turn the getters into setters.
-    /// You can simulate "methods" by adding functions to the module.
-    /// ex: # Experimental!
-    ///   : ---Person
-    ///   :   struct{Name Age}
-    ///   :   PassYear ← ⍜Age(+1)
-    ///   : ---
-    ///   : Person~New "Dan" 31
-    ///   : Person~PassYear
-    ///   : ⍜Person~Name⋅"Daniel"
-    /// The created struct objects are just normal arrays that can be used like any other array.
-    /// ex: # Experimental!
-    ///   : ---Color
-    ///   :   struct[r g b a]
-    ///   : ---
-    ///   : ⇌ Color~New 0.1 0.2 0.3 1
-    /// Additionally, a `Fields` constant is created that contains the names of the struct's fields.
-    /// ex: # Experimental!
-    ///   : ---User
-    ///   :   struct{Username Salt Hashed Email}
-    ///   : ---
-    ///   : User~Fields
-    /// If a field name is followed by a function in `()`s, the field will be initialized with that value rather than by the `New` function.
-    /// ex: # Experimental!
-    ///   : ---Foo
-    ///   :   struct{Name Count(0)}
-    ///   : ---
-    ///   : Foo "Uiua"
-    /// If a field name is followed by a number, the constructor will validate that field's [type] against it.
-    /// ex! # Experimental!
-    ///   : ---Foo
-    ///   :   struct{Name 2 Count(0)}
-    ///   : ---
-    ///   : Foo "Uiua"
-    ///   : Foo 5
-    /// An `Args!` macro is generated that allows fields to be used as pseudo-arguments.
-    /// By using this macro in the a `Call` function, you can simulate local variables.
-    /// ex: # Experimental!
-    ///   : ---Foo
-    ///   :   struct[a b c]
-    ///   :   Call ← Args![a c c b b a]
-    ///   : ---
-    ///   : Foo 1 2 3
-    ///
-    /// The syntax using `[]` and `{}` was developed by Uiua community member *janMakoso*.
-    (0(0)[1], Struct, Misc, "struct"),
     /// Run the Fast Fourier Transform on an array
     ///
     /// The Fast Fourier Transform (FFT) is an optimized algorithm for computing the Discrete Fourier Transform (DFT). The DFT is a transformation that converts a signal from the time domain to the frequency domain.
@@ -3533,6 +3450,8 @@ impl_primitive!(
     (1, UnDatetime),
     (2, ProgressiveIndexOf),
     (2(0), MatchPattern),
+    (2(1), MatchLe),
+    (2(1), MatchGe),
     (1(2), ImageDecode),
     (1(2), GifDecode),
     (1(3), AudioDecode),
