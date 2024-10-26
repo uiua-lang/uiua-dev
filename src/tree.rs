@@ -11,8 +11,7 @@ use ecow::{eco_vec, EcoString, EcoVec};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Assembly, BindingKind, DynamicFunction, Function, ImplPrimitive, Primitive, Purity, Signature,
-    Value,
+    Assembly, BindingKind, DynamicFunction, Function, ImplPrimitive, Primitive, Signature, Value,
 };
 
 macro_rules! node {
@@ -26,7 +25,9 @@ macro_rules! node {
             $({$($field_name:ident : $field_type:ty),* $(,)?})?
         )
     ),* $(,)?) => {
-        /// A Uiua bytecode instruction
+        /// A Uiua execution tree node
+        ///
+        /// A node is a tree structure of instructions. It can be used as both a single unit as well as a list.
         #[derive(Clone, Serialize, Deserialize)]
         #[repr(u8)]
         #[allow(missing_docs)]
@@ -181,14 +182,17 @@ node!(
     (20, Dynamic(func(DynamicFunction)))
 );
 
-/// A node argument
+/// A node with a signature
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct SigNode {
+    /// The node
     pub node: Node,
+    /// The signature
     pub sig: Signature,
 }
 
 impl SigNode {
+    /// Create a new signature node
     pub fn new(node: impl Into<Node>, sig: impl Into<Signature>) -> Self {
         Self {
             node: node.into(),
@@ -205,14 +209,19 @@ impl From<SigNode> for Node {
 
 pub(crate) type Ops = EcoVec<SigNode>;
 
+/// A custom inverse node
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CustomInverse {
+    /// The normal function to call
     pub normal: SigNode,
+    /// The un inverse
     #[serde(skip_serializing_if = "Option::is_none")]
     pub un: Option<SigNode>,
+    /// The under inverse
     #[serde(skip_serializing_if = "Option::is_none")]
     pub under: Option<(SigNode, SigNode)>,
+    /// The anti inverse
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anti: Option<SigNode>,
 }
@@ -224,9 +233,11 @@ impl Default for Node {
 }
 
 impl Node {
-    pub fn empty() -> Self {
+    /// Create an empty node
+    pub const fn empty() -> Self {
         Self::Run(EcoVec::new())
     }
+    /// Create a push node from a value
     pub fn new_push(val: impl Into<Value>) -> Self {
         Self::Push(val.into())
     }
@@ -254,6 +265,7 @@ impl Node {
             }
         }
     }
+    /// Slice the node to get a subnode
     pub fn slice<R>(&self, range: R) -> Self
     where
         R: SliceIndex<[Node], Output = [Node]>,
@@ -326,7 +338,6 @@ impl Node {
         if let Node::Run(nodes) = self {
             if nodes.is_empty() {
                 *self = node;
-                return;
             } else {
                 match node {
                     Node::Run(other) => nodes.extend(other),
@@ -349,7 +360,6 @@ impl Node {
         if let Node::Run(nodes) = self {
             if nodes.is_empty() {
                 *self = node;
-                return;
             } else {
                 match node {
                     Node::Run(mut other) => {
@@ -368,6 +378,7 @@ impl Node {
             self.as_vec().insert(0, node);
         }
     }
+    /// Pop a node from the end of this node
     pub fn pop(&mut self) -> Option<Node> {
         match self {
             Node::Run(nodes) => {
@@ -513,8 +524,20 @@ impl fmt::Debug for Node {
     }
 }
 
+/// Levels of purity for an operation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Purity {
+    /// The operation visibly affects the environment
+    Mutating,
+    /// The operation reads from the environment but does not visibly affect it
+    Impure,
+    /// The operation is completely pure
+    Pure,
+}
+
 impl Node {
-    pub fn is_pure<'a>(&'a self, purity: Purity, asm: &'a Assembly) -> bool {
+    /// Check if the node is pure
+    pub fn is_pure<'a>(&'a self, min_purity: Purity, asm: &'a Assembly) -> bool {
         fn recurse<'a>(
             node: &'a Node,
             purity: Purity,
@@ -556,8 +579,9 @@ impl Node {
                 _ => true,
             }
         }
-        recurse(self, purity, asm, &mut HashSet::new())
+        recurse(self, min_purity, asm, &mut HashSet::new())
     }
+    /// Check if the node has a bound runtime
     pub fn is_limit_bounded<'a>(&'a self, asm: &'a Assembly) -> bool {
         fn recurse<'a>(
             node: &'a Node,

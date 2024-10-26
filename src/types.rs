@@ -3,8 +3,8 @@ use std::{cmp::Ordering, mem::take};
 use enum_iterator::Sequence;
 
 use crate::{
-    cowslice::CowSlice, Array, Assembly, Boxed, Complex, Function, ImplPrimitive, Node,
-    PersistentMeta, Primitive, Shape, SigNode, TempStack, Uiua, Value,
+    cowslice::CowSlice, Array, Assembly, Boxed, Complex, ImplPrimitive, Node, PersistentMeta,
+    Primitive, Shape, SigNode, TempStack, Uiua, Value,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -62,7 +62,6 @@ impl Type {
 
 enum TypeError {
     StackUnderflow,
-    FunctionStackUnderflow,
     NotSupported,
 }
 
@@ -109,7 +108,6 @@ where
         stack,
         temp_stacks: Default::default(),
         array_stack: Vec::new(),
-        function_stack: Vec::new(),
     };
     match rt.node(&f.node, &env.asm) {
         Ok(()) => {
@@ -132,22 +130,15 @@ where
     }
 }
 
-struct TypeRt<'a> {
+struct TypeRt {
     stack: Vec<Type>,
     temp_stacks: [Vec<Type>; TempStack::CARDINALITY],
     array_stack: Vec<usize>,
-    function_stack: Vec<&'a Function>,
 }
 
-impl<'a> TypeRt<'a> {
-    fn nodes(&mut self, nodes: &'a [Node], asm: &'a Assembly) -> Result<(), TypeError> {
-        for instr in nodes {
-            self.node(instr, asm)?;
-        }
-        Ok(())
-    }
+impl TypeRt {
     #[allow(clippy::collapsible_match)]
-    fn node(&mut self, node: &'a Node, asm: &'a Assembly) -> Result<(), TypeError> {
+    fn node(&mut self, node: &Node, asm: &Assembly) -> Result<(), TypeError> {
         use Primitive as P;
         match node {
             Node::Push(val) => self.stack.push(val.row_ty()),
@@ -279,10 +270,5 @@ impl<'a> TypeRt<'a> {
             *height = (*height).min(self.stack.len());
         }
         Ok(ty)
-    }
-    fn pop_func(&mut self) -> Result<&'a Function, TypeError> {
-        self.function_stack
-            .pop()
-            .ok_or(TypeError::FunctionStackUnderflow)
     }
 }

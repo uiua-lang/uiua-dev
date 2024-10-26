@@ -390,12 +390,7 @@ macro_rules! fill {
         }
         env.exec(fill)?;
         let fill_value = env.pop("fill value")?;
-        match f.id {
-            FunctionId::Named(_) | FunctionId::Macro(..) => {
-                env.$with(fill_value, |env| env.without_fill(|env| env.exec(f)))
-            }
-            _ => env.$with(fill_value, |env| env.exec(f)),
-        }?;
+        env.$with(fill_value, |env| env.exec(f))?;
     }};
 }
 
@@ -987,6 +982,7 @@ impl Primitive {
         }
         Ok(())
     }
+    /// Run a primitive as a modifier
     pub fn run_mod(&self, ops: Ops, env: &mut Uiua) -> UiuaResult {
         match self {
             Primitive::Reduce => reduce::reduce(ops, 0, env)?,
@@ -1049,6 +1045,7 @@ impl Primitive {
                 let [f] = get_ops(ops, env)?;
                 env.spawn(f.sig.args, true, f)?;
             }
+            Primitive::Sys(op) => op.run_mod(ops, env)?,
             prim => {
                 return Err(env.error(if prim.modifier_args().is_some() {
                     format!(
@@ -1607,6 +1604,7 @@ fn trace_n(env: &mut Uiua, n: usize, inverse: bool, stack_sub: bool) -> UiuaResu
         .enumerate()
         .flat_map(|(i, lines)| {
             if let Some((_, id)) = boundaries.iter().find(|(height, _)| i == *height) {
+                let id = id.as_ref().map_or_else(String::new, ToString::to_string);
                 vec![vec![format!("│╴╴╴{id}╶╶╶\n")], lines]
             } else {
                 vec![lines]
@@ -1645,6 +1643,7 @@ fn stack(env: &Uiua, inverse: bool) -> UiuaResult {
         .enumerate()
         .flat_map(|(i, lines)| {
             if let Some((_, id)) = boundaries.iter().find(|(height, _)| i == *height) {
+                let id = id.as_ref().map_or_else(String::new, ToString::to_string);
                 vec![vec![format!("│╴╴╴{id}╶╶╶\n")], lines]
             } else {
                 vec![lines]
@@ -1696,6 +1695,7 @@ fn dump(ops: Ops, env: &mut Uiua, inverse: bool) -> UiuaResult {
         .enumerate()
         .flat_map(|(i, lines)| {
             if let Some((_, id)) = boundaries.iter().find(|(height, _)| i == *height) {
+                let id = id.as_ref().map_or_else(String::new, ToString::to_string);
                 vec![vec![format!("│╴╴╴{id}╶╶╶\n")], lines]
             } else {
                 vec![lines]
@@ -1714,15 +1714,13 @@ fn dump(ops: Ops, env: &mut Uiua, inverse: bool) -> UiuaResult {
     Ok(())
 }
 
-fn stack_boundaries(env: &Uiua) -> Vec<(usize, &FunctionId)> {
-    let mut boundaries: Vec<(usize, &FunctionId)> = Vec::new();
+fn stack_boundaries(env: &Uiua) -> Vec<(usize, &Option<FunctionId>)> {
+    let mut boundaries: Vec<(usize, &Option<FunctionId>)> = Vec::new();
     let mut height = 0;
     let mut reduced = 0;
     for (i, frame) in env.call_frames().rev().enumerate() {
         if i == 0 {
-            let before_sig = instrs_signature(&env.instrs(frame.slice)[..frame.pc])
-                .ok()
-                .unwrap_or(frame.sig);
+            let before_sig = frame.sig;
             reduced = before_sig.args as isize - before_sig.outputs as isize;
         }
         height = height.max(((frame.sig.args as isize) - reduced).max(0) as usize);

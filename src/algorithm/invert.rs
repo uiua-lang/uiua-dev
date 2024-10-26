@@ -1,9 +1,9 @@
-use std::{error::Error, fmt};
+use std::{cell::RefCell, collections::HashMap, error::Error, fmt};
 
 use crate::{
     assembly::{Assembly, Function},
     check::SigCheckError,
-    FunctionId, Node, Primitive, Signature,
+    FunctionId, Node, Primitive, Signature, Uiua, UiuaResult,
 };
 
 pub(crate) const DEBUG: bool = false;
@@ -105,7 +105,53 @@ impl From<()> for InversionError {
 
 impl Error for InversionError {}
 
+use ecow::{EcoString, EcoVec};
+use regex::Regex;
 use InversionError::Generic;
 fn generic<T>() -> InversionResult<T> {
     Err(InversionError::Generic)
+}
+
+pub(crate) fn match_format_pattern(parts: EcoVec<EcoString>, env: &mut Uiua) -> UiuaResult {
+    let val = env
+        .pop(1)?
+        .as_string(env, "Matching a format pattern expects a string")?;
+    match parts.as_slice() {
+        [] => {}
+        [part] => {
+            if val != part.as_ref() {
+                return Err(env.error("String did not match pattern exactly"));
+            }
+        }
+        _ => {
+            thread_local! {
+                static CACHE: RefCell<HashMap<EcoVec<EcoString>, Regex>> = RefCell::new(HashMap::new());
+            }
+            CACHE.with(|cache| {
+                let mut cache = cache.borrow_mut();
+                let re = cache.entry(parts.clone()).or_insert_with(|| {
+                    let mut re = String::new();
+                    re.push_str("(?s)^");
+                    for (i, part) in parts.iter().enumerate() {
+                        if i > 0 {
+                            re.push_str("(.+?|.*)");
+                        }
+                        re.push_str(&regex::escape(part));
+                    }
+                    re.push('$');
+                    Regex::new(&re).unwrap()
+                });
+                if !re.is_match(val.as_ref()) {
+                    return Err(env.error("String did not match format string pattern"));
+                }
+                let captures = re.captures(val.as_ref()).unwrap();
+                let caps: Vec<_> = captures.iter().skip(1).flatten().collect();
+                for cap in caps.into_iter().rev() {
+                    env.push(cap.as_str());
+                }
+                Ok(())
+            })?;
+        }
+    }
+    Ok(())
 }

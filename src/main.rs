@@ -73,7 +73,7 @@ fn main() {
     #[cfg(feature = "stand")]
     if let Some(asm) = &*uiua::stand::STAND_ASM {
         let mut rt = Uiua::with_native_sys().with_args(env::args().skip(1).collect());
-        rt.run_asm(asm).unwrap_or_else(fail);
+        rt.run_asm(asm.clone()).unwrap_or_else(fail);
         print_stack(&rt.take_stack(), true);
         return;
     }
@@ -167,13 +167,12 @@ fn main() {
                         }
                     }
                 };
-                let mut assembly = Compiler::with_backend(NativeSys)
+                let assembly = Compiler::with_backend(NativeSys)
                     .mode(RunMode::Normal)
                     .print_diagnostics(true)
                     .load_file(&path)
                     .unwrap_or_else(fail)
                     .finish();
-                assembly.remove_dead_code();
                 let output = output.unwrap_or_else(|| path.with_extension("uasm"));
                 let uasm = assembly.to_uasm();
                 if let Err(e) = fs::write(output, uasm) {
