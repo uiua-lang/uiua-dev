@@ -155,7 +155,7 @@ node!(
     (3, ImplPrim(prim(ImplPrimitive), span(usize))),
     (4, Mod(prim(Primitive), args(Ops), span(usize))),
     (5, ImplMod(prim(ImplPrimitive), args(Ops), span(usize))),
-    (6, Array { inner: Box<SigNode>, boxed: bool, span: usize }),
+    (6, Array { len: usize, inner: Box<Node>, boxed: bool, span: usize }),
     (7, Call(func(Function), span(usize))),
     (8, CallGlobal(index(usize), sig(Signature))),
     (9, CallMacro(index(usize), sig(Signature), args(Ops))),
@@ -416,10 +416,16 @@ impl Node {
             _ => None,
         }
     }
-    pub(crate) fn as_impl_primitive(&self) -> Option<ImplPrimitive> {
+    pub(crate) fn _as_impl_primitive(&self) -> Option<ImplPrimitive> {
         self.as_flipped_impl_primitive()
             .filter(|(_, flipped)| !flipped)
             .map(|(prim, _)| prim)
+    }
+}
+
+impl From<&[Node]> for Node {
+    fn from(nodes: &[Node]) -> Self {
+        Node::from_iter(nodes.iter().cloned())
     }
 }
 
@@ -464,13 +470,11 @@ impl fmt::Debug for Node {
                 tuple.finish()
             }
             Node::Array {
-                inner, boxed: true, ..
-            } => write!(f, "{{{}{}}}", Primitive::Len, inner.sig.outputs),
+                len, boxed: true, ..
+            } => write!(f, "{{{}{}}}", Primitive::Len, len),
             Node::Array {
-                inner,
-                boxed: false,
-                ..
-            } => write!(f, "[{}{}]", Primitive::Len, inner.sig.outputs),
+                len, boxed: false, ..
+            } => write!(f, "[{}{}]", Primitive::Len, len),
             Node::Call(func, _) => write!(f, "call {}", func.id),
             Node::CallGlobal(index, _) => write!(f, "<call global {index}>"),
             Node::CallMacro(index, _, args) => {

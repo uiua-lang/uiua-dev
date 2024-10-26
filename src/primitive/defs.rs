@@ -825,7 +825,7 @@ primitive!(
     /// ex: ◿ 4 ¯21
     /// If you prefer the negative modulo instead of the remainder, you may use [under]:
     /// ex: ⍜⊙⌵◿ 4 ¯21
-    (2, Mod, DyadicPervasive, ("modulus", '◿')),
+    (2, Modulus, DyadicPervasive, ("modulus", '◿')),
     /// Raise a value to a power
     ///
     /// The second value is raised to the power of the first.
@@ -3517,9 +3517,9 @@ impl_primitive!(
     (0[2], UnFill),
     (1, Primes),
     (1, UnBox),
-    (2, UnOnDrop),
-    (2, UnOnSelect),
-    (2, UnOnPick),
+    (2, AntiDrop),
+    (2, AntiSelect),
+    (2, AntiPick),
     (1(2), UnJoin),
     (1(2), UnJoinEnd),
     (2(2), UnJoinShape),

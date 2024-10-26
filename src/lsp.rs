@@ -3,7 +3,6 @@
 //! Even without the `lsp` feature enabled, this module still provides some useful types and functions for working with Uiua code in an IDE or text editor.
 
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, HashMap, HashSet},
     fmt,
     path::PathBuf,
@@ -103,7 +102,6 @@ pub fn spans_with_compiler(input: &str, compiler: &Compiler) -> (Vec<Sp<SpanKind
         code_meta: compiler.code_meta,
         errors: Vec::new(),
         diagnostics: Vec::new(),
-        inversion_asm: ThreadLocal::new(),
     };
     (spanner.items_spans(&items), spanner.asm.inputs.clone())
 }
@@ -229,7 +227,6 @@ struct Spanner {
     errors: Vec<UiuaError>,
     #[allow(dead_code)]
     diagnostics: Vec<crate::Diagnostic>,
-    inversion_asm: ThreadLocal<RefCell<Assembly>>,
 }
 
 impl Spanner {
@@ -247,7 +244,6 @@ impl Spanner {
             code_meta: compiler.code_meta,
             errors,
             diagnostics,
-            inversion_asm: ThreadLocal::new(),
         }
     }
     fn inputs(&self) -> &Inputs {
@@ -465,28 +461,10 @@ impl Spanner {
             BindingKind::Const(val) => BindingDocsKind::Constant(val.clone()),
             BindingKind::Func(f) => BindingDocsKind::Function {
                 sig: f.sig,
-                invertible: {
-                    let node = &self.asm[f];
-                    let asm = self.inversion_asm.get_or(|| self.asm.clone().into());
-                    let mut asm = asm.borrow_mut();
-                    let start_len = asm.root.len();
-                    let invertible = node.un_inverse(&mut asm).is_ok();
-                    if asm.root.len() > start_len {
-                        asm.root.truncate(start_len);
-                    }
-                    invertible
-                },
-                underable: {
-                    let node = &self.asm[f];
-                    let asm = self.inversion_asm.get_or(|| self.asm.clone().into());
-                    let mut asm = asm.borrow_mut();
-                    let start_len = asm.root.len();
-                    let invertible = node.under_inverse(Signature::new(1, 1), &mut asm).is_ok();
-                    if asm.root.len() > start_len {
-                        asm.root.truncate(start_len);
-                    }
-                    invertible
-                },
+                invertible: self.asm[f].un_inverse(&self.asm).is_ok(),
+                underable: self.asm[f]
+                    .under_inverse(Signature::new(1, 1), &self.asm)
+                    .is_ok(),
                 pure: self.asm[f].is_pure(Purity::Pure, &self.asm),
             },
             BindingKind::IndexMacro(args) => BindingDocsKind::Modifier(*args),
@@ -730,7 +708,6 @@ impl Spanner {
 #[cfg(feature = "lsp")]
 #[doc(hidden)]
 pub use server::run_language_server;
-use thread_local::ThreadLocal;
 
 #[cfg(feature = "lsp")]
 mod server {
