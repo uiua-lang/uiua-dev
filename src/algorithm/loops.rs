@@ -253,7 +253,7 @@ pub fn do_(ops: Ops, env: &mut Uiua) -> UiuaResult {
             }
         }
         // Copy necessary condition args
-        env.dup_n(copy_count)?;
+        env.dup_values(copy_count, copy_count)?;
         // Call condition
         env.exec(cond.clone())?;
         // Break if condition is false

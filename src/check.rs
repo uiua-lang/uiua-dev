@@ -257,7 +257,7 @@ impl VirtualEnv {
                 self.push(BasicValue::Arr(items));
             }
             Node::Label(..) | Node::RemoveLabel(_) => self.handle_args_outputs(1, 1),
-            Node::Call(func, _) => self.handle_sig(func.sig()),
+            Node::Call(func, _) => self.handle_sig(func.sig),
             Node::CallMacro(_, sig, _) | Node::CallGlobal(_, sig) => self.handle_sig(*sig),
             Node::BindGlobal { .. } => self.handle_args_outputs(1, 0),
             Node::CustomInverse(cust, _) => self.handle_sig(cust.normal.sig),
@@ -440,7 +440,28 @@ impl VirtualEnv {
                 Dump => {
                     let [_] = get_args(args)?;
                 }
-                _ => todo!(),
+                Dip => {
+                    let [f] = get_args(args)?;
+                    self.handle_args_outputs(f.args + 1, f.outputs + 1);
+                }
+                Gap => {
+                    let [f] = get_args(args)?;
+                    self.handle_args_outputs(f.args + 1, f.outputs);
+                }
+                On | By => {
+                    let [f] = get_args(args)?;
+                    self.handle_args_outputs(f.args, f.outputs + 1);
+                }
+                Above | Below => {
+                    let [f] = get_args(args)?;
+                    self.handle_args_outputs(f.args.max(2), f.outputs + f.args.max(2));
+                }
+                prim => {
+                    return Err(SigCheckError::from(format!(
+                        "{} was checked as a modifier",
+                        prim.format()
+                    )))
+                }
             },
             Node::ImplMod(prim, args, _) => match prim {
                 ImplPrimitive::ReduceContent | ImplPrimitive::ReduceDepth(_) => {

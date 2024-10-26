@@ -464,7 +464,7 @@ impl Spanner {
         let kind = match &binfo.kind {
             BindingKind::Const(val) => BindingDocsKind::Constant(val.clone()),
             BindingKind::Func(f) => BindingDocsKind::Function {
-                sig: f.sig(),
+                sig: f.sig,
                 invertible: {
                     let node = &self.asm[f];
                     let asm = self.inversion_asm.get_or(|| self.asm.clone().into());

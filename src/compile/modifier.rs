@@ -519,6 +519,12 @@ impl Compiler {
         self.handle_primitive_deprecation(prim, &modified.modifier.span);
 
         Ok(Some(match prim {
+            Gap => {
+                let (SigNode { mut node, .. }, _) = self.monadic_modifier_op(modified)?;
+                let span = self.add_span(modified.modifier.span.clone());
+                node.prepend(Node::Prim(Primitive::Pop, span));
+                node
+            }
             Backward => {
                 let (SigNode { mut node, sig }, _) = self.monadic_modifier_op(modified)?;
                 if sig.args != 2 {
