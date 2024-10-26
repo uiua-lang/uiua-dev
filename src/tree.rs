@@ -179,7 +179,10 @@ node!(
         name: EcoString,
         span: usize,
     }),
-    (20, Dynamic(func(DynamicFunction)))
+    (20, Dynamic(func(DynamicFunction))),
+    (21, PushUnder(n(usize), span(usize))),
+    (22, CopyToUnder(n(usize), span(usize))),
+    (23, PopUnder(n(usize), span(usize))),
 );
 
 /// A node with a signature
@@ -524,6 +527,9 @@ impl fmt::Debug for Node {
                 write!(f, "<validate {name} as {type_num}>")
             }
             Node::Dynamic(func) => write!(f, "<dynamic function {}>", func.index),
+            Node::PushUnder(count, _) => write!(f, "push-u-{count}"),
+            Node::CopyToUnder(count, _) => write!(f, "copy-u-{count}"),
+            Node::PopUnder(count, _) => write!(f, "pop-u-{count}"),
         }
     }
 }

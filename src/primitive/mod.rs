@@ -196,7 +196,7 @@ impl fmt::Display for ImplPrimitive {
             UnClip => write!(f, "{Un}{}", Primitive::Sys(SysOp::Clip)),
             ProgressiveIndexOf => write!(f, "{Un}{By}{Select}"),
             UndoUnbits => write!(f, "{Under}{Un}{Bits}"),
-            UndoBase => write!(f, "{Under}{Base}"),
+            AntiBase => write!(f, "{Under}{Base}"),
             UndoReverse(_) => write!(f, "{Under}{Reverse}"),
             UndoTransposeN(..) => write!(f, "{Under}{Transpose}"),
             UndoRotate(_) => write!(f, "{Under}{Rotate}"),
@@ -205,7 +205,7 @@ impl fmt::Display for ImplPrimitive {
             UndoSelect => write!(f, "{Under}{Select}"),
             UndoPick => write!(f, "{Under}{Pick}"),
             UndoWhere => write!(f, "{Under}{Where}"),
-            UndoOrient => write!(f, "{Under}{Orient}"),
+            AntiOrient => write!(f, "{Under}{Orient}"),
             UndoInsert => write!(f, "{Under}{Insert}"),
             UndoRemove => write!(f, "{Under}{Remove}"),
             UndoPartition1 | UndoPartition2 => write!(f, "{Under}{Partition}"),
@@ -1261,7 +1261,7 @@ impl ImplPrimitive {
                 let val = env.pop(2)?;
                 env.push(val.undo_un_bits(&orig_shape, env)?);
             }
-            ImplPrimitive::UndoBase => env.dyadic_rr_env(Value::antibase)?,
+            ImplPrimitive::AntiBase => env.dyadic_rr_env(Value::antibase)?,
             &ImplPrimitive::UndoReverse(n) => {
                 env.touch_stack(n)?;
                 let end = env.stack_height() - n;
@@ -1335,7 +1335,7 @@ impl ImplPrimitive {
                 let mask = indices.undo_where(&shape, env)?;
                 env.push(mask);
             }
-            ImplPrimitive::UndoOrient => env.dyadic_ro_env(Value::anti_orient)?,
+            ImplPrimitive::AntiOrient => env.dyadic_ro_env(Value::anti_orient)?,
             ImplPrimitive::UndoRerank => {
                 let rank = env.pop(1)?;
                 let shape = env.pop(2)?;

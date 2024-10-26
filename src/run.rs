@@ -4,7 +4,6 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::HashMap,
-    fmt,
     hash::Hash,
     mem::{size_of, take},
     panic::{catch_unwind, AssertUnwindSafe},
@@ -15,8 +14,6 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
-use enum_iterator::{all, Sequence};
-use serde::*;
 use thread_local::ThreadLocal;
 
 use crate::{
@@ -41,8 +38,8 @@ pub struct Uiua {
 pub(crate) struct Runtime {
     /// The thread's stack
     pub(crate) stack: Vec<Value>,
-    /// The thread's temp stack for inlining
-    temp_stacks: [Vec<Value>; TempStack::CARDINALITY],
+    /// The thread's under stack
+    pub(crate) under_stack: Vec<Value>,
     /// The call stack
     pub(crate) call_stack: Vec<StackFrame>,
     /// The stack for tracking recursion points
@@ -172,33 +169,11 @@ impl FromStr for RunMode {
     }
 }
 
-/// A type of temporary stacks
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Sequence, Serialize, Deserialize,
-)]
-pub enum TempStack {
-    /// A stack used to hold values need to undo a function
-    #[serde(rename = "u")]
-    Under,
-    /// A stack used when inlining some functions
-    #[serde(rename = "i")]
-    Inline,
-}
-
-impl fmt::Display for TempStack {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Under => write!(f, "under"),
-            Self::Inline => write!(f, "inline"),
-        }
-    }
-}
-
 impl Default for Runtime {
     fn default() -> Self {
         Runtime {
             stack: Vec::new(),
-            temp_stacks: [Vec::new(), Vec::new()],
+            under_stack: Vec::new(),
             call_stack: vec![StackFrame {
                 id: Some(FunctionId::Main),
                 ..Default::default()
@@ -445,14 +420,12 @@ at {}",
         //     print!("(empty) ");
         // }
         // println!();
-        // for temp in enum_iterator::all::<TempStack>() {
-        //     if !self.rt.temp_stacks[temp as usize].is_empty() {
-        //         print!("{temp}: ");
-        //         for val in &self.rt.temp_stacks[temp as usize] {
-        //             print!("{:?} ", val);
-        //         }
-        //         println!();
+        // if !self.rt.under_stack.is_empty() {
+        //     print!("under: ");
+        //     for val in &self.rt.under_stack {
+        //         print!("{:?} ", val);
         //     }
+        //     println!();
         // }
         // println!("\n    {node:?}");
 
@@ -656,6 +629,27 @@ at {}",
                 }
                 Ok(())
             }
+            Node::PushUnder(n, span) => self.with_span(span, |env| {
+                env.require_height(n)?;
+                let start = env.rt.stack.len() - n;
+                env.rt.under_stack.extend(env.rt.stack.drain(start..).rev());
+                Ok(())
+            }),
+            Node::CopyToUnder(n, span) => self.with_span(span, |env| {
+                env.require_height(n)?;
+                env.rt
+                    .under_stack
+                    .extend(env.rt.stack.iter().rev().take(n).cloned());
+                Ok(())
+            }),
+            Node::PopUnder(n, span) => self.with_span(span, |env| {
+                if env.under_stack_height() < n {
+                    return Err(env.error("Stack was empty when getting context value"));
+                }
+                let start = env.under_stack_height() - n;
+                env.rt.stack.extend(env.rt.under_stack.drain(start..).rev());
+                Ok(())
+            }),
         };
         if self.rt.time_instrs {
             let end_time = self.rt.backend.now();
@@ -721,21 +715,13 @@ at {}",
     /// Call and truncate the stack to before the args were pushed if the call fails
     pub(crate) fn exec_clean_stack(&mut self, sn: SigNode) -> UiuaResult {
         let sig = sn.sig;
-        let temp_sigs = sn
-            .node
-            .temp_sigs()
-            .unwrap_or([Signature::new(0, 0); TempStack::CARDINALITY]);
+        let under_sig = sn.node.under_sig().unwrap_or(Signature::new(0, 0));
         let bottom = self.stack_height().saturating_sub(sig.args);
-        let mut temp_bottoms: [usize; TempStack::CARDINALITY] = [0; TempStack::CARDINALITY];
-        for (i, stack) in self.rt.temp_stacks.iter().enumerate() {
-            temp_bottoms[i] = stack.len().saturating_sub(temp_sigs[i].args);
-        }
+        let under_bottom = self.rt.under_stack.len().saturating_sub(under_sig.args);
         let res = self.exec(sn.node);
         if res.is_err() {
             self.truncate_stack(bottom);
-            for (stack, bottom) in self.rt.temp_stacks.iter_mut().zip(temp_bottoms) {
-                stack.truncate(bottom);
-            }
+            self.rt.under_stack.truncate(under_bottom);
         }
         res
     }
@@ -743,16 +729,10 @@ at {}",
     pub(crate) fn exec_maintain_sig(&mut self, sn: SigNode) -> UiuaResult {
         let mut args = self.stack()[self.stack().len().saturating_sub(sn.sig.args)..].to_vec();
         args.reverse();
-        let temp_sigs = sn
-            .node
-            .temp_sigs()
-            .unwrap_or([Signature::new(0, 0); TempStack::CARDINALITY]);
+        let under_sig = sn.node.under_sig().unwrap_or(Signature::new(0, 0));
         let target_height = (self.stack_height() + sn.sig.outputs).saturating_sub(sn.sig.args);
-        let mut temp_target_heights: [usize; TempStack::CARDINALITY] = [0; TempStack::CARDINALITY];
-        for (temp, temp_sig) in all::<TempStack>().zip(&temp_sigs) {
-            temp_target_heights[temp as usize] =
-                (self.temp_stack_height(temp) + temp_sig.outputs).saturating_sub(temp_sig.args);
-        }
+        let under_target_height =
+            (self.rt.under_stack.len() + under_sig.outputs).saturating_sub(under_sig.args);
         let res = self.exec(sn);
         match self.stack_height().cmp(&target_height) {
             Ordering::Equal => {}
@@ -766,15 +746,13 @@ at {}",
                 }
             }
         }
-        for (temp, target_height) in all::<TempStack>().zip(&temp_target_heights) {
-            match self.temp_stack_height(temp).cmp(target_height) {
-                Ordering::Equal => {}
-                Ordering::Greater => self.truncate_temp_stack(temp, *target_height),
-                Ordering::Less => {
-                    let diff = target_height - self.temp_stack_height(temp);
-                    for _ in 0..diff {
-                        self.push_temp(temp, args.pop().unwrap_or_default());
-                    }
+        match self.rt.under_stack.len().cmp(&under_target_height) {
+            Ordering::Equal => {}
+            Ordering::Greater => self.truncate_under_stack(under_target_height),
+            Ordering::Less => {
+                let diff = under_target_height - self.rt.under_stack.len();
+                for _ in 0..diff {
+                    self.push_under(args.pop().unwrap_or_default());
                 }
             }
         }
@@ -961,8 +939,8 @@ at {}",
     pub fn push<V: Into<Value>>(&mut self, val: V) {
         self.rt.stack.push(val.into());
     }
-    pub(crate) fn push_temp(&mut self, temp: TempStack, val: Value) {
-        self.rt.temp_stacks[temp as usize].push(val);
+    pub(crate) fn push_under(&mut self, val: Value) {
+        self.rt.under_stack.push(val);
     }
     /// Push several values onto the stack
     pub fn push_all<V: Into<Value>>(&mut self, vals: impl IntoIterator<Item = V>) {
@@ -970,16 +948,14 @@ at {}",
     }
     /// Take the entire stack
     pub fn take_stack(&mut self) -> Vec<Value> {
-        for stack in &mut self.rt.temp_stacks {
-            stack.clear();
-        }
+        self.rt.under_stack.clear();
         take(&mut self.rt.stack)
     }
-    /// Take all stacks
-    pub fn take_stacks(&mut self) -> (Vec<Value>, [Vec<Value>; TempStack::CARDINALITY]) {
-        let temp_stacks = take(&mut self.rt.temp_stacks);
+    /// Take the main stack and under stack
+    pub fn take_stacks(&mut self) -> (Vec<Value>, Vec<Value>) {
         let stack = take(&mut self.rt.stack);
-        (stack, temp_stacks)
+        let under = take(&mut self.rt.under_stack);
+        (stack, under)
     }
     /// Take some values from the stack
     pub fn take_n(&mut self, n: usize) -> UiuaResult<Vec<Value>> {
@@ -1163,14 +1139,14 @@ at {}",
     pub(crate) fn stack_height(&self) -> usize {
         self.rt.stack.len()
     }
-    pub(crate) fn temp_stack_height(&self, stack: TempStack) -> usize {
-        self.rt.temp_stacks[stack as usize].len()
+    pub(crate) fn under_stack_height(&self) -> usize {
+        self.rt.under_stack.len()
     }
     pub(crate) fn truncate_stack(&mut self, size: usize) -> Vec<Value> {
         self.rt.stack.split_off(size)
     }
-    pub(crate) fn truncate_temp_stack(&mut self, stack: TempStack, size: usize) {
-        self.rt.temp_stacks[stack as usize].truncate(size);
+    pub(crate) fn truncate_under_stack(&mut self, size: usize) {
+        self.rt.under_stack.truncate(size);
     }
     pub(crate) fn remove_nth_back(&mut self, n: usize) -> UiuaResult<Value> {
         let len = self.rt.stack.len();
@@ -1344,7 +1320,7 @@ at {}",
                 stack: (self.rt.stack)
                     .drain(self.rt.stack.len() - capture_count..)
                     .collect(),
-                temp_stacks: [Vec::new(), Vec::new()],
+                under_stack: Vec::new(),
                 fill_stack: Vec::new(),
                 fill_boundary_stack: Vec::new(),
                 unfill_stack: Vec::new(),

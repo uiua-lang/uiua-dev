@@ -3541,7 +3541,7 @@ impl_primitive!(
     // Unders
     (1, UndoFix),
     (2, UndoUnbits),
-    (2, UndoBase),
+    (2, AntiBase),
     (2, UndoDeshape),
     (3, UndoSelect),
     (3, UndoPick),
@@ -3555,7 +3555,7 @@ impl_primitive!(
     (2, UndoWindows),
     (2, UndoChunks),
     (2, UndoWhere),
-    (2, UndoOrient),
+    (2, AntiOrient),
     (3(2), UndoJoin),
     (1[1], UndoPartition1),
     (3, UndoPartition2),
