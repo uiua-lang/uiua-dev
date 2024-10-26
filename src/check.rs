@@ -10,14 +10,16 @@ use std::{
     slice,
 };
 
-use enum_iterator::Sequence;
-
-use crate::{Array, ImplPrimitive, Node, Primitive, SigNode, Signature, TempStack, Value};
+use crate::{Array, ImplPrimitive, Node, Primitive, SigNode, Signature, Value};
 
 impl Node {
     /// Get the signature of this node
     pub fn sig(&self) -> Result<Signature, SigCheckError> {
-        VirtualEnv::from_node(self).map(|env| env.sig())
+        VirtualEnv::from_node(self).map(|env| env.stack.sig())
+    }
+    /// Get the signature of this node on the under stack
+    pub fn under_sig(&self) -> Result<Signature, SigCheckError> {
+        VirtualEnv::from_node(self).map(|env| env.under.sig())
     }
     /// Convert this node to a [`SigNode`]
     pub fn sig_node(self) -> Result<SigNode, SigCheckError> {
@@ -28,14 +30,10 @@ impl Node {
     pub fn clean_sig(&self) -> Option<Signature> {
         nodes_clean_sig(slice::from_ref(self))
     }
-    /// Get the signatures of this node on the temporary stacks
-    pub fn temp_sigs(&self) -> Result<[Signature; TempStack::CARDINALITY], SigCheckError> {
-        VirtualEnv::from_node(self).map(|env| env.temp_signatures())
-    }
 }
 
 pub fn nodes_sig(nodes: &[Node]) -> Result<Signature, SigCheckError> {
-    VirtualEnv::from_nodes(nodes).map(|env| env.sig())
+    VirtualEnv::from_nodes(nodes).map(|env| env.stack.sig())
 }
 
 pub fn nodes_all_sigs(nodes: &[Node]) -> Result<AllSignatures, SigCheckError> {
@@ -52,8 +50,8 @@ pub fn nodes_all_sigs(nodes: &[Node]) -> Result<AllSignatures, SigCheckError> {
         }
         let env = VirtualEnv::from_nodes(nodes)?;
         let sigs = AllSignatures {
-            stack: env.sig(),
-            temps: env.temp_signatures(),
+            stack: env.stack.sig(),
+            under: env.under.sig(),
         };
         cache.borrow_mut().insert(hash, sigs);
         Ok(sigs)
@@ -62,7 +60,7 @@ pub fn nodes_all_sigs(nodes: &[Node]) -> Result<AllSignatures, SigCheckError> {
 
 pub fn nodes_clean_sig(nodes: &[Node]) -> Option<Signature> {
     let sigs = nodes_all_sigs(nodes).ok()?;
-    if sigs.temps.iter().any(|&sig| sig != (0, 0)) {
+    if sigs.under != (0, 0) {
         None
     } else {
         Some(sigs.stack)
@@ -72,7 +70,7 @@ pub fn nodes_clean_sig(nodes: &[Node]) -> Option<Signature> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AllSignatures {
     pub stack: Signature,
-    pub temps: [Signature; TempStack::CARDINALITY],
+    pub under: Signature,
 }
 
 pub(crate) fn naive_under_sig(f: Signature, g: Signature) -> Signature {
@@ -97,13 +95,37 @@ pub(crate) fn naive_under_sig(f: Signature, g: Signature) -> Signature {
 
 /// An environment that emulates the runtime but only keeps track of the stack.
 struct VirtualEnv {
+    stack: Stack,
+    under: Stack,
+    array_depth: usize,
+}
+
+#[derive(Default)]
+struct Stack {
     stack: Vec<BasicValue>,
     height: i32,
-    temp_stacks: [Vec<BasicValue>; TempStack::CARDINALITY],
-    temp_heights: [i32; TempStack::CARDINALITY],
     min_height: usize,
-    temp_min_heights: [usize; TempStack::CARDINALITY],
-    array_depth: usize,
+}
+
+impl Stack {
+    // Simulate popping a value. Errors if the stack is empty, which means the function has too many args.
+    fn pop(&mut self) -> BasicValue {
+        self.height -= 1;
+        self.set_min_height();
+        self.stack.pop().unwrap_or(BasicValue::Other)
+    }
+    fn push(&mut self, val: BasicValue) {
+        self.height += 1;
+        self.stack.push(val);
+    }
+    /// Set the current stack height as a potential minimum.
+    /// At the end of checking, the minimum stack height is a component in calculating the signature.
+    fn set_min_height(&mut self) {
+        self.min_height = self.min_height.max((-self.height).max(0) as usize);
+    }
+    fn sig(&self) -> Signature {
+        derive_sig(self.min_height, self.height)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -211,12 +233,8 @@ fn derive_sig(min_height: usize, final_height: i32) -> Signature {
 impl VirtualEnv {
     fn from_nodes(nodes: &[Node]) -> Result<Self, SigCheckError> {
         let mut env = VirtualEnv {
-            stack: Vec::new(),
-            height: 0,
-            temp_stacks: Default::default(),
-            temp_heights: Default::default(),
-            min_height: 0,
-            temp_min_heights: [0; TempStack::CARDINALITY],
+            stack: Stack::default(),
+            under: Stack::default(),
             array_depth: 0,
         };
         env.nodes(nodes)?;
@@ -224,20 +242,6 @@ impl VirtualEnv {
     }
     fn from_node(node: &Node) -> Result<Self, SigCheckError> {
         Self::from_nodes(slice::from_ref(node))
-    }
-    fn sig(&self) -> Signature {
-        derive_sig(self.min_height, self.height)
-    }
-    fn temp_signatures(&self) -> [Signature; TempStack::CARDINALITY] {
-        let mut sigs = [Signature::new(0, 0); TempStack::CARDINALITY];
-        for ((sig, min_height), height) in sigs
-            .iter_mut()
-            .zip(&self.temp_min_heights)
-            .zip(&self.temp_heights)
-        {
-            *sig = derive_sig(*min_height, *height);
-        }
-        sigs
     }
     fn nodes(&mut self, nodes: &[Node]) -> Result<(), SigCheckError> {
         nodes.iter().try_for_each(|node| self.node(node))
@@ -251,13 +255,13 @@ impl VirtualEnv {
                 self.array_depth += 1;
                 self.node(inner)?;
                 self.array_depth -= 1;
-                let bottom = self.height - *len as i32;
-                let stack_bottom = (bottom.max(0) as usize).min(self.stack.len());
-                let mut items: Vec<_> = (self.stack.drain(stack_bottom..))
+                let bottom = self.stack.height - *len as i32;
+                let stack_bottom = (bottom.max(0) as usize).min(self.stack.stack.len());
+                let mut items: Vec<_> = (self.stack.stack.drain(stack_bottom..))
                     .chain(repeat(BasicValue::Other).take((-bottom).max(0) as usize))
                     .collect();
-                self.height = bottom;
-                self.set_min_height();
+                self.stack.height = bottom;
+                self.stack.set_min_height();
                 items.reverse();
                 self.push(BasicValue::Arr(items));
             }
@@ -272,7 +276,7 @@ impl VirtualEnv {
             } => {
                 let cond = self.pop();
                 if under_cond {
-                    self.push_temp(TempStack::Under, cond);
+                    self.under.push(cond);
                 }
                 self.handle_sig(sig);
             }
@@ -294,25 +298,21 @@ impl VirtualEnv {
             Node::Prim(prim, _) => match prim {
                 Dup => {
                     let val = self.pop();
-                    self.set_min_height();
                     self.push(val.clone());
                     self.push(val);
                 }
                 Flip => {
                     let a = self.pop();
                     let b = self.pop();
-                    self.set_min_height();
                     self.push(a);
                     self.push(b);
                 }
                 Pop => {
                     self.pop();
-                    self.set_min_height();
                 }
                 Over => {
                     let a = self.pop();
                     let b = self.pop();
-                    self.set_min_height();
                     self.push(b.clone());
                     self.push(a);
                     self.push(b);
@@ -320,7 +320,6 @@ impl VirtualEnv {
                 Around => {
                     let a = self.pop();
                     let b = self.pop();
-                    self.set_min_height();
                     self.push(a.clone());
                     self.push(b);
                     self.push(a);
@@ -328,7 +327,6 @@ impl VirtualEnv {
                 Join => {
                     let a = self.pop();
                     let b = self.pop();
-                    self.set_min_height();
                     match (a, b) {
                         (BasicValue::Arr(mut a), BasicValue::Arr(b)) => {
                             a.extend(b);
@@ -498,7 +496,6 @@ impl VirtualEnv {
                     for _ in 0..args {
                         self.pop();
                     }
-                    self.set_min_height();
                     let outputs = prim.outputs();
                     for _ in 0..outputs {
                         self.push(BasicValue::Other);
@@ -507,39 +504,30 @@ impl VirtualEnv {
             },
             Node::SetOutputComment { .. } => {}
             Node::ValidateType { .. } => self.handle_args_outputs(1, 1),
+            Node::PushUnder(n, _) => {
+                for _ in 0..*n {
+                    self.under.push(self.stack.pop());
+                }
+            }
+            Node::CopyToUnder(n, _) => {
+                self.under
+                    .stack
+                    .extend(self.stack.stack.iter().rev().take(*n).cloned());
+            }
+            Node::PopUnder(n, _) => {
+                for _ in 0..*n {
+                    self.stack.push(self.under.pop());
+                }
+            }
         }
         // println!("{instr:?} -> {}/{}", -(self.min_height as i32), self.height);
         Ok(())
     }
-    // Simulate popping a value. Errors if the stack is empty, which means the function has too many args.
-    fn pop(&mut self) -> BasicValue {
-        self.height -= 1;
-        self.set_min_height();
-        self.stack.pop().unwrap_or(BasicValue::Other)
-    }
     fn push(&mut self, val: BasicValue) {
-        self.height += 1;
         self.stack.push(val);
     }
-    fn _pop_temp(&mut self, stack: TempStack) -> BasicValue {
-        self.temp_heights[stack as usize] -= 1;
-        self.temp_min_heights[stack as usize] = self.temp_min_heights[stack as usize]
-            .max((-self.temp_heights[stack as usize]).max(0) as usize);
-        self.temp_stacks[stack as usize]
-            .pop()
-            .unwrap_or(BasicValue::Other)
-    }
-    fn push_temp(&mut self, stack: TempStack, val: BasicValue) {
-        self.temp_heights[stack as usize] += 1;
-        self.temp_stacks[stack as usize].push(val);
-    }
-    /// Set the current stack height as a potential minimum.
-    /// At the end of checking, the minimum stack height is a component in calculating the signature.
-    fn set_min_height(&mut self) {
-        self.min_height = self.min_height.max((-self.height).max(0) as usize);
-        for (min_height, height) in self.temp_min_heights.iter_mut().zip(&self.temp_heights) {
-            *min_height = (*min_height).max((-*height).max(0) as usize);
-        }
+    fn pop(&mut self) -> BasicValue {
+        self.stack.pop()
     }
     fn handle_args_outputs(&mut self, args: usize, outputs: usize) {
         for _ in 0..args {

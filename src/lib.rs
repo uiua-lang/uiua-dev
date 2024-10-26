@@ -226,8 +226,6 @@ mod tests {
     #[test]
     #[cfg(feature = "native_sys")]
     fn suite() {
-        use enum_iterator::all;
-
         use super::*;
         for path in test_files(|path| {
             !(path.file_stem().unwrap())
@@ -251,14 +249,12 @@ mod tests {
             {
                 panic!("Test failed in {}:\n{}", path.display(), diag.report());
             }
-            let (stack, temp_stacks) = env.take_stacks();
+            let (stack, under_stack) = env.take_stacks();
             if !stack.is_empty() {
                 panic!("{} had a non-empty stack", path.display());
             }
-            for (stack, temp_stack) in temp_stacks.into_iter().zip(all::<TempStack>()) {
-                if !stack.is_empty() {
-                    panic!("{} had a non-empty {} stack", path.display(), temp_stack);
-                }
+            if !under_stack.is_empty() {
+                panic!("{} had a non-empty under stack", path.display());
             }
 
             // Make sure lsp spans doesn't panic

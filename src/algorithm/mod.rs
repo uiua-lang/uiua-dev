@@ -18,8 +18,8 @@ use tinyvec::TinyVec;
 
 use crate::{
     Array, ArrayCmp, ArrayValue, Boxed, CodeSpan, Complex, ExactDoubleIterator, Inputs, Ops,
-    PersistentMeta, Shape, SigNode, Signature, Span, TempStack, Uiua, UiuaError, UiuaErrorKind,
-    UiuaResult, Value,
+    PersistentMeta, Shape, SigNode, Signature, Span, Uiua, UiuaError, UiuaErrorKind, UiuaResult,
+    Value,
 };
 
 mod dyadic;
@@ -582,7 +582,7 @@ pub fn switch(
         }
     }
     if let Some(selector) = copied_selector {
-        env.push_temp(TempStack::Under, selector);
+        env.push_under(selector);
     }
     Ok(())
 }

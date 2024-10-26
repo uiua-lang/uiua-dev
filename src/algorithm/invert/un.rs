@@ -15,6 +15,11 @@ impl Node {
         dbgln!("anti-inverting {self:?}");
         anti_inverse(self.as_slice(), asm)
     }
+    /// Get the contra inverse of this node
+    fn contra_inverse(&self, asm: &Assembly) -> InversionResult<Node> {
+        dbgln!("contra-inverting {self:?}");
+        contra_inverse(self.as_slice(), asm)
+    }
 }
 
 impl SigNode {
@@ -29,15 +34,21 @@ impl SigNode {
         let sig = self.sig.anti().ok_or(Generic)?;
         Ok(SigNode::new(inv, sig))
     }
+    /// Get the contra inverse of this node
+    fn contra_inverse(&self, asm: &Assembly) -> InversionResult<SigNode> {
+        let inv = self.node.contra_inverse(asm)?;
+        let sig = self.sig.anti().ok_or(Generic)?;
+        Ok(SigNode::new(inv, sig))
+    }
 }
 
-fn un_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
+pub fn un_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     let mut node = Node::empty();
     let mut curr = input;
     let mut error = Generic;
     'find_pattern: loop {
         for pattern in UN_PATTERNS {
-            match pattern.extract(curr, asm) {
+            match pattern.invert_extract(curr, asm) {
                 Ok((new, inv)) => {
                     dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {inv:?}");
                     node.prepend(inv);
@@ -56,11 +67,11 @@ fn un_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     Err(error)
 }
 
-fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
+pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     let mut curr = input;
     let mut error = Generic;
     for pattern in ANTI_PATTERNS {
-        match pattern.extract(curr, asm) {
+        match pattern.invert_extract(curr, asm) {
             Ok((new, mut anti_inv)) => {
                 dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
                 curr = new;
@@ -79,12 +90,38 @@ fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     Err(error)
 }
 
-static UN_PATTERNS: &[&dyn InvertPattern] = &[
+pub fn contra_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
+    let mut curr = input;
+    let mut error = Generic;
+    for pattern in CONTRA_PATTERNS {
+        match pattern.invert_extract(curr, asm) {
+            Ok((new, mut contra_inv)) => {
+                dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {contra_inv:?}");
+                curr = new;
+                if curr.is_empty() {
+                    dbgln!("contra-inverted\n  {input:?}\n  to {contra_inv:?}");
+                    return Ok(contra_inv);
+                }
+                let rest_inv = un_inverse(curr, asm)?;
+                contra_inv.push(rest_inv);
+                dbgln!("contra-inverted\n  {input:?}\n  to {contra_inv:?}");
+                return Ok(contra_inv);
+            }
+            Err(e) => error = error.max(e),
+        }
+    }
+    Err(error)
+}
+
+pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &PrimPat,
     &ImplPrimPat,
     &ArrayPat,
     &UnpackPat,
     &DipPat,
+    &OnPat,
+    &ByPat,
+    &InnerAntiPat,
     &(Sqrt, (Dup, Mul)),
     &((Dup, Add), (2, Div)),
     &((Dup, Mul), Sqrt),
@@ -126,7 +163,7 @@ static UN_PATTERNS: &[&dyn InvertPattern] = &[
     ),
 ];
 
-static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
+pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Complex, (crate::Complex::I, Mul, Sub)),
     &(Atan, (Flip, UnAtan, Div, Mul)),
     &((IgnoreMany(Flip), Add), Sub),
@@ -141,16 +178,17 @@ static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &((Flip, Pow), Log),
     &(Log, (Flip, Pow)),
     &((Flip, Log), (Flip, 1, Flip, Div, Pow)),
+    &(Complex, (crate::Complex::I, Mul, Sub)),
     &(Min, Min),
     &(Max, Max),
-    &(Orient, UndoOrient),
+    &(Orient, AntiOrient),
     &(Drop, AntiDrop),
     &(Select, AntiSelect),
     &(Pick, AntiPick),
-    &(Base, UndoBase),
+    &(Base, AntiBase),
 ];
 
-static UN_BY_PATTERNS: &[&dyn InvertPattern] = &[
+pub static CONTRA_PATTERNS: &[&dyn InvertPattern] = &[
     &((IgnoreMany(Flip), Add), (Flip, Sub)),
     &(Sub, Sub),
     &((Flip, Sub), Add),
@@ -167,16 +205,19 @@ static UN_BY_PATTERNS: &[&dyn InvertPattern] = &[
 ];
 
 pub trait InvertPattern: fmt::Debug + Sync {
-    fn extract<'a>(&self, input: &'a [Node], asm: &Assembly)
-        -> InversionResult<(&'a [Node], Node)>;
+    fn invert_extract<'a>(
+        &self,
+        input: &'a [Node],
+        asm: &Assembly,
+    ) -> InversionResult<(&'a [Node], Node)>;
 }
 
 macro_rules! inverse {
     ($name:ident, $input:ident, $asm:tt, $body:expr) => {
         #[derive(Debug)]
-        struct $name;
+        pub struct $name;
         impl InvertPattern for $name {
-            fn extract<'a>(
+            fn invert_extract<'a>(
                 &self,
                 $input: &'a [Node],
                 $asm: &Assembly,
@@ -242,6 +283,22 @@ inverse!(DipPat, input, asm, Dip, span, [f], {
 inverse!(OnPat, input, asm, Dip, span, [f], {
     let inv = f.anti_inverse(asm)?;
     Ok((input, Mod(On, eco_vec![inv], span)))
+});
+
+inverse!(ByPat, input, asm, Dip, span, [f], {
+    let inv = f.contra_inverse(asm)?;
+    Ok((input, Mod(By, eco_vec![inv], span)))
+});
+
+inverse!(InnerAntiPat, input, asm, {
+    let (input, mut node) = Val.invert_extract(input, asm)?;
+    for end in 1..=input.len() {
+        if let Ok(inv) = anti_inverse(&input[..end], asm) {
+            node.push(inv);
+            return Ok((&input[end..], node));
+        }
+    }
+    generic()
 });
 
 inverse!(
@@ -378,7 +435,7 @@ impl SpanFromNodes for Val {
         nodes: &'a [Node],
         asm: &Assembly,
     ) -> Option<(&'a [Node], Option<usize>)> {
-        Some((self.extract(nodes, asm).ok()?.0, None))
+        Some((self.invert_extract(nodes, asm).ok()?.0, None))
     }
 }
 
@@ -387,7 +444,7 @@ where
     A: SpanFromNodes,
     B: AsNode,
 {
-    fn extract<'a>(
+    fn invert_extract<'a>(
         &self,
         input: &'a [Node],
         asm: &Assembly,

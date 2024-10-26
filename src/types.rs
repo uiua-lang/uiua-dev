@@ -1,10 +1,8 @@
 use std::{cmp::Ordering, mem::take};
 
-use enum_iterator::Sequence;
-
 use crate::{
     cowslice::CowSlice, Array, Assembly, Boxed, Complex, ImplPrimitive, Node, PersistentMeta,
-    Primitive, Shape, SigNode, TempStack, Uiua, Value,
+    Primitive, Shape, SigNode, Uiua, Value,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -106,7 +104,7 @@ where
     }
     let mut rt = TypeRt {
         stack,
-        _temp_stacks: Default::default(),
+        _under_stack: Vec::new(),
         array_stack: Vec::new(),
     };
     match rt.node(&f.node, &env.asm) {
@@ -132,7 +130,7 @@ where
 
 struct TypeRt {
     stack: Vec<Type>,
-    _temp_stacks: [Vec<Type>; TempStack::CARDINALITY],
+    _under_stack: Vec<Type>,
     array_stack: Vec<usize>,
 }
 
