@@ -14,137 +14,6 @@ use crate::{
     Assembly, BindingKind, DynamicFunction, Function, ImplPrimitive, Primitive, Signature, Value,
 };
 
-macro_rules! node {
-    ($(
-        $(#[$attr:meta])*
-        $((#[$rep_attr:meta] rep),)?
-        $name:ident
-        $(($($tup_name:ident($tup_type:ty)),* $(,)?))?
-        $({$($field_name:ident : $field_type:ty),* $(,)?})?
-    ),* $(,)?) => {
-        /// A Uiua execution tree node
-        ///
-        /// A node is a tree structure of instructions. It can be used as both a single unit as well as a list.
-        #[derive(Clone, Serialize, Deserialize)]
-        #[repr(u8)]
-        #[allow(missing_docs)]
-        #[serde(from = "NodeRep", into = "NodeRep")]
-        pub enum Node {
-            $(
-                $(#[$attr])*
-                $name $(($($tup_type),*))? $({$($field_name : $field_type),*})?,
-            )*
-        }
-
-        macro_rules! field_span {
-            (span, $sp:ident) => {
-                return Some($sp)
-            };
-            ($sp:ident, $sp2:ident) => {};
-        }
-
-        impl Node {
-            /// Get the span index of this instruction
-            #[allow(unreachable_code, unused)]
-            pub fn span(&self) -> Option<usize> {
-                (|| match self {
-                    $(
-                        Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
-                            $($(field_span!($tup_name, $tup_name);)*)*
-                            $($(field_span!($field_name, $field_name);)*)*
-                            return None;
-                        },
-                    )*
-                })().copied()
-            }
-            /// Get a mutable reference to the span index of this instruction
-            #[allow(unreachable_code, unused)]
-            pub fn span_mut(&mut self) -> Option<&mut usize> {
-                match self {
-                    $(
-                        Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
-                            $($(field_span!($tup_name, $tup_name);)*)*
-                            $($(field_span!($field_name, $field_name);)*)*
-                            return None;
-                        },
-                    )*
-                }
-            }
-        }
-
-        impl PartialEq for Node {
-            #[allow(unused_variables)]
-            fn eq(&self, other: &Self) -> bool {
-                let mut hasher = DefaultHasher::new();
-                self.hash(&mut hasher);
-                let hash = hasher.finish();
-                let mut other_hasher = DefaultHasher::new();
-                other.hash(&mut other_hasher);
-                let other_hash = other_hasher.finish();
-                hash == other_hash
-            }
-        }
-
-        impl Eq for Node {}
-
-        impl Hash for Node {
-            #[allow(unused_variables)]
-            fn hash<H: Hasher>(&self, state: &mut H) {
-                macro_rules! hash_field {
-                    (span) => {};
-                    ($nm:ident) => {Hash::hash($nm, state)};
-                }
-                match self {
-                    $(
-                        Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
-                            discriminant(self).hash(state);
-                            $($(hash_field!($field_name);)*)?
-                            $($(hash_field!($tup_name);)*)?
-                        }
-                    )*
-                }
-            }
-        }
-
-        #[derive(Serialize, Deserialize)]
-        pub(crate) enum NodeRep {
-            $(
-                $(#[$rep_attr])?
-                $name(
-                    $($($tup_type),*)?
-                    $($($field_type),*)?
-                ),
-            )*
-        }
-
-        impl From<NodeRep> for Node {
-            fn from(rep: NodeRep) -> Self {
-                match rep {
-                    $(
-                        NodeRep::$name (
-                            $($($tup_name,)*)?
-                            $($($field_name,)*)?
-                        ) => Self::$name $(($($tup_name),*))? $({$($field_name),*})?,
-                    )*
-                }
-            }
-        }
-
-        impl From<Node> for NodeRep {
-            fn from(instr: Node) -> Self {
-                match instr {
-                    $(
-                        Node::$name $(($($tup_name),*))? $({$($field_name),*})? => NodeRep::$name (
-                            $($($tup_name),*)?
-                            $($($field_name),*)?
-                        ),
-                    )*
-                }
-            }
-        }
-    };
-}
-
 node!(
     Run(nodes(EcoVec<Node>)),
     Push(val(Value)),
@@ -152,7 +21,7 @@ node!(
     ImplPrim(prim(ImplPrimitive), span(usize)),
     Mod(prim(Primitive), args(Ops), span(usize)),
     ImplMod(prim(ImplPrimitive), args(Ops), span(usize)),
-    Array { len: usize, inner: Box<Node>, boxed: bool, span: usize },
+    Array { len: ArrayLen, inner: Box<Node>, boxed: bool, span: usize },
     Call(func(Function), span(usize)),
     CallGlobal(index(usize), sig(Signature)),
     CallMacro(index(usize), sig(Signature), args(Ops)),
@@ -200,6 +69,26 @@ impl From<SigNode> for Node {
 }
 
 pub(crate) type Ops = EcoVec<SigNode>;
+
+/// The length of an array when being constructed
+///
+/// This is used by [`Node::Array`]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ArrayLen {
+    /// A static number of rows
+    Static(usize),
+    /// A dynamic number of rows. Pulls is this number of values.
+    Dynamic(usize),
+}
+
+impl fmt::Display for ArrayLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Static(n) => write!(f, "{n}"),
+            Self::Dynamic(n) => write!(f, "?{n}"),
+        }
+    }
+}
 
 /// A custom inverse node
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -649,3 +538,135 @@ impl IntoIterator for Node {
         self.into_vec().into_iter()
     }
 }
+
+macro_rules! node {
+    ($(
+        $(#[$attr:meta])*
+        $((#[$rep_attr:meta] rep),)?
+        $name:ident
+        $(($($tup_name:ident($tup_type:ty)),* $(,)?))?
+        $({$($field_name:ident : $field_type:ty),* $(,)?})?
+    ),* $(,)?) => {
+        /// A Uiua execution tree node
+        ///
+        /// A node is a tree structure of instructions. It can be used as both a single unit as well as a list.
+        #[derive(Clone, Serialize, Deserialize)]
+        #[repr(u8)]
+        #[allow(missing_docs)]
+        #[serde(from = "NodeRep", into = "NodeRep")]
+        pub enum Node {
+            $(
+                $(#[$attr])*
+                $name $(($($tup_type),*))? $({$($field_name : $field_type),*})?,
+            )*
+        }
+
+        macro_rules! field_span {
+            (span, $sp:ident) => {
+                return Some($sp)
+            };
+            ($sp:ident, $sp2:ident) => {};
+        }
+
+        impl Node {
+            /// Get the span index of this instruction
+            #[allow(unreachable_code, unused)]
+            pub fn span(&self) -> Option<usize> {
+                (|| match self {
+                    $(
+                        Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
+                            $($(field_span!($tup_name, $tup_name);)*)*
+                            $($(field_span!($field_name, $field_name);)*)*
+                            return None;
+                        },
+                    )*
+                })().copied()
+            }
+            /// Get a mutable reference to the span index of this instruction
+            #[allow(unreachable_code, unused)]
+            pub fn span_mut(&mut self) -> Option<&mut usize> {
+                match self {
+                    $(
+                        Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
+                            $($(field_span!($tup_name, $tup_name);)*)*
+                            $($(field_span!($field_name, $field_name);)*)*
+                            return None;
+                        },
+                    )*
+                }
+            }
+        }
+
+        impl PartialEq for Node {
+            #[allow(unused_variables)]
+            fn eq(&self, other: &Self) -> bool {
+                let mut hasher = DefaultHasher::new();
+                self.hash(&mut hasher);
+                let hash = hasher.finish();
+                let mut other_hasher = DefaultHasher::new();
+                other.hash(&mut other_hasher);
+                let other_hash = other_hasher.finish();
+                hash == other_hash
+            }
+        }
+
+        impl Eq for Node {}
+
+        impl Hash for Node {
+            #[allow(unused_variables)]
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                macro_rules! hash_field {
+                    (span) => {};
+                    ($nm:ident) => {Hash::hash($nm, state)};
+                }
+                match self {
+                    $(
+                        Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
+                            discriminant(self).hash(state);
+                            $($(hash_field!($field_name);)*)?
+                            $($(hash_field!($tup_name);)*)?
+                        }
+                    )*
+                }
+            }
+        }
+
+        #[derive(Serialize, Deserialize)]
+        pub(crate) enum NodeRep {
+            $(
+                $(#[$rep_attr])?
+                $name(
+                    $($($tup_type),*)?
+                    $($($field_type),*)?
+                ),
+            )*
+        }
+
+        impl From<NodeRep> for Node {
+            fn from(rep: NodeRep) -> Self {
+                match rep {
+                    $(
+                        NodeRep::$name (
+                            $($($tup_name,)*)?
+                            $($($field_name,)*)?
+                        ) => Self::$name $(($($tup_name),*))? $({$($field_name),*})?,
+                    )*
+                }
+            }
+        }
+
+        impl From<Node> for NodeRep {
+            fn from(instr: Node) -> Self {
+                match instr {
+                    $(
+                        Node::$name $(($($tup_name),*))? $({$($field_name),*})? => NodeRep::$name (
+                            $($($tup_name),*)?
+                            $($($field_name),*)?
+                        ),
+                    )*
+                }
+            }
+        }
+    };
+}
+use node;

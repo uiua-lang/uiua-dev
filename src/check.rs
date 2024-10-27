@@ -10,7 +10,7 @@ use std::{
     slice,
 };
 
-use crate::{Array, ImplPrimitive, Node, Primitive, SigNode, Signature, Value};
+use crate::{Array, ArrayLen, ImplPrimitive, Node, Primitive, SigNode, Signature, Value};
 
 impl Node {
     /// Get the signature of this node
@@ -137,27 +137,20 @@ pub struct SigCheckError {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SigCheckErrorKind {
     Incorrect,
-    Ambiguous,
     LoopOverreach,
-    LoopVariable { sig: Signature, inf: bool },
+    LoopVariable { args: usize },
 }
 
 impl SigCheckError {
-    pub fn ambiguous(self) -> Self {
-        Self {
-            kind: SigCheckErrorKind::Ambiguous,
-            ..self
-        }
-    }
     pub fn loop_overreach(self) -> Self {
         Self {
             kind: SigCheckErrorKind::LoopOverreach,
             ..self
         }
     }
-    pub fn loop_variable(self, sig: Signature, inf: bool) -> Self {
+    pub fn loop_variable(self, args: usize) -> Self {
         Self {
-            kind: SigCheckErrorKind::LoopVariable { sig, inf },
+            kind: SigCheckErrorKind::LoopVariable { args },
             ..self
         }
     }
@@ -251,20 +244,23 @@ impl VirtualEnv {
         match node {
             Node::Run(nodes) => nodes.iter().try_for_each(|node| self.node(node))?,
             Node::Push(val) => self.push(BasicValue::from_val(val)),
-            Node::Array { len, inner, .. } => {
-                self.array_depth += 1;
-                self.node(inner)?;
-                self.array_depth -= 1;
-                let bottom = self.stack.height - *len as i32;
-                let stack_bottom = (bottom.max(0) as usize).min(self.stack.stack.len());
-                let mut items: Vec<_> = (self.stack.stack.drain(stack_bottom..))
-                    .chain(repeat(BasicValue::Other).take((-bottom).max(0) as usize))
-                    .collect();
-                self.stack.height = bottom;
-                self.stack.set_min_height();
-                items.reverse();
-                self.push(BasicValue::Arr(items));
-            }
+            Node::Array { len, inner, .. } => match len {
+                ArrayLen::Static(len) => {
+                    self.array_depth += 1;
+                    self.node(inner)?;
+                    self.array_depth -= 1;
+                    let bottom = self.stack.height - *len as i32;
+                    let stack_bottom = (bottom.max(0) as usize).min(self.stack.stack.len());
+                    let mut items: Vec<_> = (self.stack.stack.drain(stack_bottom..))
+                        .chain(repeat(BasicValue::Other).take((-bottom).max(0) as usize))
+                        .collect();
+                    self.stack.height = bottom;
+                    self.stack.set_min_height();
+                    items.reverse();
+                    self.push(BasicValue::Arr(items));
+                }
+                ArrayLen::Dynamic(len) => self.handle_args_outputs(*len, 1),
+            },
             Node::Label(..) | Node::RemoveLabel(_) => self.handle_args_outputs(1, 1),
             Node::Call(func, _) => self.handle_sig(func.sig),
             Node::CallMacro(_, sig, _) | Node::CallGlobal(_, sig) => self.handle_sig(*sig),
@@ -397,7 +393,7 @@ impl VirtualEnv {
                         return Err(SigCheckError::from(format!(
                             "do with a function with signature {comp_sig}"
                         ))
-                        .loop_variable(comp_sig, false));
+                        .loop_variable(comp_sig.args));
                     }
                     self.handle_args_outputs(
                         comp_sig.args,
@@ -477,8 +473,7 @@ impl VirtualEnv {
                     if f.inverse() != inv {
                         return Err(SigCheckError::from(
                             "repeat inverse does not have inverse signature",
-                        )
-                        .ambiguous());
+                        ));
                     }
                     let n = self.pop();
                     self.repeat(f, n)?;
@@ -569,7 +564,7 @@ impl VirtualEnv {
                         return Err(SigCheckError::from(format!(
                             "repeat with infinity and a function with signature {sig}"
                         ))
-                        .loop_variable(sig, true));
+                        .loop_variable(sig.args + 1));
                     }
                     _ => self.handle_sig(sig),
                 }
@@ -590,7 +585,7 @@ impl VirtualEnv {
                     return Err(SigCheckError::from(format!(
                         "repeat with no number and a function with signature {sig}"
                     ))
-                    .loop_variable(sig, false));
+                    .loop_variable(sig.args + 1));
                 }
                 Ordering::Less => self.handle_sig(sig),
             }
