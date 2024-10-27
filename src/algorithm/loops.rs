@@ -925,7 +925,7 @@ fn collapse_groups<I>(
     firsts: impl Fn(Value, &[isize], &Uiua) -> UiuaResult<Value>,
     lasts: impl Fn(Value, &[isize], &Uiua) -> UiuaResult<Value>,
     lens: impl Fn(&[isize]) -> Array<f64>,
-    _first_group: impl Fn(Value, &[isize]) -> Option<Value>,
+    first_group: impl Fn(Value, &[isize]) -> Option<Value>,
     last_group: impl Fn(Value, &[isize]) -> Option<Value>,
     indices_error: &'static str,
     env: &mut Uiua,
@@ -985,25 +985,16 @@ where
                 env.push(val);
                 return Ok(());
             }
-            // TODO:
-            // [PushTemp {
-            //     stack: TempStack::Inline,
-            //     count: 1,
-            //     ..
-            // }, Prim(Pop, _), PopTemp {
-            //     stack: TempStack::Inline,
-            //     count: 1,
-            //     ..
-            // }] => {
-            //     let val = first_group(values, &indices.data).ok_or_else(|| {
-            //         env.error(format!(
-            //             "Cannot do aggregating {} with no groups",
-            //             prim.format()
-            //         ))
-            //     })?;
-            //     env.push(val);
-            //     return Ok(());
-            // }
+            [Mod(Dip, args, _)] if matches!(args[0].node, Prim(Pop, _)) => {
+                let val = first_group(values, &indices.data).ok_or_else(|| {
+                    env.error(format!(
+                        "Cannot do aggregating {} with no groups",
+                        prim.format()
+                    ))
+                })?;
+                env.push(val);
+                return Ok(());
+            }
             _ => {}
         }
     }

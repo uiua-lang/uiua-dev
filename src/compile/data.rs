@@ -215,7 +215,7 @@ impl Compiler {
             // Add validator
             if let Some((va_instrs, validation_only, _va_span)) = field.validator.take() {
                 let inverse = va_instrs.un_inverse(&self.asm);
-                let make_node = |node: Node| SigNode::new(node, Signature::new(1, 1)); // TODO: Track caller
+                let make_node = |node: Node| SigNode::new(node, Signature::new(1, 1));
                 match inverse {
                     Ok(va_inverse) => node.push(Node::CustomInverse(
                         CustomInverse {
@@ -289,7 +289,6 @@ impl Compiler {
         let mut node = if has_fields {
             let mut args = EcoVec::new();
             for field in &fields {
-                // TODO: Handle field flags
                 let mut arg = if let Some(sn) = &field.init {
                     let mut arg = sn.clone();
                     if !boxed {
@@ -379,7 +378,6 @@ impl Compiler {
                         Node::ImplPrim(ImplPrimitive::UnPop, field.span),
                         comp.global_index(field.global_index, field.name_span.clone()),
                     ]);
-                    // TODO: Track caller
                     let func = comp.asm.add_function(id, Signature::new(0, 1), node);
                     let local = LocalName {
                         index: comp.next_global,
@@ -405,7 +403,6 @@ impl Compiler {
                     comp.add_error(word_span.clone(), "Variants may not have functions");
                 }
                 let filled = comp.words_sig(words)?;
-                // TODO: Track caller
                 let span = comp.add_span(word_span.clone());
                 let node = Node::Mod(
                     Primitive::Fill,
