@@ -3367,7 +3367,7 @@ macro_rules! impl_primitive {
             )*
             TransposeN(i32),
             UndoTransposeN(usize, i32),
-            UndoReverse(usize),
+            UndoReverse { n: usize, all: bool },
             UndoRotate(usize),
             ReduceDepth(usize),
             TraceN { n: usize, inverse: bool, stack_sub: bool},
@@ -3379,7 +3379,7 @@ macro_rules! impl_primitive {
                     $(ImplPrimitive::$variant => $args,)*
                     ImplPrimitive::TransposeN(_) => 1,
                     ImplPrimitive::UndoTransposeN(n, _) => *n,
-                    ImplPrimitive::UndoReverse(n) => *n,
+                    ImplPrimitive::UndoReverse { n, .. } => *n,
                     ImplPrimitive::UndoRotate(n) => *n + 1,
                     ImplPrimitive::ReduceDepth(_) => 1,
                     ImplPrimitive::TraceN { n, .. } => *n,
@@ -3389,7 +3389,7 @@ macro_rules! impl_primitive {
                 match self {
                     $($(ImplPrimitive::$variant => $outputs,)?)*
                     ImplPrimitive::UndoTransposeN(n, _) => *n,
-                    ImplPrimitive::UndoReverse(n) => *n,
+                    ImplPrimitive::UndoReverse { n, .. } => *n,
                     ImplPrimitive::UndoRotate(n) => *n,
                     ImplPrimitive::TraceN { n, .. } => *n,
                     _ => 1

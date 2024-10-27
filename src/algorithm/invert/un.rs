@@ -1,7 +1,3 @@
-use ecow::eco_vec;
-
-use crate::{ArrayLen, SigNode};
-
 use super::*;
 
 impl Node {
@@ -122,6 +118,11 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &OnPat,
     &ByPat,
     &InnerAnti,
+    &RowsPat,
+    &Trivial,
+    &ScanPat,
+    &ReduceMulPat,
+    &PrimesPat,
     &(Sqrt, (Dup, Mul)),
     &((Dup, Add), (2, Div)),
     &((Dup, Mul), Sqrt),
@@ -159,6 +160,7 @@ pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Select, AntiSelect),
     &(Pick, AntiPick),
     &(Base, AntiBase),
+    &AntiRepeatPat,
 ];
 
 pub static CONTRA_PATTERNS: &[&dyn InvertPattern] = &[
@@ -317,6 +319,89 @@ inverse!(
         Ok((&[], inv))
     }
 );
+
+inverse!(RowsPat, input, asm, Rows, span, [f], {
+    Ok((input, Mod(Rows, eco_vec![f.un_inverse(asm)?], span)))
+});
+
+inverse!(ScanPat, input, asm, {
+    let un = matches!(input, [ImplMod(UnScan, ..), ..]);
+    let ([Mod(Scan, args, span), input @ ..] | [ImplMod(UnScan, args, span), input @ ..]) = input
+    else {
+        return generic();
+    };
+    let [f] = args.as_slice() else {
+        return generic();
+    };
+    let inverse = match f.node.as_primitive() {
+        Some(Primitive::Add) if !un => Prim(Sub, *span),
+        Some(Primitive::Mul) if !un => Prim(Div, *span),
+        Some(Primitive::Sub) if un => Prim(Add, *span),
+        Some(Primitive::Div) if un => Prim(Mul, *span),
+        Some(Primitive::Eq) => Prim(Eq, *span),
+        Some(Primitive::Ne) => Prim(Ne, *span),
+        _ => f.node.un_inverse(asm)?,
+    }
+    .sig_node()?;
+    let inverse = if un {
+        Mod(Scan, eco_vec![inverse], *span)
+    } else {
+        ImplMod(UnScan, eco_vec![inverse], *span)
+    };
+    Ok((input, inverse))
+});
+
+inverse!(
+    (ReduceMulPat, input, _, Reduce, span),
+    [SigNode {
+        node: Prim(Mul, _),
+        ..
+    }],
+    Ok((input, ImplPrim(Primes, span)))
+);
+
+inverse!(
+    (PrimesPat, input, _, ImplPrim(Primes, span)),
+    Ok((
+        input,
+        Mod(Reduce, eco_vec![Prim(Mul, span).sig_node()?], span)
+    ))
+);
+
+inverse!(
+    (AntiRepeatPat, input, _),
+    ref,
+    ImplMod(RepeatWithInverse, args, span),
+    {
+        let [f, inv] = args.as_slice() else {
+            return generic();
+        };
+        Ok((
+            input,
+            ImplMod(RepeatWithInverse, eco_vec![inv.clone(), f.clone()], *span),
+        ))
+    }
+);
+
+#[derive(Debug)]
+pub(crate) struct Trivial;
+impl InvertPattern for Trivial {
+    fn invert_extract<'a>(
+        &self,
+        input: &'a [Node],
+        asm: &Assembly,
+    ) -> InversionResult<(&'a [Node], Node)> {
+        match input {
+            [NoInline(inner), input @ ..] => Ok((input, NoInline(inner.un_inverse(asm)?.into()))),
+            [TrackCaller(inner), input @ ..] => {
+                Ok((input, TrackCaller(inner.un_inverse(asm)?.into())))
+            }
+            [node @ SetOutputComment { .. }, input @ ..] => Ok((input, node.clone())),
+            [Call(f, _), input @ ..] => Ok((input, asm[f].un_inverse(asm).map_err(|e| e.func(f))?)),
+            _ => generic(),
+        }
+    }
+}
 
 inverse!(PrimPat, input, _, Prim(prim, span), {
     let inv = match prim {
