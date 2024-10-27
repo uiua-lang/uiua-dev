@@ -8,7 +8,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     env::current_dir,
     fmt, fs,
-    iter::{once, repeat},
+    iter::once,
     mem::{replace, swap, take},
     panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
@@ -28,11 +28,11 @@ use crate::{
     lex::{CodeSpan, Sp, Span},
     lsp::{CodeMeta, ImportSrc, SigDecl},
     parse::{count_placeholders, flip_unsplit_lines, parse, split_words},
-    Array, Assembly, BindingKind, Boxed, CustomInverse, Diagnostic, DiagnosticKind, DocComment,
-    DocCommentSig, Function, FunctionId, GitTarget, Ident, ImplPrimitive, InputSrc, IntoInputSrc,
-    IntoSysBackend, Node, Primitive, Purity, RunMode, SemanticComment, SigNode, Signature,
-    SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value, CONSTANTS, EXAMPLE_UA,
-    SUBSCRIPT_NUMS, VERSION,
+    Array, ArrayLen, Assembly, BindingKind, Boxed, CustomInverse, Diagnostic, DiagnosticKind,
+    DocComment, DocCommentSig, Function, FunctionId, GitTarget, Ident, ImplPrimitive, InputSrc,
+    IntoInputSrc, IntoSysBackend, Node, Primitive, Purity, RunMode, SemanticComment, SigNode,
+    Signature, SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value, CONSTANTS,
+    EXAMPLE_UA, SUBSCRIPT_NUMS, VERSION,
 };
 
 /// The Uiua compiler
@@ -579,7 +579,7 @@ code:
                     }
                     Word::SemanticComment(SemanticComment::NoInline) => prelude.no_inline = true,
                     Word::SemanticComment(SemanticComment::TrackCaller) => {
-                        prelude.track_caller = true
+                        prelude.track_caller = true;
                     }
                     _ => *prelude = BindingPrelude::default(),
                 }
@@ -1084,7 +1084,7 @@ code:
                 }
                 let sig = self.sig_of(&inner, &word.span)?;
                 Node::Array {
-                    len: sig.outputs,
+                    len: ArrayLen::Static(sig.outputs),
                     inner: inner.into(),
                     boxed: false,
                     span,
@@ -1111,19 +1111,41 @@ code:
                     inner.push(self.line(line)?);
                 }
                 // Validate inner loop correctness
-                let inner_sig = self.validate_array_loop_sig(&inner, &word.span);
-                // Validate signature
-                if let Some((declared_sig, inner_sig)) = arr.signature.zip(inner_sig) {
-                    if inner_sig != declared_sig.value {
-                        self.add_error(
-                            declared_sig.span.clone(),
-                            format!(
-                                "Array signature mismatch: declared {} but inferred {}",
-                                declared_sig.value, inner_sig
-                            ),
-                        );
+                let len = match inner.sig() {
+                    Ok(sig) => {
+                        // Validate signature
+                        if let Some(declared_sig) = arr.signature {
+                            if sig != declared_sig.value {
+                                self.add_error(
+                                    declared_sig.span.clone(),
+                                    format!(
+                                        "Array signature mismatch: declared {} but inferred {}",
+                                        declared_sig.value, sig
+                                    ),
+                                );
+                            }
+                        }
+                        ArrayLen::Static(sig.outputs)
                     }
-                }
+                    Err(e) => match e.kind {
+                        SigCheckErrorKind::LoopVariable { args } => ArrayLen::Dynamic(args),
+                        SigCheckErrorKind::LoopOverreach => {
+                            return Err(self.fatal_error(
+                                word.span.clone(),
+                                format!(
+                                    "Array with variable number of arguments \
+                                    cannot be constructed: {e}"
+                                ),
+                            ))
+                        }
+                        SigCheckErrorKind::Incorrect => {
+                            return Err(self.fatal_error(
+                                word.span.clone(),
+                                format!("Cannot infer array signature: {e}"),
+                            ))
+                        }
+                    },
+                };
                 // Diagnostic for array of characters
                 if line_count <= 1
                     && !arr.boxes
@@ -1175,9 +1197,8 @@ code:
                     }
                 }
                 // Normal case
-                let sig = self.sig_of(&inner, &word.span)?;
                 Node::Array {
-                    len: sig.outputs,
+                    len,
                     inner: inner.into(),
                     boxed: arr.boxes,
                     span,
@@ -1224,113 +1245,6 @@ code:
                 inner
             }
         }
-    }
-    /// Emit a warning if a loop inside an array could
-    /// potentially pull in a variable number of values
-    fn validate_array_loop_sig(&mut self, node: &Node, span: &CodeSpan) -> Option<Signature> {
-        let inner_sig = node.sig();
-        if self.current_bindings.is_empty() && !matches!(self.scope.kind, ScopeKind::Temp(_)) {
-            return inner_sig.ok();
-        }
-        let Err(e) = &inner_sig else {
-            // Case where repeat's function has a balanced signature
-            // This is fine in other contexts, so an error is not returned
-            // from the signature check, but it is not okay in an array.
-            if let Some(i) = node
-                .iter()
-                .position(|instr| {
-                    matches!(
-                        instr,
-                        Node::Mod(Primitive::Repeat, ..)
-                            | Node::ImplMod(ImplPrimitive::RepeatWithInverse, ..)
-                    )
-                })
-                .filter(|&i| i > 0)
-            {
-                let (Node::Mod(_, args, _) | Node::ImplMod(_, args, _)) = &node[i - 1] else {
-                    unreachable!()
-                };
-                let body_sig = args[0].sig;
-                let before_sig = nodes_sig(&node[..i - 1]).ok()?;
-                let after_sig = nodes_sig(&node[i + 1..]).ok()?;
-                if body_sig.args == body_sig.outputs
-                    && before_sig.args < body_sig.args
-                    && before_sig.outputs <= body_sig.args
-                    && after_sig.args.saturating_sub(body_sig.outputs) < body_sig.args
-                {
-                    let replacement: String = repeat('⊙')
-                        .take(body_sig.args.saturating_sub(1))
-                        .chain(['∘'])
-                        .collect();
-                    let message = format!(
-                        "This array contains a loop with an equal number \
-                        of arguments and outputs. This may result in a \
-                        variable number of values being pulled into the \
-                        array. To fix this, insert `{replacement}` on the \
-                        right side of the array.",
-                    );
-                    self.emit_diagnostic(message, DiagnosticKind::Warning, span.clone());
-                }
-            }
-            return inner_sig.ok();
-        };
-        let before_sig = (0..node.len())
-            .rev()
-            .find_map(|i| nodes_sig(&node[..i]).ok())
-            .unwrap();
-        let after_sig = (0..=node.len())
-            .find_map(|i| nodes_sig(&node[i..]).ok())
-            .unwrap();
-        match e.kind {
-            SigCheckErrorKind::LoopVariable { sig: body_sig, inf } => {
-                let positive_body_sig = body_sig.outputs >= body_sig.args;
-                let balanced_after_args = body_sig.args.saturating_sub(before_sig.outputs);
-                if body_sig.args > 0
-                    && (positive_body_sig && after_sig.args != balanced_after_args && !inf)
-                    || body_sig.args == 0 && after_sig.args > 0
-                {
-                    let mut message = format!(
-                        "This array contains a loop that has a variable \
-                        number of outputs. The code left of the loop has \
-                        signature {after_sig}, which may result in a variable \
-                        number of values being pulled into the array."
-                    );
-                    let max_after_args_required_by_before = before_sig
-                        .outputs
-                        .saturating_sub(before_sig.args)
-                        .max(before_sig.args);
-                    if after_sig.args > max_after_args_required_by_before {
-                        if after_sig.args > body_sig.args {
-                            let replacement: String = repeat('⊙')
-                                .take(after_sig.args - body_sig.args)
-                                .chain(['∘'])
-                                .collect();
-                            message.push_str(&format!(
-                                " To fix this, insert `{replacement}` on the \
-                                right side of the array."
-                            ));
-                        } else {
-                            let replacement: String =
-                                repeat('⊙').take(body_sig.args - 1).chain(['∘']).collect();
-                            message.push_str(&format!(
-                                " To fix this, insert `{replacement}` to the \
-                                left of the loop."
-                            ));
-                        }
-                        self.emit_diagnostic(message, DiagnosticKind::Warning, span.clone())
-                    }
-                }
-            }
-            SigCheckErrorKind::LoopOverreach => self.emit_diagnostic(
-                "This array contains a loop that has a variable \
-                number of inputs. This may result in a variable \
-                number of values being pulled into the array.",
-                DiagnosticKind::Warning,
-                span.clone(),
-            ),
-            _ => {}
-        }
-        inner_sig.ok()
     }
     /// Find the [`LocalName`]s of both the name and all parts of the path of a [`Ref`]
     ///
@@ -1630,22 +1544,7 @@ code:
                 Some(sig)
             }
             Err(e) => {
-                if let Some(declared_sig) = &func.signature {
-                    if e.kind == SigCheckErrorKind::Ambiguous {
-                        Some(declared_sig.value)
-                    } else {
-                        return Err(self.fatal_error(
-                            declared_sig.span.clone(),
-                            format!(
-                                "Cannot infer function signature: {e}. \
-                                An explicit signature can only be used \
-                                with ambiguous functions."
-                            ),
-                        ));
-                    }
-                } else {
-                    None
-                }
+                return Err(self.fatal_error(span, format!("Cannot infer function signature: {e}")));
             }
         };
         if let Some(sig) = sig {
@@ -1867,14 +1766,14 @@ code:
                     1 => self.primitive(Primitive::Fix, span),
                     2 => self.primitive(Primitive::Couple, span),
                     n => Node::Array {
-                        len: n,
+                        len: ArrayLen::Static(n),
                         inner: Node::empty().into(),
                         boxed: false,
                         span: self.add_span(span.clone()),
                     },
                 },
                 Primitive::Box => Node::Array {
-                    len: n,
+                    len: ArrayLen::Static(n),
                     inner: Node::empty().into(),
                     boxed: true,
                     span: self.add_span(span.clone()),

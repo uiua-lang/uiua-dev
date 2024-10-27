@@ -20,7 +20,7 @@ use crate::{
     algorithm::{self, invert::match_format_pattern, validate_size_impl},
     fill::Fill,
     lex::Span,
-    Array, Assembly, BindingKind, Boxed, CodeSpan, Compiler, Function, FunctionId, Ident,
+    Array, ArrayLen, Assembly, BindingKind, Boxed, CodeSpan, Compiler, Function, FunctionId, Ident,
     ImplPrimitive, Inputs, IntoSysBackend, LocalName, Node, Primitive, Report, SafeSys, SigNode,
     Signature, SysBackend, SysOp, TraceFrame, UiuaError, UiuaErrorKind, UiuaResult, Value, VERSION,
 };
@@ -921,9 +921,14 @@ at {}",
     pub(crate) fn touch_stack(&self, n: usize) -> UiuaResult {
         self.require_height(n)
     }
-    pub(crate) fn make_array(&mut self, len: usize, inner: Node, boxed: bool) -> UiuaResult {
+    pub(crate) fn make_array(&mut self, len: ArrayLen, inner: Node, boxed: bool) -> UiuaResult {
+        let start_height = self.stack_height();
         self.exec(inner)?;
-        let values = self.rt.stack.drain(len..).rev();
+        let start = match len {
+            ArrayLen::Static(len) => self.stack_height() - len,
+            ArrayLen::Dynamic(len) => start_height - len,
+        };
+        let values = self.rt.stack.drain(start..).rev();
         let values: Vec<Value> = if boxed {
             values.map(Boxed).map(Value::from).collect()
         } else {

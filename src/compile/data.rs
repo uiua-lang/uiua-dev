@@ -1,3 +1,5 @@
+use crate::ArrayLen;
+
 use super::*;
 
 impl Compiler {
@@ -309,7 +311,7 @@ impl Compiler {
                 args.push(arg);
             }
             Node::Array {
-                len: fields.len(),
+                len: ArrayLen::Static(fields.len()),
                 inner: Node::Mod(Primitive::Bracket, args, span).into(),
                 boxed,
                 span,

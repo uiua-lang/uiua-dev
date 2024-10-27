@@ -161,21 +161,6 @@ fn repeat_impl(f: SigNode, inv: Option<SigNode>, n: f64, env: &mut Uiua) -> Uiua
                 Primitive::Repeat.format()
             )));
         }
-        // TODO:
-        // if !env.rt.array_stack.is_empty() && sig.args > sig.outputs {
-        //     return Err(env.error(format!(
-        //         "Converging {}'s function must have a net positive stack \
-        //         change inside an array, but its signature is {sig}",
-        //         Primitive::Repeat.format()
-        //     )));
-        // }
-        // if env.rt.array_stack.is_empty() && sig.args != sig.outputs {
-        //     return Err(env.error(format!(
-        //         "Converging {}'s function must have a net stack change of 0 \
-        //         outside an array, but its signature is {sig}",
-        //         Primitive::Repeat.format()
-        //     )));
-        // }
         let mut prev = env.pop(1)?;
         env.push(prev.clone());
         loop {
@@ -227,14 +212,6 @@ pub fn do_(ops: Ops, env: &mut Uiua) -> UiuaResult {
     let cond_sub_sig = Signature::new(cond_sig.args, cond_sig.outputs + copy_count - 1);
     let comp_sig = body_sig.compose(cond_sub_sig);
     match comp_sig.args.cmp(&comp_sig.outputs) {
-        // TODO:
-        // Ordering::Less if env.rt.array_stack.is_empty() => {
-        //     return Err(env.error(format!(
-        //         "Do's functions cannot have a positive net stack \
-        //         change outside an array, but the composed signature of \
-        //         {body_sig} and {cond_sig}, minus the condition, is {comp_sig}"
-        //     )))
-        // }
         Ordering::Greater => {
             return Err(env.error(format!(
                 "Do's functions cannot have a negative net stack \

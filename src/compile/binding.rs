@@ -328,29 +328,10 @@ impl Compiler {
                     },
                 );
             }
-            Err(e) => {
-                if let Some(sig) = binding.signature {
-                    // Binding is a normal function
-                    if e.kind == SigCheckErrorKind::Ambiguous {
-                        let func = make_fn(node, sig.value, self);
-                        self.compile_bind_function(name, local, func, spandex, comment.as_deref())?;
-                    } else {
-                        return Err(self.fatal_error(
-                            sig.span.clone(),
-                            format!(
-                                "Cannot infer function signature: {e}. \
-                                An explicit signature can only be used \
-                                with ambiguous functions."
-                            ),
-                        ));
-                    }
-                } else {
-                    self.add_error(
-                        binding.name.span.clone(),
-                        format!("Cannot infer function signature: {e}"),
-                    );
-                }
-            }
+            Err(e) => self.add_error(
+                binding.name.span.clone(),
+                format!("Cannot infer function signature: {e}"),
+            ),
         }
         Ok(())
     }

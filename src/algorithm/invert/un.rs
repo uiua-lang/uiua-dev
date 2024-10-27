@@ -1,6 +1,6 @@
 use ecow::eco_vec;
 
-use crate::SigNode;
+use crate::{ArrayLen, SigNode};
 
 use super::*;
 
@@ -247,13 +247,18 @@ inverse!(
         span
     },
     {
-        let mut inv = un_inverse(inner.as_slice(), asm)?;
-        inv.prepend(Node::Unpack {
-            count: *len,
-            unbox: *boxed,
-            span: *span,
-        });
-        Ok((input, inv))
+        match len {
+            ArrayLen::Static(len) => {
+                let mut inv = un_inverse(inner.as_slice(), asm)?;
+                inv.prepend(Node::Unpack {
+                    count: *len,
+                    unbox: *boxed,
+                    span: *span,
+                });
+                Ok((input, inv))
+            }
+            ArrayLen::Dynamic(_) => generic(),
+        }
     }
 );
 
@@ -304,7 +309,7 @@ inverse!(
     {
         let mut inv = un_inverse(input, asm)?;
         inv.push(Array {
-            len: count,
+            len: ArrayLen::Static(count),
             inner: Node::empty().into(),
             boxed: unbox,
             span,
