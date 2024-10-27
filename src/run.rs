@@ -1015,7 +1015,7 @@ at {}",
         let start = self.rt.stack.len() - n;
         Ok(&mut self.rt.stack[start..])
     }
-    fn require_height(&self, n: usize) -> UiuaResult {
+    pub(crate) fn require_height(&self, n: usize) -> UiuaResult {
         if self.rt.stack.len() < n {
             return Err(self.error(format!(
                 "Stack was empty when getting argument {}",

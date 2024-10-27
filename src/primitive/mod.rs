@@ -197,7 +197,7 @@ impl fmt::Display for ImplPrimitive {
             ProgressiveIndexOf => write!(f, "{Un}{By}{Select}"),
             UndoUnbits => write!(f, "{Under}{Un}{Bits}"),
             AntiBase => write!(f, "{Under}{Base}"),
-            UndoReverse(_) => write!(f, "{Under}{Reverse}"),
+            UndoReverse { .. } => write!(f, "{Under}{Reverse}"),
             UndoTransposeN(..) => write!(f, "{Under}{Transpose}"),
             UndoRotate(_) => write!(f, "{Under}{Rotate}"),
             UndoTake => write!(f, "{Under}{Take}"),
@@ -1254,14 +1254,20 @@ impl ImplPrimitive {
                 env.push(val.undo_un_bits(&orig_shape, env)?);
             }
             ImplPrimitive::AntiBase => env.dyadic_rr_env(Value::antibase)?,
-            &ImplPrimitive::UndoReverse(n) => {
-                env.touch_stack(n)?;
+            &ImplPrimitive::UndoReverse { n, all } => {
+                env.require_height(n)?;
                 let end = env.stack_height() - n;
                 let vals = &mut env.stack_mut()[end..];
-                let max_rank = vals.iter().map(|v| v.rank()).max().unwrap_or(0);
-                for val in vals {
-                    if val.rank() == max_rank {
+                if all {
+                    for val in vals {
                         val.reverse();
+                    }
+                } else {
+                    let max_rank = vals.iter().map(|v| v.rank()).max().unwrap_or(0);
+                    for val in vals {
+                        if val.rank() == max_rank {
+                            val.reverse();
+                        }
                     }
                 }
             }

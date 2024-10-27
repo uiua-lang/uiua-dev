@@ -3,14 +3,16 @@ mod under;
 
 use std::{boxed, cell::RefCell, collections::HashMap, error::Error, fmt};
 
+use ecow::eco_vec;
+
 use crate::{
     assembly::{Assembly, Function},
     check::{nodes_clean_sig, SigCheckError},
-    FunctionId,
+    ArrayLen, FunctionId,
     ImplPrimitive::{self, *},
     Node::{self, *},
     Primitive::{self, *},
-    Purity, Signature, SysOp, Uiua, UiuaResult,
+    Purity, SigNode, Signature, SysOp, Uiua, UiuaResult,
 };
 
 use un::*;
@@ -189,7 +191,7 @@ impl fmt::Display for InversionError {
 }
 
 impl InversionError {
-    fn _func(self, f: &Function) -> Self {
+    fn func(self, f: &Function) -> Self {
         match self {
             InversionError::InnerFunc(mut ids, inner) => {
                 ids.push(f.id.clone());

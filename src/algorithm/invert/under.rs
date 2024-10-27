@@ -1,3 +1,5 @@
+use crate::SigNode;
+
 use super::*;
 
 impl Node {
@@ -5,6 +7,19 @@ impl Node {
     pub fn under_inverse(&self, g_sig: Signature, asm: &Assembly) -> InversionResult<(Node, Node)> {
         dbgln!("under-inverting {self:?}");
         under_inverse(self.as_slice(), g_sig, asm)
+    }
+}
+
+impl SigNode {
+    /// Get both parts of this node's under inverse
+    pub fn under_inverse(
+        &self,
+        g_sig: Signature,
+        asm: &Assembly,
+    ) -> InversionResult<(SigNode, SigNode)> {
+        let (before, after) = self.node.under_inverse(g_sig, asm)?;
+        let (before, after) = (before.sig_node()?, after.sig_node()?);
+        Ok((before, after))
     }
 }
 
@@ -42,6 +57,17 @@ fn under_inverse(
 }
 
 static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
+    &Trivial,
+    &SwitchPat,
+    &PartitionPat,
+    &GroupPat,
+    &EachPat,
+    &RowsPat,
+    &RepeatPat,
+    &FoldPat,
+    &ReversePat,
+    &TransposePat,
+    &RotatePat,
     // Sign ops
     &Stash(1, Abs, (Sign, Mul)),
     &Stash(1, Sign, (Abs, Mul)),
@@ -196,6 +222,10 @@ macro_rules! under {
     ($(#[$attr:meta])* $($doc:literal,)? ($($tt:tt)*), $body:expr) => {
         under!($(#[$attr])* $($doc,)? $($tt)*, $body);
     };
+    // Optional parens
+    ($(#[$attr:meta])* $($doc:literal,)? ($($tt:tt)*), ref, $pat:pat, $body:expr) => {
+        under!($(#[$attr])* $($doc,)? $($tt)*, ref, $pat, $body);
+    };
     // Main impl
     ($(#[$attr:meta])* $($doc:literal,)? $name:ident, $input:ident, $g_sig:tt, $asm:tt, $body:expr) => {
         #[derive(Debug)]
@@ -232,7 +262,7 @@ macro_rules! under {
         });
     };
     // Mod pattern
-    ($(#[$attr:meta])* $($doc:literal)? $name:ident, $input:ident, $asm:tt, $g_sig:tt, $prim:ident, $span:ident, $args:pat, $body:expr) => {
+    ($(#[$attr:meta])* $($doc:literal)? $name:ident, $input:ident, $g_sig:tt, $asm:tt, $prim:ident, $span:ident, $args:pat, $body:expr) => {
         under!($([$attr])* $($doc)? $name, $input, $g_sig, $asm, ref, Mod($prim, args, $span), {
             let $args = args.as_slice() else {
                 return generic();
@@ -299,6 +329,214 @@ under!(
         generic()
     }
 );
+
+under!(EachPat, input, g_sig, asm, Each, span, [f], {
+    let (f_before, f_after) = f.under_inverse(g_sig, asm)?;
+    let befores = Mod(Each, eco_vec![f_before], span);
+    let afters = Mod(Each, eco_vec![f_after], span);
+    Ok((input, befores, afters))
+});
+
+under!(RowsPat, input, g_sig, asm, {
+    let [Mod(prim @ (Rows | Inventory), args, span), input @ ..] = input else {
+        return generic();
+    };
+    let [f] = args.as_slice() else {
+        return generic();
+    };
+    let (f_before, f_after) = f.under_inverse(g_sig, asm)?;
+    let befores = Mod(*prim, eco_vec![f_before], *span);
+    let after_sig = f_after.sig;
+    let mut afters = Node::from_iter([Prim(Reverse, *span), Mod(*prim, eco_vec![f_after], *span)]);
+    afters.push(ImplPrim(
+        UndoReverse {
+            n: after_sig.outputs,
+            all: true,
+        },
+        *span,
+    ));
+    Ok((input, befores, afters))
+});
+
+under!(RepeatPat, input, g_sig, asm, {
+    let (f, span, input) = match input {
+        [Mod(Repeat, args, span), input @ ..] => {
+            let [f] = args.as_slice() else {
+                return generic();
+            };
+            (f, *span, input)
+        }
+        [ImplMod(RepeatWithInverse, args, span), input @ ..] => {
+            let [f, _] = args.as_slice() else {
+                return generic();
+            };
+            (f, *span, input)
+        }
+        _ => return generic(),
+    };
+    let (f_before, f_after) = f.under_inverse(g_sig, asm)?;
+    let befores = Node::from_iter([CopyToUnder(1, span), Mod(Repeat, eco_vec![f_before], span)]);
+    let afters = Node::from_iter([PopUnder(1, span), Mod(Repeat, eco_vec![f_after], span)]);
+    Ok((input, befores, afters))
+});
+
+under!(FoldPat, input, g_sig, asm, Fold, span, [f], {
+    let (f_before, f_after) = f.under_inverse(g_sig, asm)?;
+    if f_before.sig.outputs > f_before.sig.args || f_after.sig.outputs > f_after.sig.args {
+        return generic();
+    }
+    let befores = Node::from_iter([
+        Prim(Dup, span),
+        Prim(Len, span),
+        PushUnder(1, span),
+        Mod(Fold, eco_vec![f_before], span),
+    ]);
+    let afters = Node::from_iter([PopUnder(1, span), Mod(Repeat, eco_vec![f_after], span)]);
+    Ok((input, befores, afters))
+});
+
+impl UnderPattern for Trivial {
+    fn under_extract<'a>(
+        &self,
+        input: &'a [Node],
+        g_sig: Signature,
+        asm: &Assembly,
+    ) -> InversionResult<(&'a [Node], Node, Node)> {
+        match input {
+            [NoInline(inner), input @ ..] => {
+                let (before, after) = inner.under_inverse(g_sig, asm)?;
+                Ok((input, NoInline(before.into()), NoInline(after.into())))
+            }
+            [TrackCaller(inner), input @ ..] => {
+                let (before, after) = inner.under_inverse(g_sig, asm)?;
+                Ok((input, TrackCaller(before.into()), TrackCaller(after.into())))
+            }
+            [node @ SetOutputComment { .. }, input @ ..] => {
+                Ok((input, node.clone(), Node::empty()))
+            }
+            [Call(f, _), input @ ..] => {
+                let (before, after) = asm[f].under_inverse(g_sig, asm).map_err(|e| e.func(f))?;
+                Ok((input, before, after))
+            }
+            _ => generic(),
+        }
+    }
+}
+
+under!(
+    (SwitchPat, input, g_sig, asm),
+    ref,
+    Node::Switch {
+        branches,
+        sig,
+        span,
+        under_cond: false
+    },
+    {
+        let mut befores = EcoVec::with_capacity(branches.len());
+        let mut afters = EcoVec::with_capacity(branches.len());
+        let mut undo_sig: Option<Signature> = None;
+        for branch in branches {
+            // Calc under f
+            let (before, after) = branch.under_inverse(g_sig, asm)?;
+            let after_sig = after.sig;
+            befores.push(before);
+            afters.push(after);
+            // Aggregate sigs
+            let undo_sig = undo_sig.get_or_insert(after_sig);
+            if after_sig.is_compatible_with(*undo_sig) {
+                *undo_sig = undo_sig.max_with(after_sig);
+            } else if after_sig.outputs == undo_sig.outputs {
+                undo_sig.args = undo_sig.args.max(after_sig.args)
+            } else {
+                return generic();
+            }
+        }
+        let before = Node::Switch {
+            branches: befores,
+            sig: *sig,
+            span: *span,
+            under_cond: true,
+        };
+        let after = Node::from_iter([
+            Node::PopUnder(1, *span),
+            Node::Switch {
+                branches: afters,
+                sig: undo_sig.ok_or(Generic)?,
+                span: *span,
+                under_cond: false,
+            },
+        ]);
+        Ok((input, before, after))
+    }
+);
+
+macro_rules! partition_group {
+    ($name:ident, $prim:ident, $impl_prim1:ident, $impl_prim2:ident) => {
+        under!($name, input, g_sig, asm, $prim, span, [f], {
+            let (f_before, f_after) = f.under_inverse(g_sig, asm)?;
+            let before =
+                Node::from_iter([CopyToUnder(2, span), Mod($prim, eco_vec![f_before], span)]);
+            let after = Node::from_iter([
+                ImplMod($impl_prim1, eco_vec![f_after], span),
+                Mod(Dip, eco_vec![PopUnder(2, span).sig_node()?], span),
+                ImplPrim(ImplPrimitive::$impl_prim2, span),
+            ]);
+            Ok((input, before, after))
+        });
+    };
+}
+
+partition_group!(PartitionPat, Partition, UndoPartition1, UndoPartition2);
+partition_group!(GroupPat, Group, UndoGroup1, UndoGroup2);
+
+under!(ReversePat, input, g_sig, _, Prim(Reverse, span), {
+    if g_sig.outputs == 1 {
+        return generic();
+    }
+    let count = if g_sig.args == 1 || g_sig.outputs == g_sig.args * 2 {
+        g_sig.outputs.max(1)
+    } else {
+        1
+    };
+    let after = ImplPrim(
+        UndoReverse {
+            n: count,
+            all: false,
+        },
+        span,
+    );
+    Ok((input, Prim(Reverse, span), after))
+});
+
+under!(TransposePat, input, g_sig, _, {
+    if g_sig.outputs == 1 {
+        return generic();
+    }
+    let (before, span, amnt, input) = match input {
+        [node @ Prim(Transpose, span), input @ ..] => (node, *span, 1, input),
+        [node @ ImplPrim(TransposeN(amnt), span), input @ ..] => (node, *span, *amnt, input),
+        _ => return generic(),
+    };
+    let count = if g_sig.args == 1 || g_sig.outputs == g_sig.args * 2 {
+        g_sig.outputs.max(1)
+    } else {
+        1
+    };
+    let after = ImplPrim(UndoTransposeN(count, amnt), span);
+    Ok((input, before.clone(), after))
+});
+
+under!(RotatePat, input, g_sig, _, Prim(Rotate, span), {
+    let count = if g_sig.args == 1 || g_sig.outputs == g_sig.args * 2 {
+        g_sig.outputs.max(1)
+    } else {
+        1
+    };
+    let before = Node::from_iter([CopyToUnder(1, span), Prim(Rotate, span)]);
+    let after = Node::from_iter([PopUnder(1, span), ImplPrim(UndoRotate(count), span)]);
+    Ok((input, before, after))
+});
 
 /// Copy some values to the under stack at the beginning of the "do" step
 /// and pop them at the beginning of the "undo" step
