@@ -5,9 +5,9 @@ use std::{cell::RefCell, collections::HashMap, iter::repeat, mem::swap, rc::Rc};
 use ecow::eco_vec;
 
 use crate::{
-    algorithm::pervade::bin_pervade_values, check::nodes_clean_sig, cowslice::CowSlice, get_ops,
-    random, types::push_empty_rows_value, val_as_arr, value::Value, Array, Boxed, ImplPrimitive,
-    Node, Ops, PersistentMeta, Primitive, Shape, SigNode, Uiua, UiuaResult,
+    algorithm::pervade::bin_pervade_values, cowslice::CowSlice, get_ops, random,
+    types::push_empty_rows_value, val_as_arr, value::Value, Array, Boxed, ImplPrimitive, Node, Ops,
+    PersistentMeta, Primitive, Shape, SigNode, Uiua, UiuaResult,
 };
 
 use super::{fill_value_shapes, fixed_rows, multi_output, FixedRowsData, MultiOutput};
@@ -204,58 +204,39 @@ fn f_mon2_fast_fn_impl(nodes: &[Node], env: &Uiua) -> Option<(ValueMon2Fn, usize
             (f, d + 1)
         }
         // By monadic
-        [Node::Prim(Dup, _), rest @ ..]
-            if nodes_clean_sig(rest).is_some_and(|sig| sig == (1, 1)) =>
-        {
-            let get_second = f_mon_fast_fn_impl(rest, false, env)?;
+        [Node::Mod(By, args, _)] if args[0].sig == (1, 1) => {
+            let get_second = f_mon_fast_fn_impl(args[0].node.as_slice(), false, env)?;
             let f = std::boxed::Box::new(move |val: Value, depth: usize, env: &mut Uiua| {
                 Ok((get_second.0(val.clone(), depth, env)?, val))
             });
             (f, 0)
         }
-        // TODO:
-        // // On monadic
-        // [Node::CopyToTemp {
-        //     stack: TempStack::Inline,
-        //     count: 1,
-        //     ..
-        // }, rest @ .., Node::PopTemp {
-        //     stack: TempStack::Inline,
-        //     count: 1,
-        //     ..
-        // }] if instrs_clean_signature(rest).is_some_and(|sig| sig == (1, 1)) => {
-        //     let get_second = f_mon_fast_fn_impl(rest, false, env)?;
-        //     let f = std::boxed::Box::new(move |val: Value, depth: usize, env: &mut Uiua| {
-        //         Ok((val.clone(), get_second.0(val, depth, env)?))
-        //     });
-        //     (f, 0)
-        // }
-        // // By constant
-        // [Node::TouchStack { count: 1, .. }, Node::Push(repl)] => {
-        //     let repl = repl.clone();
-        //     let f = std::boxed::Box::new(move |val: Value, depth: usize, _: &mut Uiua| {
-        //         let replaced = val.replace_depth(repl.clone(), depth);
-        //         Ok((replaced, val))
-        //     });
-        //     (f, 0)
-        // }
-        // // On constant
-        // [Node::PushTemp {
-        //     stack: TempStack::Inline,
-        //     count: 1,
-        //     ..
-        // }, Node::Push(repl), Node::PopTemp {
-        //     stack: TempStack::Inline,
-        //     count: 1,
-        //     ..
-        // }] => {
-        //     let repl = repl.clone();
-        //     let f = std::boxed::Box::new(move |val: Value, depth: usize, _: &mut Uiua| {
-        //         let replaced = val.replace_depth(repl.clone(), depth);
-        //         Ok((val, replaced))
-        //     });
-        //     (f, 0)
-        // }
+        // On monadic
+        [Node::Mod(On, args, _)] if args[0].sig == (1, 1) => {
+            let get_second = f_mon_fast_fn_impl(args[0].node.as_slice(), false, env)?;
+            let f = std::boxed::Box::new(move |val: Value, depth: usize, env: &mut Uiua| {
+                Ok((val.clone(), get_second.0(val, depth, env)?))
+            });
+            (f, 0)
+        }
+        // By constant
+        [Node::Prim(Identity, _), Node::Push(repl)] => {
+            let repl = repl.clone();
+            let f = std::boxed::Box::new(move |val: Value, depth: usize, _: &mut Uiua| {
+                let replaced = val.replace_depth(repl.clone(), depth);
+                Ok((replaced, val))
+            });
+            (f, 0)
+        }
+        // On constant
+        [Node::Push(repl), Node::Prim(Flip, _)] => {
+            let repl = repl.clone();
+            let f = std::boxed::Box::new(move |val: Value, depth: usize, _: &mut Uiua| {
+                let replaced = val.replace_depth(repl.clone(), depth);
+                Ok((val, replaced))
+            });
+            (f, 0)
+        }
         _ => return None,
     })
 }
