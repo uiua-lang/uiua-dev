@@ -68,6 +68,7 @@ static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
     &ReversePat,
     &TransposePat,
     &RotatePat,
+    &CustomPat,
     // Sign ops
     &Stash(1, Abs, (Sign, Mul)),
     &Stash(1, Sign, (Abs, Mul)),
@@ -393,6 +394,28 @@ under!(FoldPat, input, g_sig, asm, Fold, span, [f], {
     ]);
     let afters = Node::from_iter([PopUnder(1, span), Mod(Repeat, eco_vec![f_after], span)]);
     Ok((input, befores, afters))
+});
+
+under!(CustomPat, input, _, _, ref, CustomInverse(cust, span), {
+    let (mut before, mut after, to_save) = if let Some((before, after)) = cust.under.clone() {
+        if before.sig.outputs < cust.normal.sig.outputs {
+            return generic();
+        }
+        let to_save = before.sig.outputs - cust.normal.sig.outputs;
+        (before.node, after.node, to_save)
+    } else if let Some(anti) = cust.anti.clone() {
+        let to_save = anti.sig.args - cust.normal.sig.outputs;
+        let before = Mod(On, eco_vec![cust.normal.clone()], *span);
+        let after = anti.node;
+        (before, after, to_save)
+    } else {
+        return generic();
+    };
+    if to_save > 0 {
+        before.push(PushUnder(to_save, *span));
+        after.prepend(PopUnder(to_save, *span));
+    }
+    Ok((input, before, after))
 });
 
 impl UnderPattern for Trivial {

@@ -218,6 +218,7 @@ impl Error for InversionError {}
 use ecow::{EcoString, EcoVec};
 use regex::Regex;
 use InversionError::Generic;
+/// A generic inversion error
 fn generic<T>() -> InversionResult<T> {
     Err(InversionError::Generic)
 }

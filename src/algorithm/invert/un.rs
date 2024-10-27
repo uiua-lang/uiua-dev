@@ -110,6 +110,8 @@ pub fn contra_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
 }
 
 pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
+    &InnerAnti,
+    &InnerAntiDip,
     &PrimPat,
     &ImplPrimPat,
     &ArrayPat,
@@ -117,12 +119,13 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &DipPat,
     &OnPat,
     &ByPat,
-    &InnerAnti,
     &RowsPat,
     &Trivial,
     &ScanPat,
     &ReduceMulPat,
     &PrimesPat,
+    &JoinPat,
+    &CustomPat,
     &(Sqrt, (Dup, Mul)),
     &((Dup, Add), (2, Div)),
     &((Dup, Mul), Sqrt),
@@ -134,6 +137,7 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &((Val, ValidateType), ValidateType),
     &((Val, TagVariant), ValidateVariant),
     &((Val, ValidateVariant), TagVariant),
+    &(Dup, (Over, Flip, MatchPattern)),
     &MatchConst,
 ];
 
@@ -161,6 +165,9 @@ pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Pick, AntiPick),
     &(Base, AntiBase),
     &AntiRepeatPat,
+    &AntiInsertPat,
+    &AntiJoinPat,
+    &AntiCustomPat,
 ];
 
 pub static CONTRA_PATTERNS: &[&dyn InvertPattern] = &[
@@ -300,6 +307,20 @@ inverse!(
     }
 );
 
+inverse!((InnerAntiDip, input, asm), {
+    let [Mod(Dip, args, dip_span), input @ ..] = input else {
+        return generic();
+    };
+    let args: Vec<_> = args.iter().map(|sn| sn.node.clone()).collect();
+    let ([], mut node) = Val.invert_extract(&args, asm)? else {
+        return generic();
+    };
+    node.push(Prim(Flip, *dip_span));
+    node.extend(input.iter().cloned());
+    let inv = node.un_inverse(asm)?;
+    Ok((&[], inv))
+});
+
 inverse!(
     (UnpackPat, input, asm),
     Unpack {
@@ -322,6 +343,30 @@ inverse!(
 
 inverse!(RowsPat, input, asm, Rows, span, [f], {
     Ok((input, Mod(Rows, eco_vec![f.un_inverse(asm)?], span)))
+});
+
+inverse!(AntiInsertPat, input, asm, {
+    let (input, val) = Val.invert_extract(input, asm)?;
+    let &[Prim(Insert, span), ref input @ ..] = input else {
+        return generic();
+    };
+    let inv = Node::from_iter([
+        PushUnder(1, span),
+        val,
+        Prim(Over, span),
+        Prim(Over, span),
+        Prim(Has, span),
+        Node::new_push(1),
+        ImplPrim(MatchPattern, span),
+        Prim(Over, span),
+        Prim(Over, span),
+        Prim(Get, span),
+        PushUnder(1, span),
+        Prim(Remove, span),
+        PopUnder(2, span),
+        ImplPrim(MatchPattern, span),
+    ]);
+    Ok((input, inv))
 });
 
 inverse!(ScanPat, input, asm, {
@@ -382,6 +427,72 @@ inverse!(
         ))
     }
 );
+
+inverse!(JoinPat, input, _, {
+    Ok(match input {
+        [Prim(Join, span), input @ ..] => (input, ImplPrim(UnJoin, *span)),
+        [Prim(Flip, span), Prim(Join, _), input @ ..] => (input, ImplPrim(UnJoinEnd, *span)),
+        [Prim(Couple, span), Prim(Flip, _), Prim(Join, _), input @ ..] => {
+            let inv = Node::from_iter([Node::new_push([2]), ImplPrim(UnJoinShape, *span)]);
+            (input, inv)
+        }
+        [Prim(Couple, span), Prim(Join, _), input @ ..] => {
+            let inv = Node::from_iter([Node::new_push([2]), ImplPrim(UnJoinShapeEnd, *span)]);
+            (input, inv)
+        }
+        _ => return generic(),
+    })
+});
+
+inverse!(AntiJoinPat, input, _, {
+    Ok(match *input {
+        [Prim(Join, span), ref input @ ..] => {
+            let inv = Node::from_iter([
+                Prim(Dup, span),
+                Prim(Shape, span),
+                Prim(Flip, span),
+                PushUnder(1, span),
+                ImplPrim(UnJoinShape, span),
+                PopUnder(1, span),
+                ImplPrim(MatchPattern, span),
+            ]);
+            (input, inv)
+        }
+        [Prim(Flip, span), Prim(Join, _), ref input @ ..] => {
+            let inv = Node::from_iter([
+                Prim(Dup, span),
+                Prim(Shape, span),
+                Prim(Flip, span),
+                PushUnder(1, span),
+                ImplPrim(UnJoinShapeEnd, span),
+                PopUnder(1, span),
+                ImplPrim(MatchPattern, span),
+            ]);
+            (input, inv)
+        }
+        _ => return generic(),
+    })
+});
+
+inverse!(CustomPat, input, _, ref, CustomInverse(cust, span), {
+    let mut cust = cust.clone();
+    let un = cust.un.take().ok_or(Generic)?;
+    cust.un = Some(cust.normal);
+    cust.normal = un;
+    cust.anti = None;
+    cust.under = None;
+    Ok((input, CustomInverse(cust, *span)))
+});
+
+inverse!(AntiCustomPat, input, _, ref, CustomInverse(cust, span), {
+    let mut cust = cust.clone();
+    let anti = cust.anti.take().ok_or(Generic)?;
+    cust.anti = Some(cust.normal);
+    cust.normal = anti;
+    cust.un = None;
+    cust.under = None;
+    Ok((input, CustomInverse(cust, *span)))
+});
 
 #[derive(Debug)]
 pub(crate) struct Trivial;

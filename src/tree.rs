@@ -323,6 +323,14 @@ impl FromIterator<Node> for Node {
     }
 }
 
+impl Extend<Node> for Node {
+    fn extend<T: IntoIterator<Item = Node>>(&mut self, iter: T) {
+        for node in iter {
+            self.push(node);
+        }
+    }
+}
+
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -338,15 +346,15 @@ impl fmt::Debug for Node {
             Node::ImplPrim(impl_prim, _) => write!(f, "{impl_prim}"),
             Node::Mod(prim, args, _) => {
                 let mut tuple = f.debug_tuple(&prim.to_string());
-                for node in args {
-                    tuple.field(node);
+                for sn in args {
+                    tuple.field(&sn.node);
                 }
                 tuple.finish()
             }
             Node::ImplMod(impl_prim, args, _) => {
                 let mut tuple = f.debug_tuple(&impl_prim.to_string());
-                for node in args {
-                    tuple.field(node);
+                for sn in args {
+                    tuple.field(&sn.node);
                 }
                 tuple.finish()
             }
