@@ -230,11 +230,11 @@ impl Compiler {
         self.current_bindings.push(CurrentBinding {
             name: name.clone(),
             signature: binding.signature.as_ref().map(|s| s.value),
-            referenced: false,
+            recurses: 0,
             global_index: local.index,
         });
         let node = self.words(binding.words);
-        let self_referenced = self.current_bindings.pop().unwrap().referenced;
+        let self_referenced = self.current_bindings.pop().unwrap().recurses > 0;
         let node = node?;
 
         // Resolve signature

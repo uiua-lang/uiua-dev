@@ -1304,10 +1304,6 @@ at {}",
         if !self.rt.backend.allow_thread_spawning() {
             return Err(self.error("Thread spawning is not allowed in this environment"));
         }
-        // TODO:
-        // if f.is_recursive() {
-        //     return Err(self.error(format!("Cannot spawn recursive function {}", f.id)));
-        // }
         if self.rt.stack.len() < capture_count {
             return Err(self.error(format!(
                 "Expected at least {} value(s) on the stack, but there are {}",

@@ -159,7 +159,7 @@ impl AsMut<Assembly> for Compiler {
 struct CurrentBinding {
     name: Ident,
     signature: Option<Signature>,
-    referenced: bool,
+    recurses: usize,
     global_index: usize,
 }
 
@@ -1431,7 +1431,7 @@ code:
                         ),
                     ));
                 };
-                curr.referenced = true;
+                curr.recurses += 1;
                 (self.code_meta.global_references).insert(span.clone(), curr.global_index);
                 Node::CallGlobal(curr.global_index, sig)
             } else if let Some(local) = self.find_name(&ident, skip_local) {

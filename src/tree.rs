@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashSet},
+    collections::hash_map::DefaultHasher,
     fmt,
     hash::{Hash, Hasher},
     mem::{discriminant, swap, take},
@@ -8,6 +8,7 @@ use std::{
 };
 
 use ecow::{eco_vec, EcoString, EcoVec};
+use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -442,9 +443,10 @@ impl Node {
             node: &'a Node,
             purity: Purity,
             asm: &'a Assembly,
-            visited: &mut HashSet<&'a Function>,
+            visited: &mut IndexSet<&'a Function>,
         ) -> bool {
-            match node {
+            let len = visited.len();
+            let is = match node {
                 Node::Run(nodes) => nodes.iter().all(|node| recurse(node, purity, asm, visited)),
                 Node::Prim(prim, _) => prim.purity() >= purity,
                 Node::ImplPrim(prim, _) => prim.purity() >= purity,
@@ -477,22 +479,24 @@ impl Node {
                     }
                 }
                 _ => true,
-            }
+            };
+            visited.truncate(len);
+            is
         }
-        recurse(self, min_purity, asm, &mut HashSet::new())
+        recurse(self, min_purity, asm, &mut IndexSet::new())
     }
     /// Check if the node has a bound runtime
     pub fn is_limit_bounded<'a>(&'a self, asm: &'a Assembly) -> bool {
         fn recurse<'a>(
             node: &'a Node,
             asm: &'a Assembly,
-            visited: &mut HashSet<&'a Function>,
+            visited: &mut IndexSet<&'a Function>,
         ) -> bool {
-            match node {
+            let len = visited.len();
+            let is = match node {
                 Node::Run(nodes) => nodes.iter().all(|node| recurse(node, asm, visited)),
                 Node::Prim(Primitive::Send | Primitive::Recv, _) => false,
-                Node::Mod(_, args, _) => args.iter().all(|arg| recurse(&arg.node, asm, visited)),
-                Node::ImplMod(_, args, _) => {
+                Node::Mod(_, args, _) | Node::ImplMod(_, args, _) => {
                     args.iter().all(|arg| recurse(&arg.node, asm, visited))
                 }
                 Node::Call(func, _) => visited.insert(func) && recurse(&asm[func], asm, visited),
@@ -510,9 +514,32 @@ impl Node {
                     }
                 }
                 _ => true,
-            }
+            };
+            visited.truncate(len);
+            is
         }
-        recurse(self, asm, &mut HashSet::new())
+        recurse(self, asm, &mut IndexSet::new())
+    }
+    /// Check if the node is recursive
+    pub fn is_recursive(&self, asm: &Assembly) -> bool {
+        fn recurse<'a>(
+            node: &'a Node,
+            asm: &'a Assembly,
+            visited: &mut IndexSet<&'a Function>,
+        ) -> bool {
+            let len = visited.len();
+            let is = match node {
+                Node::Run(nodes) => nodes.iter().any(|node| recurse(node, asm, visited)),
+                Node::Mod(_, args, _) | Node::ImplMod(_, args, _) => {
+                    args.iter().any(|sn| recurse(&sn.node, asm, visited))
+                }
+                Node::Call(f, _) => !visited.insert(f) || recurse(&asm[f], asm, visited),
+                _ => false,
+            };
+            visited.truncate(len);
+            is
+        }
+        recurse(self, asm, &mut IndexSet::new())
     }
 }
 

@@ -473,8 +473,28 @@ impl Compiler {
             Gap => {
                 let (SigNode { mut node, .. }, _) = self.monadic_modifier_op(modified)?;
                 let span = self.add_span(modified.modifier.span.clone());
-                node.prepend(Node::Prim(Primitive::Pop, span));
+                node.prepend(Node::Prim(Pop, span));
                 node
+            }
+            On => {
+                let (mut sn, _) = self.monadic_modifier_op(modified)?;
+                let span = self.add_span(modified.modifier.span.clone());
+                if sn.sig.args == 0 {
+                    sn.node.push(Node::Prim(Flip, span));
+                    sn.node
+                } else {
+                    Node::Mod(On, eco_vec![sn], span)
+                }
+            }
+            By => {
+                let (mut sn, _) = self.monadic_modifier_op(modified)?;
+                let span = self.add_span(modified.modifier.span.clone());
+                if sn.sig.args == 0 {
+                    sn.node.prepend(Node::Prim(Identity, span));
+                    sn.node
+                } else {
+                    Node::Mod(On, eco_vec![sn], span)
+                }
             }
             Backward => {
                 let (SigNode { mut node, sig }, _) = self.monadic_modifier_op(modified)?;
@@ -752,7 +772,22 @@ impl Compiler {
                     });
                 }
                 let span = self.add_span(modified.modifier.span.clone());
-                Node::Mod(Primitive::Fold, eco_vec![sn], span)
+                Node::Mod(Fold, eco_vec![sn], span)
+            }
+            prim @ (Spawn | Pool) => {
+                let recurses_before = self
+                    .current_bindings
+                    .last()
+                    .map(|curr| curr.recurses)
+                    .unwrap_or(0);
+                let (sn, span) = self.monadic_modifier_op(modified)?;
+                if let Some(curr) = self.current_bindings.last() {
+                    if curr.recurses > recurses_before {
+                        self.add_error(span, format!("Cannot {prim} recursive function"))
+                    }
+                }
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::Mod(prim, eco_vec![sn], span)
             }
             _ => return Ok(None),
         }))
