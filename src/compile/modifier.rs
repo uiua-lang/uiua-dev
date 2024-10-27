@@ -397,55 +397,6 @@ impl Compiler {
 
         let span = self.add_span(modified.modifier.span.clone());
 
-        // TODO:
-        // let mut before = EcoVec::new();
-        // let mut after = EcoVec::new();
-
-        // if let Some(n) = subscript {
-        //     match prim {
-        //         Primitive::Rows if n == 0 => {
-        //             before = eco_vec![Instr::Prim(Primitive::Fix, span),];
-        //             after = eco_vec![Instr::ImplPrim(ImplPrimitive::UndoFix, span),];
-        //         }
-        //         Primitive::Rows => {
-        //             let stack = TempStack::Under;
-        //             let count = 2;
-        //             let n = -(n as i32);
-        //             before = eco_vec![
-        //                 Instr::Prim(Primitive::Dup, span),
-        //                 Instr::Prim(Primitive::Shape, span),
-        //                 Instr::push(n),
-        //                 Instr::PushTemp { stack, count, span },
-        //                 Instr::push(n),
-        //                 Instr::Prim(Primitive::Rerank, span),
-        //             ];
-        //             after = eco_vec![
-        //                 Instr::PopTemp { stack, count, span },
-        //                 Instr::ImplPrim(ImplPrimitive::UndoRerank, span)
-        //             ];
-        //         }
-        //         Primitive::Each => {
-        //             let stack = TempStack::Under;
-        //             let count = 2;
-        //             prim = Primitive::Rows;
-        //             before = eco_vec![
-        //                 Instr::Prim(Primitive::Dup, span),
-        //                 Instr::Prim(Primitive::Shape, span),
-        //                 Instr::push(n),
-        //                 Instr::PushTemp { stack, count, span },
-        //                 Instr::push(n),
-        //                 Instr::Prim(Primitive::Rerank, span),
-        //             ];
-        //             after = eco_vec![
-        //                 Instr::PopTemp { stack, count, span },
-        //                 Instr::ImplPrim(ImplPrimitive::UndoRerank, span)
-        //             ];
-        //         }
-        //         Primitive::Tuples => before = eco_vec![Instr::push(n)],
-        //         _ => {}
-        //     }
-        // }
-
         // Compile operands
         let ops = self.args(modified.operands)?;
 
