@@ -661,9 +661,8 @@ impl Compiler {
                         ),
                     );
                 }
-
                 let span = self.add_span(modified.modifier.span.clone());
-                Node::Mod(Primitive::Fill, eco_vec![f, fill], span)
+                Node::Mod(Primitive::Fill, eco_vec![fill, f], span)
             }
             Comptime => {
                 let word = modified.code_operands().next().unwrap().clone();
