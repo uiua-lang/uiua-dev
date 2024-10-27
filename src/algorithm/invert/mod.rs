@@ -17,7 +17,7 @@ use crate::{
 
 use un::*;
 
-pub(crate) const DEBUG: bool = false;
+pub(crate) const DEBUG: bool = true;
 
 macro_rules! dbgln {
     ($($arg:tt)*) => {

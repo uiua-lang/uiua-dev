@@ -276,7 +276,7 @@ inverse!(DipPat, input, asm, Dip, span, [f], {
     Ok((input, Mod(Dip, eco_vec![inv], span)))
 });
 
-inverse!(OnPat, input, asm, Dip, span, [f], {
+inverse!(OnPat, input, asm, On, span, [f], {
     let inv = f.anti_inverse(asm)?;
     Ok((input, Mod(On, eco_vec![inv], span)))
 });

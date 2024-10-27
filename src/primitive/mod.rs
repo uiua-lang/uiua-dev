@@ -1028,18 +1028,18 @@ impl Primitive {
                 env.dup_values(f.sig.args, f.sig.args)?;
                 env.exec(f)?;
             }
+            Primitive::With => {
+                let [f] = get_ops(ops, env)?;
+                let val = env.copy_nth(f.sig.args.max(2) - 1)?;
+                env.exec(f)?;
+                env.push(val);
+            }
             Primitive::Off => {
                 let [f] = get_ops(ops, env)?;
                 let val = env.copy_nth(0)?;
                 env.exec(f.node)?;
                 env.push(val);
-                env.rotate_up(1, f.sig.outputs)?;
-            }
-            Primitive::With => {
-                let [f] = get_ops(ops, env)?;
-                let val = env.copy_nth(f.sig.args.saturating_sub(1))?;
-                env.exec(f)?;
-                env.push(val);
+                env.rotate_up(1, f.sig.outputs + 1)?;
             }
             Primitive::Content => {
                 let [f] = get_ops(ops, env)?;

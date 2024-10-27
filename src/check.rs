@@ -439,6 +439,18 @@ impl VirtualEnv {
                 Dump => {
                     let [_] = get_args(args)?;
                 }
+                Fork => {
+                    let [f, g] = get_args(args)?;
+                    self.handle_args_outputs(f.args.max(g.args), f.outputs + g.outputs);
+                }
+                Bracket => {
+                    let [f, g] = get_args(args)?;
+                    self.handle_args_outputs(f.args + g.args, f.outputs + g.outputs);
+                }
+                Both => {
+                    let [f] = get_args(args)?;
+                    self.handle_args_outputs(f.args * 2, f.outputs * 2);
+                }
                 Dip => {
                     let [f] = get_args(args)?;
                     self.handle_args_outputs(f.args + 1, f.outputs + 1);
@@ -455,9 +467,19 @@ impl VirtualEnv {
                     let [f] = get_args(args)?;
                     self.handle_args_outputs(f.args.max(2), f.outputs + f.args.max(2));
                 }
+                With | Off => {
+                    let [f] = get_args(args)?;
+                    self.handle_args_outputs(f.args.max(2), f.outputs + 1);
+                }
+                prim if prim.modifier_args().is_some() => {
+                    return Err(SigCheckError::from(format!(
+                        "{} was not checked. This is a bug in the interpreter",
+                        prim.format()
+                    )))
+                }
                 prim => {
                     return Err(SigCheckError::from(format!(
-                        "{} was checked as a modifier",
+                        "{} was checked as a modifier. This is a bug in the interpreter",
                         prim.format()
                     )))
                 }

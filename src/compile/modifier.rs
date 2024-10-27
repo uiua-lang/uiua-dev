@@ -496,6 +496,15 @@ impl Compiler {
                     Node::Mod(On, eco_vec![sn], span)
                 }
             }
+            prim @ (With | Off) => {
+                let (mut sn, _) = self.monadic_modifier_op(modified)?;
+                if sn.sig.args < 2 {
+                    sn.sig.outputs += 2 - sn.sig.args;
+                    sn.sig.args = 2;
+                }
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::Mod(prim, eco_vec![sn], span)
+            }
             Backward => {
                 let (SigNode { mut node, sig }, _) = self.monadic_modifier_op(modified)?;
                 if sig.args != 2 {
