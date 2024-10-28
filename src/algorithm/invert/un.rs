@@ -477,8 +477,8 @@ inverse!(AntiJoinPat, input, _, {
 inverse!(CustomPat, input, _, ref, CustomInverse(cust, span), {
     let mut cust = cust.clone();
     let un = cust.un.take().ok_or(Generic)?;
-    cust.un = Some(cust.normal);
-    cust.normal = un;
+    cust.un = cust.normal.ok();
+    cust.normal = Ok(un);
     cust.anti = None;
     cust.under = None;
     Ok((input, CustomInverse(cust, *span)))
@@ -487,8 +487,8 @@ inverse!(CustomPat, input, _, ref, CustomInverse(cust, span), {
 inverse!(AntiCustomPat, input, _, ref, CustomInverse(cust, span), {
     let mut cust = cust.clone();
     let anti = cust.anti.take().ok_or(Generic)?;
-    cust.anti = Some(cust.normal);
-    cust.normal = anti;
+    cust.anti = cust.normal.ok();
+    cust.normal = Ok(anti);
     cust.un = None;
     cust.under = None;
     Ok((input, CustomInverse(cust, *span)))

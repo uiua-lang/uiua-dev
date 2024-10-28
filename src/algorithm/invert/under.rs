@@ -397,15 +397,16 @@ under!(FoldPat, input, g_sig, asm, Fold, span, [f], {
 });
 
 under!(CustomPat, input, _, _, ref, CustomInverse(cust, span), {
+    let normal = cust.normal.clone()?;
     let (mut before, mut after, to_save) = if let Some((before, after)) = cust.under.clone() {
-        if before.sig.outputs < cust.normal.sig.outputs {
+        if before.sig.outputs < normal.sig.outputs {
             return generic();
         }
-        let to_save = before.sig.outputs - cust.normal.sig.outputs;
+        let to_save = before.sig.outputs - normal.sig.outputs;
         (before.node, after.node, to_save)
     } else if let Some(anti) = cust.anti.clone() {
-        let to_save = anti.sig.args - cust.normal.sig.outputs;
-        let before = Mod(On, eco_vec![cust.normal.clone()], *span);
+        let to_save = anti.sig.args - normal.sig.outputs;
+        let before = Mod(On, eco_vec![normal.clone()], *span);
         let after = anti.node;
         (before, after, to_save)
     } else {

@@ -170,10 +170,11 @@ impl ErrorContext for Uiua {
 impl ErrorContext for (&CodeSpan, &Inputs) {
     type Error = UiuaError;
     fn error(&self, msg: impl ToString) -> Self::Error {
-        UiuaErrorKind::Run(
-            Span::Code(self.0.clone()).sp(msg.to_string()),
-            self.1.clone().into(),
-        )
+        UiuaErrorKind::Run {
+            message: Span::Code(self.0.clone()).sp(msg.to_string()),
+            info: Vec::new(),
+            inputs: self.1.clone().into(),
+        }
         .into()
     }
 }

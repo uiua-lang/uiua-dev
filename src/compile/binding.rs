@@ -57,9 +57,7 @@ impl Compiler {
         let placeholder_count = count_placeholders(&binding.words);
         if binding.code_macro {
             if placeholder_count > 0 {
-                return Err(
-                    self.fatal_error(span.clone(), "Code macros may not contain placeholders")
-                );
+                return Err(self.error(span.clone(), "Code macros may not contain placeholders"));
             }
             // Code macro
             if ident_margs == 0 {

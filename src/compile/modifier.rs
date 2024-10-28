@@ -140,7 +140,7 @@ impl Compiler {
                     let mut cust = CustomInverse::default();
                     match nodes.as_slice() {
                         [a, b] => {
-                            cust.normal = a.clone();
+                            cust.normal = Ok(a.clone());
                             if a.sig == b.sig.inverse() {
                                 cust.un = Some(b.clone());
                             } else if a.sig.anti().is_some_and(|sig| sig == b.sig) {
@@ -150,13 +150,13 @@ impl Compiler {
                             }
                         }
                         [a, b, c] => {
-                            cust.normal = a.clone();
+                            cust.normal = Ok(a.clone());
                             if !b.node.is_empty() && !c.node.is_empty() {
                                 cust.under = Some((b.clone(), c.clone()));
                             }
                         }
                         [a, b, c, d] => {
-                            cust.normal = a.clone();
+                            cust.normal = Ok(a.clone());
                             if !b.node.is_empty() {
                                 if !a.sig.is_compatible_with(b.sig.inverse()) {
                                     self.emit_diagnostic(
@@ -182,7 +182,7 @@ impl Compiler {
                             }
                         }
                         [a, b, c, d, e] => {
-                            cust.normal = a.clone();
+                            cust.normal = Ok(a.clone());
                             if !b.node.is_empty() {
                                 if !a.sig.is_compatible_with(b.sig.inverse()) {
                                     self.emit_diagnostic(
@@ -230,7 +230,7 @@ impl Compiler {
                             }
                         }
                         funcs => {
-                            return Err(self.fatal_error(
+                            return Err(self.error(
                                 modifier.span.clone(),
                                 format!(
                                     "Obverse requires between 1 and 5 branches, \
@@ -276,7 +276,7 @@ impl Compiler {
                             }
                         }
                     }
-                    return Err(self.fatal_error(
+                    return Err(self.error(
                         modifier.span.clone().merge(operand.span.clone()),
                         format!("{m} cannot use a function pack"),
                     ));
@@ -331,7 +331,7 @@ impl Compiler {
             };
             if strict_args {
                 // Validate operand count
-                return Err(self.fatal_error(
+                return Err(self.error(
                     modified.modifier.span.clone(),
                     format!(
                         "{} requires {} function argument{}, but {} {} provided",
@@ -560,10 +560,14 @@ impl Compiler {
             Un => {
                 let (sn, span) = self.monadic_modifier_op(modified)?;
                 self.add_span(span.clone());
-                match sn.node.un_inverse(&self.asm) {
-                    Ok(inv) => inv,
-                    Err(e) => return Err(self.fatal_error(span, e)),
-                }
+                let normal = sn.un_inverse(&self.asm);
+                let cust = CustomInverse {
+                    normal,
+                    un: Some(sn),
+                    ..Default::default()
+                };
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::CustomInverse(cust.into(), span)
             }
             Anti => {
                 let (sn, span) = self.monadic_modifier_op(modified)?;
@@ -581,7 +585,7 @@ impl Compiler {
                 }
                 match sn.node.anti_inverse(&self.asm) {
                     Ok(inv) => inv,
-                    Err(e) => return Err(self.fatal_error(span, e)),
+                    Err(e) => return Err(self.error(span, e)),
                 }
             }
             Under => {
@@ -589,7 +593,7 @@ impl Compiler {
                 let (f_before, f_after) = f
                     .node
                     .under_inverse(g.sig, &self.asm)
-                    .map_err(|e| self.fatal_error(f_span.clone(), e))?;
+                    .map_err(|e| self.error(f_span.clone(), e))?;
                 let mut node = f_before;
                 node.push(g.node);
                 node.push(f_after);
@@ -602,7 +606,7 @@ impl Compiler {
                 self.in_inverse = in_inverse;
                 let spandex = self.add_span(span.clone());
                 let mut cust = CustomInverse {
-                    normal: sn.clone(),
+                    normal: Ok(sn.clone()),
                     under: Some((sn.clone(), sn.clone())),
                     ..Default::default()
                 };
@@ -821,7 +825,7 @@ impl Compiler {
         self.macro_depth += 1;
         const MAX_MACRO_DEPTH: usize = if cfg!(debug_assertions) { 10 } else { 20 };
         if self.macro_depth > MAX_MACRO_DEPTH {
-            return Err(self.fatal_error(modifier_span.clone(), "Macro recurs too deep"));
+            return Err(self.error(modifier_span.clone(), "Macro recurs too deep"));
         }
         let node = if let Some(mut mac) = self.index_macros.get(&local.index).cloned() {
             // Index macros
@@ -957,7 +961,7 @@ impl Compiler {
                     } else {
                         format!("{} references runtime binding", r.name.value)
                     };
-                    return Err(self.fatal_error(modifier_span.clone(), message));
+                    return Err(self.error(modifier_span.clone(), message));
                 }
 
                 let span = self.add_span(modifier_span.clone());
@@ -1065,7 +1069,7 @@ impl Compiler {
                 if let Some(replacement) = initial.get(*n as usize) {
                     *word = replacement.clone();
                 } else {
-                    error = Some(self.fatal_error(
+                    error = Some(self.error(
                         word.span.clone(),
                         format!(
                             "Placeholder index {n} is out of bounds of {} operands",
@@ -1116,7 +1120,7 @@ impl Compiler {
         let mut comp = self.clone();
         let sn = self.word_sig(operand)?;
         if sn.sig.args > 0 {
-            return Err(self.fatal_error(
+            return Err(self.error(
                 span.clone(),
                 format!(
                     "{}'s function must have no arguments, but it has {}",
@@ -1138,7 +1142,7 @@ impl Compiler {
             } else {
                 "Compile-time evaluation references runtime binding".into()
             };
-            return Err(self.fatal_error(span.clone(), message));
+            return Err(self.error(span.clone(), message));
         }
         let values = match comp.macro_env.run_asm(comp.asm.clone()) {
             Ok(_) => comp.macro_env.take_stack(),
