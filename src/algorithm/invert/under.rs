@@ -419,6 +419,8 @@ under!(CustomPat, input, _, _, ref, CustomInverse(cust, span), {
     Ok((input, before, after))
 });
 
+#[derive(Debug)]
+struct Trivial;
 impl UnderPattern for Trivial {
     fn under_extract<'a>(
         &self,

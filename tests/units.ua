@@ -1,3 +1,10 @@
+# Comptime (These come first so that they are not the source of later errors)
+X ← 5
+Y ← comptime(X)
+⍤⤙≍ X Y
+Z ← comptime(+1Y)
+⍤⤙≍ Z +1 X
+
 # Basic pervasive math
 ⍤⤙≍ [2 3 4] +1 [1 2 3]
 ⍤⤙≍ [5 7 9] +[1 2 3][4 5 6]
@@ -707,13 +714,6 @@ F ← memo(+⌊×10⚂)
 
 ⍤⤙≍ F1 F1
 ⍤⤙≍ F5 F5
-
-# Comptime
-X ← 5
-Y ← comptime(X)
-⍤⤙≍ X Y
-Z ← comptime(+1Y)
-⍤⤙≍ Z +1 X
 
 # Recursion
 Fact ← |1 ⨬(×Fact-1.|1)<2.
