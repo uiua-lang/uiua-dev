@@ -237,13 +237,18 @@ fn format_trace(trace: &[TraceFrame]) -> Vec<String> {
                 continue 'outer;
             }
         }
-        let id = frame
-            .id
-            .as_ref()
-            .map_or_else(String::new, ToString::to_string);
-        lines.push(match &frame.span {
-            Span::Code(span) => format!("  in {id:max_id_length$} at {span:max_span_length$}"),
-            Span::Builtin => format!("  in {id:max_id_length$}"),
+        lines.push(match (&frame.id, &frame.span) {
+            (Some(id), Span::Code(span)) => {
+                format!("  in {id:max_id_length$} at {span:max_span_length$}")
+            }
+            (Some(id), Span::Builtin) => format!("  in {id:max_id_length$}"),
+            (None, Span::Code(span)) => {
+                format!("  at {span:max_span_length$}")
+            }
+            (None, Span::Builtin) => {
+                i += 1;
+                continue;
+            }
         });
         i += 1;
     }
