@@ -127,6 +127,7 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &JoinPat,
     &CustomPat,
     &FormatPat,
+    &FillPat,
     &(Sqrt, (Dup, Mul)),
     &((Dup, Add), (2, Div)),
     &((Dup, Mul), Sqrt),
@@ -165,6 +166,7 @@ pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Select, AntiSelect),
     &(Pick, AntiPick),
     &(Base, AntiBase),
+    &AntiTrivial,
     &AntiRepeatPat,
     &AntiInsertPat,
     &AntiJoinPat,
@@ -211,6 +213,7 @@ macro_rules! inverse {
         #[derive(Debug)]
         pub(crate) struct $name;
         impl InvertPattern for $name {
+            #[allow(irrefutable_let_patterns)]
             fn invert_extract<'a>(
                 &self,
                 $input: &'a [Node],
@@ -499,8 +502,19 @@ inverse!(FormatPat, input, _, ref, Format(parts, span), {
     Ok((input, MatchFormatPattern(parts.clone(), *span)))
 });
 
+inverse!(FillPat, input, asm, Fill, span, args, {
+    let [fill, f] = args else {
+        return generic();
+    };
+    if fill.sig != (0, 1) {
+        return generic();
+    }
+    let inv = f.un_inverse(asm)?;
+    Ok((input, ImplMod(UnFill, eco_vec![fill.clone(), inv], span)))
+});
+
 #[derive(Debug)]
-pub(crate) struct Trivial;
+struct Trivial;
 impl InvertPattern for Trivial {
     fn invert_extract<'a>(
         &self,
@@ -514,6 +528,28 @@ impl InvertPattern for Trivial {
             }
             [node @ SetOutputComment { .. }, input @ ..] => Ok((input, node.clone())),
             [Call(f, _), input @ ..] => Ok((input, asm[f].un_inverse(asm).map_err(|e| e.func(f))?)),
+            _ => generic(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AntiTrivial;
+impl InvertPattern for AntiTrivial {
+    fn invert_extract<'a>(
+        &self,
+        input: &'a [Node],
+        asm: &Assembly,
+    ) -> InversionResult<(&'a [Node], Node)> {
+        match input {
+            [NoInline(inner), input @ ..] => Ok((input, NoInline(inner.anti_inverse(asm)?.into()))),
+            [TrackCaller(inner), input @ ..] => {
+                Ok((input, TrackCaller(inner.anti_inverse(asm)?.into())))
+            }
+            [node @ SetOutputComment { .. }, input @ ..] => Ok((input, node.clone())),
+            [Call(f, _), input @ ..] => {
+                Ok((input, asm[f].anti_inverse(asm).map_err(|e| e.func(f))?))
+            }
             _ => generic(),
         }
     }
