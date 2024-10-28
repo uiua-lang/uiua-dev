@@ -1607,7 +1607,7 @@ fn canonicalize_exclams(ident: &str) -> Ident {
 
 /// Rewrite an identifier with the given amount of double and single exclamation points
 fn place_exclams(ident: &str, count: usize) -> Ident {
-    let mut new: Ident = ident.trim_end_matches(&['!', '‼']).into();
+    let mut new: Ident = ident.trim_end_matches(['!', '‼']).into();
     let num_double = count / 2;
     let trailing_single = count % 2 == 1;
     for _ in 0..num_double {
