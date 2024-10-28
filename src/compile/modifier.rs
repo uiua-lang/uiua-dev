@@ -493,10 +493,10 @@ impl Compiler {
                     sn.node.prepend(Node::Prim(Identity, span));
                     sn.node
                 } else {
-                    Node::Mod(On, eco_vec![sn], span)
+                    Node::Mod(By, eco_vec![sn], span)
                 }
             }
-            prim @ (With | Off) => {
+            prim @ (With | Off | Above | Below) => {
                 let (mut sn, _) = self.monadic_modifier_op(modified)?;
                 if sn.sig.args < 2 {
                     sn.sig.outputs += 2 - sn.sig.args;
@@ -1144,6 +1144,8 @@ impl Compiler {
             };
             return Err(self.error(span.clone(), message));
         }
+        let asm_root_len = comp.asm.root.len();
+        comp.asm.root.push(sn.node);
         let values = match comp.macro_env.run_asm(comp.asm.clone()) {
             Ok(_) => comp.macro_env.take_stack(),
             Err(e) => {
@@ -1153,6 +1155,7 @@ impl Compiler {
                 vec![Value::default(); sn.sig.outputs]
             }
         };
+        comp.asm.root.truncate(asm_root_len);
         let val_count = sn.sig.outputs;
         let mut node = Node::empty();
         for value in values.into_iter().rev().take(val_count).rev() {

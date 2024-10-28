@@ -986,6 +986,24 @@ at {}",
         self.require_height(n)?;
         Ok(self.rt.stack[self.rt.stack.len() - n..].to_vec())
     }
+    /// Prepare to fork and return the arguments to f
+    pub fn prepare_fork(&mut self, f_args: usize, g_args: usize) -> UiuaResult<Vec<Value>> {
+        if f_args > g_args {
+            self.require_height(f_args)?;
+            let mut vals = Vec::with_capacity(f_args);
+            let len = self.rt.stack.len();
+            vals.extend(self.rt.stack.drain(len - f_args..(len - g_args)));
+            vals.extend(
+                self.rt.stack[self.rt.stack.len() - (f_args - g_args)..]
+                    .iter()
+                    .cloned(),
+            );
+            debug_assert_eq!(vals.len(), f_args);
+            Ok(vals)
+        } else {
+            self.copy_n(f_args)
+        }
+    }
     /// Get a value some amount from the top of the stack
     pub fn copy_nth(&self, n: usize) -> UiuaResult<Value> {
         self.require_height(n + 1)?;

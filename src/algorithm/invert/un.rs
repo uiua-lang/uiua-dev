@@ -66,24 +66,40 @@ pub fn un_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
 pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     let mut curr = input;
     let mut error = Generic;
-    for pattern in ANTI_PATTERNS {
-        match pattern.invert_extract(curr, asm) {
-            Ok((new, mut anti_inv)) => {
-                dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
-                curr = new;
-                if curr.is_empty() {
-                    dbgln!("anti-inverted\n  {input:?}\n  to {anti_inv:?}");
-                    return Ok(anti_inv);
+    let mut inv = Node::empty();
+    'outer: loop {
+        for pattern in ANTI_PATTERNS {
+            match pattern.invert_extract(curr, asm) {
+                Ok((new, anti_inv)) => {
+                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
+                    curr = new;
+                    inv.prepend(anti_inv);
+                    return if curr.is_empty() {
+                        dbgln!("anti-inverted\n  {input:?}\n  to {inv:?}");
+                        Ok(inv)
+                    } else {
+                        Err(error)
+                    };
                 }
-                let rest_inv = un_inverse(curr, asm)?;
-                anti_inv.push(rest_inv);
-                dbgln!("anti-inverted\n  {input:?}\n  to {anti_inv:?}");
-                return Ok(anti_inv);
+                Err(e) => error = error.max(e),
             }
-            Err(e) => error = error.max(e),
         }
+        for pattern in UN_PATTERNS {
+            match pattern.invert_extract(curr, asm) {
+                Ok((new, un_inv)) => {
+                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {un_inv:?}");
+                    curr = new;
+                    if curr.is_empty() {
+                        return Err(error);
+                    }
+                    inv.prepend(un_inv);
+                    continue 'outer;
+                }
+                Err(e) => error = error.max(e),
+            }
+        }
+        break Err(error);
     }
-    Err(error)
 }
 
 pub fn contra_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
@@ -112,8 +128,7 @@ pub fn contra_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
 pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &InnerAnti,
     &InnerAntiDip,
-    &PrimPat,
-    &ImplPrimPat,
+    &JoinPat,
     &ArrayPat,
     &UnpackPat,
     &DipPat,
@@ -124,7 +139,6 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &ScanPat,
     &ReduceMulPat,
     &PrimesPat,
-    &JoinPat,
     &CustomPat,
     &FormatPat,
     &FillPat,
@@ -140,6 +154,8 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &((Val, TagVariant), ValidateVariant),
     &((Val, ValidateVariant), TagVariant),
     &(Dup, (Over, Flip, MatchPattern)),
+    &PrimPat,
+    &ImplPrimPat,
     &MatchConst,
 ];
 
@@ -183,6 +199,7 @@ pub static CONTRA_PATTERNS: &[&dyn InvertPattern] = &[
     &(Pow, (Flip, Log)),
     &(Log, (1, Flip, Div, Pow)),
     &((Flip, Log), Pow),
+    &((Flip, Pow), (Flip, 1, Flip, Div, Pow)),
     &(Min, Min),
     &(Max, Max),
     &(Select, IndexOf),
@@ -285,7 +302,7 @@ inverse!(OnPat, input, asm, On, span, [f], {
     Ok((input, Mod(On, eco_vec![inv], span)))
 });
 
-inverse!(ByPat, input, asm, Dip, span, [f], {
+inverse!(ByPat, input, asm, By, span, [f], {
     let inv = f.contra_inverse(asm)?;
     Ok((input, Mod(By, eco_vec![inv], span)))
 });
@@ -432,19 +449,82 @@ inverse!(
     }
 );
 
-inverse!(JoinPat, input, _, {
+inverse!(JoinPat, input, asm, {
     Ok(match input {
+        [Prim(Join, _), Prim(Join, span), input @ ..] => (
+            input,
+            Node::from_iter([
+                Node::new_push([2]),
+                ImplPrim(UnJoinShape, *span),
+                ImplPrim(UnJoin, *span),
+            ]),
+        ),
+        [Prim(Join, _), Prim(Flip, _), Prim(Join, span), input @ ..] => (
+            input,
+            Node::from_iter([
+                Node::new_push([2]),
+                ImplPrim(UnJoinShapeEnd, *span),
+                ImplPrim(UnJoin, *span),
+            ]),
+        ),
+        [Prim(Flip, _), Prim(Join, _), Prim(Flip, _), Prim(Join, span), input @ ..] => (
+            input,
+            Node::from_iter([
+                Node::new_push([2]),
+                ImplPrim(UnJoinShapeEnd, *span),
+                ImplPrim(UnJoinEnd, *span),
+            ]),
+        ),
         [Prim(Join, span), input @ ..] => (input, ImplPrim(UnJoin, *span)),
         [Prim(Flip, span), Prim(Join, _), input @ ..] => (input, ImplPrim(UnJoinEnd, *span)),
         [Prim(Couple, span), Prim(Flip, _), Prim(Join, _), input @ ..] => {
-            let inv = Node::from_iter([Node::new_push([2]), ImplPrim(UnJoinShape, *span)]);
+            let inv = Node::from_iter([
+                Node::new_push([2]),
+                ImplPrim(UnJoinShapeEnd, *span),
+                ImplPrim(UnCouple, *span),
+            ]);
             (input, inv)
         }
         [Prim(Couple, span), Prim(Join, _), input @ ..] => {
-            let inv = Node::from_iter([Node::new_push([2]), ImplPrim(UnJoinShapeEnd, *span)]);
+            let inv = Node::from_iter([
+                Node::new_push([2]),
+                ImplPrim(UnJoinShape, *span),
+                ImplPrim(UnCouple, *span),
+            ]);
             (input, inv)
         }
-        _ => return generic(),
+        input => {
+            let (len, end, inner, boxed, span, input) = match input {
+                [Array {
+                    len: ArrayLen::Static(len),
+                    inner,
+                    boxed,
+                    ..
+                }, Prim(Join, span), input @ ..] => (*len, false, inner, *boxed, *span, input),
+                [Array {
+                    len: ArrayLen::Static(len),
+                    inner,
+                    boxed,
+                    ..
+                }, Prim(Flip, _), Prim(Join, span), input @ ..] => {
+                    (*len, true, inner, *boxed, *span, input)
+                }
+                _ => return generic(),
+            };
+            let inv = inner.un_inverse(asm)?;
+            let inv_args = inv.sig()?.args;
+            let inv = Node::from_iter([
+                Node::new_push(len),
+                ImplPrim(if end { UnJoinShapeEnd } else { UnJoinShape }, span),
+                Unpack {
+                    count: inv_args,
+                    unbox: boxed,
+                    span,
+                },
+                inv,
+            ]);
+            (input, inv)
+        }
     })
 });
 

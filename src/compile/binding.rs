@@ -248,9 +248,9 @@ impl Compiler {
 
                     let is_const = val.is_some();
                     self.compile_bind_const(name, local, val, spandex, comment.as_deref());
-                    self.asm.root.push(node);
                     if !is_const {
-                        // Add binding instrs to top slices
+                        // Add binding instrs to root
+                        self.asm.root.push(node);
                         self.asm.root.push(Node::BindGlobal {
                             index: local.index,
                             span: spandex,

@@ -1743,7 +1743,7 @@ macro_rules! cmp_impls {
 }
 
 eq_impls!(is_eq, is_ne);
-cmp_impls!(is_lt, is_le, is_gt, is_ge);
+cmp_impls!(other_is_lt, other_is_le, other_is_gt, other_is_ge);
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {

@@ -1087,10 +1087,10 @@ macro_rules! cmp_impl {
 
 eq_impl!(is_eq == Ordering::Equal);
 eq_impl!(is_ne != Ordering::Equal);
-cmp_impl!(is_lt == Ordering::Less);
-cmp_impl!(is_le != Ordering::Greater);
-cmp_impl!(is_gt == Ordering::Greater);
-cmp_impl!(is_ge != Ordering::Less);
+cmp_impl!(other_is_lt == Ordering::Less);
+cmp_impl!(other_is_le != Ordering::Greater);
+cmp_impl!(other_is_gt == Ordering::Greater);
+cmp_impl!(other_is_ge != Ordering::Less);
 
 pub mod add {
     use super::*;
