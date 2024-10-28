@@ -10,6 +10,8 @@ use std::{
     slice,
 };
 
+use serde::*;
+
 use crate::{Array, ArrayLen, ImplPrimitive, Node, Primitive, SigNode, Signature, Value};
 
 impl Node {
@@ -128,17 +130,18 @@ impl Stack {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SigCheckError {
     pub message: String,
     pub kind: SigCheckErrorKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum SigCheckErrorKind {
     Incorrect,
     LoopOverreach,
     LoopVariable { args: usize },
+    NoInverse,
 }
 
 impl SigCheckError {
@@ -151,6 +154,12 @@ impl SigCheckError {
     pub fn loop_variable(self, args: usize) -> Self {
         Self {
             kind: SigCheckErrorKind::LoopVariable { args },
+            ..self
+        }
+    }
+    pub fn no_inverse(self) -> Self {
+        Self {
+            kind: SigCheckErrorKind::NoInverse,
             ..self
         }
     }
@@ -265,7 +274,7 @@ impl VirtualEnv {
             Node::Call(func, _) => self.handle_sig(func.sig),
             Node::CallMacro(_, sig, _) | Node::CallGlobal(_, sig) => self.handle_sig(*sig),
             Node::BindGlobal { .. } => self.handle_args_outputs(1, 0),
-            Node::CustomInverse(cust, _) => self.handle_sig(cust.normal.sig),
+            Node::CustomInverse(cust, _) => self.handle_sig(cust.sig()?),
             Node::Dynamic(dy) => self.handle_sig(dy.sig),
             &Node::Switch {
                 sig, under_cond, ..

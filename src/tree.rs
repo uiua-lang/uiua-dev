@@ -12,6 +12,8 @@ use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    algorithm::invert::{InversionError, InversionResult},
+    check::SigCheckError,
     Assembly, BindingKind, DynamicFunction, Function, ImplPrimitive, Primitive, Signature, Value,
 };
 
@@ -92,11 +94,11 @@ impl fmt::Display for ArrayLen {
 }
 
 /// A custom inverse node
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CustomInverse {
     /// The normal function to call
-    pub normal: SigNode,
+    pub normal: InversionResult<SigNode>,
     /// The un inverse
     #[serde(skip_serializing_if = "Option::is_none")]
     pub un: Option<SigNode>,
@@ -106,6 +108,40 @@ pub struct CustomInverse {
     /// The anti inverse
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anti: Option<SigNode>,
+}
+
+impl Default for CustomInverse {
+    fn default() -> Self {
+        Self {
+            normal: Ok(SigNode::default()),
+            un: None,
+            under: None,
+            anti: None,
+        }
+    }
+}
+
+impl CustomInverse {
+    /// Get the signature of the custom inverse
+    pub fn sig(&self) -> Result<Signature, SigCheckError> {
+        Ok(match &self.normal {
+            Ok(n) => n.sig,
+            Err(e) => {
+                if let Some(un) = &self.un {
+                    un.sig.inverse()
+                } else if let Some(anti) = &self.anti {
+                    anti.sig
+                        .anti()
+                        .ok_or_else(|| SigCheckError::from(e.to_string()).no_inverse())?
+                } else {
+                    return match e {
+                        InversionError::Signature(e) => Err(e.clone()),
+                        e => Err(SigCheckError::from(e.to_string()).no_inverse()),
+                    };
+                }
+            }
+        })
+    }
 }
 
 impl Default for Node {
@@ -540,6 +576,47 @@ impl Node {
             is
         }
         recurse(self, asm, &mut IndexSet::new())
+    }
+    /// Check if the node is callable
+    pub fn check_callability<'a>(
+        &'a self,
+        asm: &'a Assembly,
+    ) -> Result<(), (InversionError, Option<&'a Function>, Vec<usize>)> {
+        fn recurse<'a>(
+            node: &'a Node,
+            asm: &'a Assembly,
+            spans: &mut Vec<usize>,
+            visited: &mut IndexSet<&'a Function>,
+        ) -> Option<(InversionError, Option<&'a Function>)> {
+            let len = visited.len();
+            let e = match node {
+                Node::Run(nodes) => nodes.iter().find_map(|n| recurse(n, asm, spans, visited)),
+                Node::Call(f, span) => {
+                    if visited.insert(f) {
+                        recurse(&asm[f], asm, spans, visited).map(|(e, mut func)| {
+                            spans.push(*span);
+                            func.get_or_insert(f);
+                            (e, func)
+                        })
+                    } else {
+                        None
+                    }
+                }
+                Node::CustomInverse(cust, span) => cust.normal.as_ref().err().cloned().map(|e| {
+                    spans.push(*span);
+                    (e, None)
+                }),
+                _ => None,
+            };
+            visited.truncate(len);
+            e
+        }
+        let mut spans = Vec::new();
+        if let Some((e, func)) = recurse(self, asm, &mut spans, &mut IndexSet::new()) {
+            Err((e, func, spans))
+        } else {
+            Ok(())
+        }
     }
 }
 

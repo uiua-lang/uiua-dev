@@ -517,7 +517,10 @@ at {}",
                 span,
             } => self.with_span(span, |env| env.make_array(len, *inner, boxed)),
             Node::Call(f, span) => self.call_with_span(&f, span),
-            Node::CustomInverse(cust, span) => self.exec_with_span(cust.normal, span),
+            Node::CustomInverse(cust, span) => match cust.normal {
+                Ok(normal) => self.exec_with_span(normal, span),
+                Err(e) => self.with_span(span, |env| Err(env.error(e))),
+            },
             Node::Switch {
                 branches,
                 sig,
@@ -847,15 +850,21 @@ at {}",
     }
     /// Construct an error with the current span
     pub fn error(&self, message: impl ToString) -> UiuaError {
-        UiuaErrorKind::Run(
-            self.span().clone().sp(message.to_string()),
-            self.inputs().clone().into(),
-        )
+        UiuaErrorKind::Run {
+            message: self.span().clone().sp(message.to_string()),
+            info: Vec::new(),
+            inputs: self.inputs().clone().into(),
+        }
         .into()
     }
     /// Construct an error with a custom span
     pub fn error_with_span(&self, span: Span, message: impl ToString) -> UiuaError {
-        UiuaErrorKind::Run(span.sp(message.to_string()), self.inputs().clone().into()).into()
+        UiuaErrorKind::Run {
+            message: span.sp(message.to_string()),
+            info: Vec::new(),
+            inputs: self.inputs().clone().into(),
+        }
+        .into()
     }
     #[allow(dead_code)]
     pub(crate) fn error_maybe_span(

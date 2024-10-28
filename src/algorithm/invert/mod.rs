@@ -4,6 +4,7 @@ mod under;
 use std::{boxed, cell::RefCell, collections::HashMap, error::Error, fmt};
 
 use ecow::eco_vec;
+use serde::*;
 
 use crate::{
     assembly::{Assembly, Function},
@@ -138,7 +139,7 @@ macro_rules! span_from_nodes {
 }
 span_from_nodes!(A, B);
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub enum InversionError {
     #[default]
     Generic,
@@ -150,7 +151,7 @@ pub enum InversionError {
     UnderExperimental,
 }
 
-type InversionResult<T = ()> = Result<T, InversionError>;
+pub type InversionResult<T = ()> = Result<T, InversionError>;
 
 impl fmt::Display for InversionError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -219,7 +219,7 @@ impl Compiler {
                 match inverse {
                     Ok(va_inverse) => node.push(Node::CustomInverse(
                         CustomInverse {
-                            normal: make_node(va_inverse),
+                            normal: Ok(make_node(va_inverse)),
                             un: Some(make_node(va_instrs)),
                             ..Default::default()
                         }
@@ -228,7 +228,6 @@ impl Compiler {
                     )),
                     Err(_) if validation_only => node.push(Node::CustomInverse(
                         CustomInverse {
-                            normal: SigNode::default(),
                             un: Some(make_node(va_instrs)),
                             ..Default::default()
                         }

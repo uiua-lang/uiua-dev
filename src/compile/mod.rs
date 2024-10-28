@@ -618,7 +618,7 @@ code:
                 );
             }
             // Compile the words
-            let mut line_node = self.line(line)?;
+            let mut line_node = self.line(line, true)?;
             match line_node.sig() {
                 Ok(sig) => {
                     // Update scope stack height
@@ -710,7 +710,7 @@ code:
         // Resolve path
         let (path, file_kind) = if let Some(mut url) = path_str.trim().strip_prefix("git:") {
             if url.contains("branch:") && url.contains("commit:") {
-                return Err(self.fatal_error(
+                return Err(self.error(
                     span.clone(),
                     "Cannot specify both branch and commit in git import",
                 ));
@@ -751,7 +751,7 @@ code:
             let path = self
                 .backend()
                 .load_git_module(&url, target)
-                .map_err(|e| self.fatal_error(span.clone(), e))?;
+                .map_err(|e| self.error(span.clone(), e))?;
             (path, FileScopeKind::Git)
         } else {
             // Normal import
@@ -776,7 +776,7 @@ code:
                         Err(e)
                     }
                 })
-                .map_err(|e| self.fatal_error(span.clone(), e))?;
+                .map_err(|e| self.error(span.clone(), e))?;
             if let Some(mut comp) = (bytes.len() > 1000)
                 .then(|| GIT_CACHE.with(|cache| cache.borrow().get(&path).cloned()))
                 .flatten()
@@ -789,12 +789,10 @@ code:
                 self.diagnostics.extend(comp.diagnostics);
             } else {
                 let input: EcoString = String::from_utf8(bytes)
-                    .map_err(|e| {
-                        self.fatal_error(span.clone(), format!("Failed to read file: {e}"))
-                    })?
+                    .map_err(|e| self.error(span.clone(), format!("Failed to read file: {e}")))?
                     .into();
                 if self.current_imports.iter().any(|p| p == &path) {
-                    return Err(self.fatal_error(
+                    return Err(self.error(
                         span.clone(),
                         format!("Cycle detected importing {}", path.to_string_lossy()),
                     ));
@@ -843,7 +841,7 @@ code:
         }
     }
     // Compile a line, checking an end-of-line signature comment
-    fn line(&mut self, line: Vec<Sp<Word>>) -> UiuaResult<Node> {
+    fn line(&mut self, line: Vec<Sp<Word>>, must_be_callable: bool) -> UiuaResult<Node> {
         let comment_sig = line_sig(&line);
         let is_empty = line.iter().all(|w| !w.value.is_code());
         let node = self.words(line)?;
@@ -855,6 +853,24 @@ code:
                         DiagnosticKind::Warning,
                         comment_sig.span.clone(),
                     );
+                }
+            }
+        }
+        if must_be_callable {
+            if let Err((e, f, mut spans)) = node.check_callability(&self.asm) {
+                let e = e.clone();
+                if let Some(f_id) = f.map(|f| f.id.clone()) {
+                    let src_span = self.get_span(spans.remove(0));
+                    let call_span = self.get_span(spans.pop().unwrap());
+                    let error = self.error_with_info(
+                        call_span,
+                        format!("Cannot call {f_id} because of an inversion error"),
+                        [(src_span, e)],
+                    );
+                    self.errors.push(error);
+                } else {
+                    let span = self.get_span(spans.pop().unwrap());
+                    self.add_error(span, e);
                 }
             }
         }
@@ -1043,7 +1059,7 @@ code:
                 let has_functions = op_nodes.iter().any(|sn| sn.sig.args > 0);
                 if has_functions {
                     return Err(
-                        self.fatal_error(word.span.clone(), "Functions are not allowed in strands")
+                        self.error(word.span.clone(), "Functions are not allowed in strands")
                     );
                 }
                 self.code_meta.strands.insert(word.span.clone(), just_spans);
@@ -1108,7 +1124,7 @@ code:
                 let line_count = arr.lines.len();
                 let mut inner = Node::empty();
                 for line in arr.lines.into_iter().rev() {
-                    inner.push(self.line(line)?);
+                    inner.push(self.line(line, false)?);
                 }
                 // Validate inner loop correctness
                 let len = match inner.sig() {
@@ -1130,7 +1146,7 @@ code:
                     Err(e) => match e.kind {
                         SigCheckErrorKind::LoopVariable { args } => ArrayLen::Dynamic(args),
                         SigCheckErrorKind::LoopOverreach => {
-                            return Err(self.fatal_error(
+                            return Err(self.error(
                                 word.span.clone(),
                                 format!(
                                     "Array with variable number of arguments \
@@ -1138,8 +1154,8 @@ code:
                                 ),
                             ))
                         }
-                        SigCheckErrorKind::Incorrect => {
-                            return Err(self.fatal_error(
+                        _ => {
+                            return Err(self.error(
                                 word.span.clone(),
                                 format!("Cannot infer array signature: {e}"),
                             ))
@@ -1260,7 +1276,7 @@ code:
             }) {
                 Ok(Some((path_locals, local)))
             } else {
-                Err(self.fatal_error(
+                Err(self.error(
                     r.name.span.clone(),
                     format!("Item `{}` not found", r.name.value,),
                 ))
@@ -1270,7 +1286,7 @@ code:
         } else if r.path.is_empty() && CONSTANTS.iter().any(|def| def.name == r.name.value) {
             Ok(None)
         } else {
-            Err(self.fatal_error(
+            Err(self.error(
                 r.name.span.clone(),
                 format!("Unknown identifier `{}`", r.name.value),
             ))
@@ -1317,7 +1333,7 @@ code:
         let module_local = self
             .find_name(&first.module.value, skip_local)
             .ok_or_else(|| {
-                self.fatal_error(
+                self.error(
                     first.module.span.clone(),
                     format!("Unknown import `{}`", first.module.value),
                 )
@@ -1328,25 +1344,25 @@ code:
             BindingKind::Import(path) => &self.imports[path],
             BindingKind::Module(module) => module,
             BindingKind::Func(_) => {
-                return Err(self.fatal_error(
+                return Err(self.error(
                     first.module.span.clone(),
                     format!("`{}` is a function, not a module", first.module.value),
                 ))
             }
             BindingKind::Const(_) => {
-                return Err(self.fatal_error(
+                return Err(self.error(
                     first.module.span.clone(),
                     format!("`{}` is a constant, not a module", first.module.value),
                 ))
             }
             BindingKind::IndexMacro(_) => {
-                return Err(self.fatal_error(
+                return Err(self.error(
                     first.module.span.clone(),
                     format!("`{}` is an index macro, not a module", first.module.value),
                 ))
             }
             BindingKind::CodeMacro(_) => {
-                return Err(self.fatal_error(
+                return Err(self.error(
                     first.module.span.clone(),
                     format!("`{}` is a code macro, not a module", first.module.value),
                 ))
@@ -1358,7 +1374,7 @@ code:
                 .get(&comp.module.value)
                 .copied()
                 .ok_or_else(|| {
-                    self.fatal_error(
+                    self.error(
                         comp.module.span.clone(),
                         format!("Module `{}` not found", comp.module.value),
                     )
@@ -1369,19 +1385,19 @@ code:
                 BindingKind::Import(path) => &self.imports[path],
                 BindingKind::Module(module) => module,
                 BindingKind::Func(_) => {
-                    return Err(self.fatal_error(
+                    return Err(self.error(
                         comp.module.span.clone(),
                         format!("`{}` is a function, not a module", comp.module.value),
                     ))
                 }
                 BindingKind::Const(_) => {
-                    return Err(self.fatal_error(
+                    return Err(self.error(
                         comp.module.span.clone(),
                         format!("`{}` is a constant, not a module", comp.module.value),
                     ))
                 }
                 BindingKind::IndexMacro(_) => {
-                    return Err(self.fatal_error(
+                    return Err(self.error(
                         comp.module.span.clone(),
                         format!(
                             "`{}` is a positional macro, not a module",
@@ -1390,7 +1406,7 @@ code:
                     ))
                 }
                 BindingKind::CodeMacro(_) => {
-                    return Err(self.fatal_error(
+                    return Err(self.error(
                         comp.module.span.clone(),
                         format!("`{}` is a code macro, not a module", comp.module.value),
                     ))
@@ -1423,7 +1439,7 @@ code:
             {
                 // Name is a recursive call
                 let Some(sig) = curr.signature else {
-                    return Err(self.fatal_error(
+                    return Err(self.error(
                         span,
                         format!(
                             "Recursive function `{ident}` must have a \
@@ -1450,7 +1466,7 @@ code:
                         .resolve(self.scope_file_path(), &*self.backend()),
                 )
             } else {
-                return Err(self.fatal_error(span, format!("Unknown identifier `{ident}`")));
+                return Err(self.error(span, format!("Unknown identifier `{ident}`")));
             },
         )
     }
@@ -1522,7 +1538,7 @@ code:
 
         let mut root = Node::empty();
         for line in func.lines {
-            root.push(self.line(line)?);
+            root.push(self.line(line, false)?);
         }
 
         // Validate signature
@@ -1544,7 +1560,7 @@ code:
                 Some(sig)
             }
             Err(e) => {
-                return Err(self.fatal_error(span, format!("Cannot infer function signature: {e}")));
+                return Err(self.error(span, format!("Cannot infer function signature: {e}")));
             }
         };
         if let Some(sig) = sig {
@@ -1832,11 +1848,7 @@ code:
         }
     }
     fn add_error(&mut self, span: impl Into<Span>, message: impl ToString) {
-        let e = UiuaErrorKind::Run(
-            span.into().sp(message.to_string()),
-            self.asm.inputs.clone().into(),
-        )
-        .into();
+        let e = self.error(span, message);
         self.errors.push(e);
     }
     fn experimental_error<S>(&mut self, span: &CodeSpan, message: impl FnOnce() -> S)
@@ -1857,11 +1869,32 @@ code:
             self.add_error(span.clone(), message().to_string());
         }
     }
-    fn fatal_error(&self, span: impl Into<Span>, message: impl ToString) -> UiuaError {
-        UiuaErrorKind::Run(
-            span.into().sp(message.to_string()),
-            self.asm.inputs.clone().into(),
-        )
+    fn error(&self, span: impl Into<Span>, message: impl ToString) -> UiuaError {
+        UiuaErrorKind::Run {
+            message: span.into().sp(message.to_string()),
+            info: Vec::new(),
+            inputs: self.asm.inputs.clone().into(),
+        }
+        .into()
+    }
+    fn error_with_info<S, M>(
+        &self,
+        span: impl Into<Span>,
+        message: impl ToString,
+        info: impl IntoIterator<Item = (S, M)>,
+    ) -> UiuaError
+    where
+        S: Into<Span>,
+        M: ToString,
+    {
+        UiuaErrorKind::Run {
+            message: span.into().sp(message.to_string()),
+            info: info
+                .into_iter()
+                .map(|(s, m)| s.into().sp(m.to_string()))
+                .collect(),
+            inputs: self.asm.inputs.clone().into(),
+        }
         .into()
     }
     fn validate_local(&mut self, name: &str, local: LocalName, span: &CodeSpan) {
@@ -1949,7 +1982,7 @@ code:
     }
     fn sig_of(&self, node: &Node, span: &CodeSpan) -> UiuaResult<Signature> {
         node.sig().map_err(|e| {
-            self.fatal_error(
+            self.error(
                 span.clone(),
                 format!("Cannot infer function signature: {e}"),
             )

@@ -1751,7 +1751,7 @@ mod server {
             // Add experimental
             if !doc.input.contains("# Experimental!") {
                 for error in &doc.errors {
-                    let UiuaErrorKind::Run(message, _) = &error.kind else {
+                    let UiuaErrorKind::Run { message, .. } = &error.kind else {
                         continue;
                     };
                     let Span::Code(span) = &message.span else {
@@ -1967,7 +1967,7 @@ mod server {
             };
             for err in &doc.errors {
                 match &err.kind {
-                    UiuaErrorKind::Run(message, _) => {
+                    UiuaErrorKind::Run { message, .. } => {
                         let Some(range) = range(err, &message.span) else {
                             continue;
                         };
