@@ -254,7 +254,13 @@ pub(crate) fn match_format_pattern(parts: EcoVec<EcoString>, env: &mut Uiua) -> 
                     Regex::new(&re).unwrap()
                 });
                 if !re.is_match(val.as_ref()) {
-                    return Err(env.error("String did not match format string pattern"));
+                    return Err(
+                        if let Some(part) = parts.iter().find(|part| !val.contains(part.as_str())) {
+                            env.error(format!("String does not contain {:?}", part))
+                        } else {
+                            env.error("String did not match format string pattern")
+                        },
+                    );
                 }
                 let captures = re.captures(val.as_ref()).unwrap();
                 let caps: Vec<_> = captures.iter().skip(1).flatten().collect();

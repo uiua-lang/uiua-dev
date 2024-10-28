@@ -1370,7 +1370,7 @@ at {}",
             recv
         };
         #[cfg(target_arch = "wasm32")]
-        let result = env.call(f).map(|_| env.take_stack());
+        let result = env.exec(f).map(|_| env.take_stack());
 
         let id = self.rt.thread.next_child_id;
         self.rt.thread.next_child_id += 1;

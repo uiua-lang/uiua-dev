@@ -126,6 +126,7 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &PrimesPat,
     &JoinPat,
     &CustomPat,
+    &FormatPat,
     &(Sqrt, (Dup, Mul)),
     &((Dup, Add), (2, Div)),
     &((Dup, Mul), Sqrt),
@@ -492,6 +493,10 @@ inverse!(AntiCustomPat, input, _, ref, CustomInverse(cust, span), {
     cust.un = None;
     cust.under = None;
     Ok((input, CustomInverse(cust, *span)))
+});
+
+inverse!(FormatPat, input, _, ref, Format(parts, span), {
+    Ok((input, MatchFormatPattern(parts.clone(), *span)))
 });
 
 #[derive(Debug)]
