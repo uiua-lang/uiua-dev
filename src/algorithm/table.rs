@@ -176,24 +176,32 @@ pub fn table_list(f: SigNode, xs: Value, ys: Value, env: &mut Uiua) -> UiuaResul
             Primitive::Ne => env.push(fast_table_list(xs, ys, is_ne::generic, env)?),
             #[cfg(feature = "opt")]
             Primitive::Lt if flipped => {
-                env.push(fast_table_list(xs, ys, flip(is_lt::generic), env)?)
+                env.push(fast_table_list(xs, ys, flip(other_is_lt::generic), env)?)
             }
-            Primitive::Lt if !flipped => env.push(fast_table_list(xs, ys, is_lt::generic, env)?),
+            Primitive::Lt if !flipped => {
+                env.push(fast_table_list(xs, ys, other_is_lt::generic, env)?)
+            }
             #[cfg(feature = "opt")]
             Primitive::Gt if flipped => {
-                env.push(fast_table_list(xs, ys, flip(is_gt::generic), env)?)
+                env.push(fast_table_list(xs, ys, flip(other_is_gt::generic), env)?)
             }
-            Primitive::Gt if !flipped => env.push(fast_table_list(xs, ys, is_gt::generic, env)?),
+            Primitive::Gt if !flipped => {
+                env.push(fast_table_list(xs, ys, other_is_gt::generic, env)?)
+            }
             #[cfg(feature = "opt")]
             Primitive::Le if flipped => {
-                env.push(fast_table_list(xs, ys, flip(is_le::generic), env)?)
+                env.push(fast_table_list(xs, ys, flip(other_is_le::generic), env)?)
             }
-            Primitive::Le if !flipped => env.push(fast_table_list(xs, ys, is_le::generic, env)?),
+            Primitive::Le if !flipped => {
+                env.push(fast_table_list(xs, ys, other_is_le::generic, env)?)
+            }
             #[cfg(feature = "opt")]
             Primitive::Ge if flipped => {
-                env.push(fast_table_list(xs, ys, flip(is_ge::generic), env)?)
+                env.push(fast_table_list(xs, ys, flip(other_is_ge::generic), env)?)
             }
-            Primitive::Ge if !flipped => env.push(fast_table_list(xs, ys, is_ge::generic, env)?),
+            Primitive::Ge if !flipped => {
+                env.push(fast_table_list(xs, ys, other_is_ge::generic, env)?)
+            }
             Primitive::Add => env.push(fast_table_list(xs, ys, add::byte_byte, env)?),
             #[cfg(feature = "opt")]
             Primitive::Sub if flipped => {
@@ -316,28 +324,28 @@ macro_rules! table_math {
                 Primitive::Ne => env.push(fast_table_list(xs, ys, is_ne::$f, env)?),
                 #[cfg(feature = "opt")]
                 Primitive::Lt if flipped => {
-                    env.push(fast_table_list(xs, ys, flip(is_lt::$f), env)?)
+                    env.push(fast_table_list(xs, ys, flip(other_is_lt::$f), env)?)
                 }
                 $(#[$attr])*
-                Primitive::Lt if !flipped=> env.push(fast_table_list(xs, ys, is_lt::$f, env)?),
+                Primitive::Lt if !flipped=> env.push(fast_table_list(xs, ys, other_is_lt::$f, env)?),
                 #[cfg(feature = "opt")]
                 Primitive::Gt if flipped => {
-                    env.push(fast_table_list(xs, ys, flip(is_gt::$f), env)?)
+                    env.push(fast_table_list(xs, ys, flip(other_is_gt::$f), env)?)
                 }
                 $(#[$attr])*
-                Primitive::Gt if !flipped => env.push(fast_table_list(xs, ys, is_gt::$f, env)?),
+                Primitive::Gt if !flipped => env.push(fast_table_list(xs, ys, other_is_gt::$f, env)?),
                 #[cfg(feature = "opt")]
                 Primitive::Le if flipped => {
-                    env.push(fast_table_list(xs, ys, flip(is_le::$f), env)?)
+                    env.push(fast_table_list(xs, ys, flip(other_is_le::$f), env)?)
                 }
                 $(#[$attr])*
-                Primitive::Le if !flipped => env.push(fast_table_list(xs, ys, is_le::$f, env)?),
+                Primitive::Le if !flipped => env.push(fast_table_list(xs, ys, other_is_le::$f, env)?),
                 #[cfg(feature = "opt")]
                 Primitive::Ge if flipped => {
-                    env.push(fast_table_list(xs, ys, flip(is_ge::$f), env)?)
+                    env.push(fast_table_list(xs, ys, flip(other_is_ge::$f), env)?)
                 }
                 $(#[$attr])*
-                Primitive::Ge => env.push(fast_table_list(xs, ys, is_ge::$f, env)?),
+                Primitive::Ge => env.push(fast_table_list(xs, ys, other_is_ge::$f, env)?),
                 Primitive::Add => env.push(fast_table_list(xs, ys, add::$f, env)?),
                 #[cfg(feature = "opt")]
                 Primitive::Sub if flipped => env.push(fast_table_list(xs, ys, flip(sub::$f), env)?),
@@ -497,10 +505,10 @@ fn reduce_table_bytes(
                 Primitive::Atan => env.push(frtl($xs, $ys, $ff, atan2::$arith, $iden, fill)),
                 Primitive::Eq => env.push(frtl($xs, $ys, $ff, to(is_eq::$cmp), $iden, fill)),
                 Primitive::Ne => env.push(frtl($xs, $ys, $ff, to(is_ne::$cmp), $iden, fill)),
-                Primitive::Lt => env.push(frtl($xs, $ys, $ff, to(is_lt::$cmp), $iden, fill)),
-                Primitive::Gt => env.push(frtl($xs, $ys, $ff, to(is_gt::$cmp), $iden, fill)),
-                Primitive::Le => env.push(frtl($xs, $ys, $ff, to(is_le::$cmp), $iden, fill)),
-                Primitive::Ge => env.push(frtl($xs, $ys, $ff, to(is_ge::$cmp), $iden, fill)),
+                Primitive::Lt => env.push(frtl($xs, $ys, $ff, to(other_is_lt::$cmp), $iden, fill)),
+                Primitive::Gt => env.push(frtl($xs, $ys, $ff, to(other_is_gt::$cmp), $iden, fill)),
+                Primitive::Le => env.push(frtl($xs, $ys, $ff, to(other_is_le::$cmp), $iden, fill)),
+                Primitive::Ge => env.push(frtl($xs, $ys, $ff, to(other_is_ge::$cmp), $iden, fill)),
                 Primitive::Min => env.push(frtl($xs, $ys, $ff, min::$arith, $iden, fill)),
                 Primitive::Max => env.push(frtl($xs, $ys, $ff, max::$arith, $iden, fill)),
                 Primitive::Complex => env.push(frtl(
@@ -699,16 +707,16 @@ macro_rules! reduce_table_math {
                             env.push(frtl(xs, ys, $ff, to(is_ne::$f), $iden.into(), fill))
                         }
                         Primitive::Lt => {
-                            env.push(frtl(xs, ys, $ff, to(is_lt::$f), $iden.into(), fill))
+                            env.push(frtl(xs, ys, $ff, to(other_is_lt::$f), $iden.into(), fill))
                         }
                         Primitive::Gt => {
-                            env.push(frtl(xs, ys, $ff, to(is_gt::$f), $iden.into(), fill))
+                            env.push(frtl(xs, ys, $ff, to(other_is_gt::$f), $iden.into(), fill))
                         }
                         Primitive::Le => {
-                            env.push(frtl(xs, ys, $ff, to(is_le::$f), $iden.into(), fill))
+                            env.push(frtl(xs, ys, $ff, to(other_is_le::$f), $iden.into(), fill))
                         }
                         Primitive::Ge => {
-                            env.push(frtl(xs, ys, $ff, to(is_ge::$f), $iden.into(), fill))
+                            env.push(frtl(xs, ys, $ff, to(other_is_ge::$f), $iden.into(), fill))
                         }
                         Primitive::Min => env.push(frtl(xs, ys, $ff, min::$f, $iden.into(), fill)),
                         Primitive::Max => env.push(frtl(xs, ys, $ff, max::$f, $iden.into(), fill)),

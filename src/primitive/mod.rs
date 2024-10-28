@@ -724,10 +724,10 @@ impl Primitive {
             Primitive::Round => env.monadic_env(Value::round)?,
             Primitive::Eq => env.dyadic_oo_00_env(Value::is_eq)?,
             Primitive::Ne => env.dyadic_oo_00_env(Value::is_ne)?,
-            Primitive::Lt => env.dyadic_oo_00_env(Value::is_lt)?,
-            Primitive::Le => env.dyadic_oo_00_env(Value::is_le)?,
-            Primitive::Gt => env.dyadic_oo_00_env(Value::is_gt)?,
-            Primitive::Ge => env.dyadic_oo_00_env(Value::is_ge)?,
+            Primitive::Lt => env.dyadic_oo_00_env(Value::other_is_lt)?,
+            Primitive::Le => env.dyadic_oo_00_env(Value::other_is_le)?,
+            Primitive::Gt => env.dyadic_oo_00_env(Value::other_is_gt)?,
+            Primitive::Ge => env.dyadic_oo_00_env(Value::other_is_ge)?,
             Primitive::Add => env.dyadic_oo_00_env(Value::add)?,
             Primitive::Sub => env.dyadic_oo_00_env(Value::sub)?,
             Primitive::Mul => env.dyadic_oo_00_env(Value::mul)?,
@@ -981,9 +981,9 @@ impl Primitive {
             // Stack
             Primitive::Fork => {
                 let [f, g] = get_ops(ops, env)?;
-                let vals = env.copy_n(f.sig.args)?;
+                let f_args = env.prepare_fork(f.sig.args, g.sig.args)?;
                 env.exec(g)?;
-                env.push_all(vals);
+                env.push_all(f_args);
                 env.exec(f)?;
             }
             Primitive::Bracket => {
@@ -1494,7 +1494,7 @@ impl ImplPrimitive {
             ImplPrimitive::MatchLe => {
                 let max = env.pop(1)?;
                 let val = env.pop(2)?;
-                let le = val.clone().is_le(max.clone(), 0, 0, env)?;
+                let le = max.clone().other_is_le(val.clone(), 0, 0, env)?;
                 if le.all_true() {
                     env.push(val);
                     return Ok(());
@@ -1509,7 +1509,7 @@ impl ImplPrimitive {
             ImplPrimitive::MatchGe => {
                 let min = env.pop(1)?;
                 let val = env.pop(2)?;
-                let ge = val.clone().is_ge(min.clone(), 0, 0, env)?;
+                let ge = min.clone().other_is_ge(val.clone(), 0, 0, env)?;
                 if ge.all_true() {
                     env.push(val);
                     return Ok(());
