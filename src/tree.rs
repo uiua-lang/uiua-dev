@@ -434,9 +434,10 @@ impl fmt::Debug for Node {
                 write!(f, "\"")
             }
             Node::Switch { branches, .. } => write!(f, "<switch {}>", branches.len()),
-            Node::CustomInverse(cust, _) => {
-                f.debug_tuple("custom inverse").field(&cust.normal).finish()
-            }
+            Node::CustomInverse(cust, _) => f
+                .debug_tuple("custom inverse")
+                .field(&cust.normal.as_ref().map(|sn| &sn.node))
+                .finish(),
             Node::Unpack {
                 count,
                 unbox: false,
@@ -684,6 +685,9 @@ macro_rules! node {
             /// Get the span index of this instruction
             #[allow(unreachable_code, unused)]
             pub fn span(&self) -> Option<usize> {
+                if let Node::Run(nodes) = &self {
+                    return nodes.iter().find_map(Node::span);
+                }
                 (|| match self {
                     $(
                         Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
@@ -699,6 +703,7 @@ macro_rules! node {
             pub fn span_mut(&mut self) -> Option<&mut usize> {
                 match self {
                     $(
+                        Self::Run(nodes) => nodes.make_mut().iter_mut().find_map(Node::span_mut),
                         Self::$name $(($($tup_name),*))? $({$($field_name),*})? => {
                             $($(field_span!($tup_name, $tup_name);)*)*
                             $($(field_span!($field_name, $field_name);)*)*

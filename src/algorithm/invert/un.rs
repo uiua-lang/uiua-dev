@@ -1,3 +1,5 @@
+use crate::check::nodes_sig;
+
 use super::*;
 
 impl Node {
@@ -39,6 +41,9 @@ impl SigNode {
 }
 
 pub fn un_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
+    if input.is_empty() {
+        return Ok(Node::empty());
+    }
     let mut node = Node::empty();
     let mut curr = input;
     let mut error = Generic;
@@ -64,42 +69,82 @@ pub fn un_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
 }
 
 pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
+    // An anti inverse can be optionaly sandwhiched by an un inverse on either side
     let mut curr = input;
     let mut error = Generic;
-    let mut inv = Node::empty();
+
+    // Leading un inverse
+    let mut pre = Node::empty();
     'outer: loop {
-        for pattern in ANTI_PATTERNS {
-            match pattern.invert_extract(curr, asm) {
-                Ok((new, anti_inv)) => {
-                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
-                    curr = new;
-                    inv.prepend(anti_inv);
-                    return if curr.is_empty() {
-                        dbgln!("anti-inverted\n  {input:?}\n  to {inv:?}");
-                        Ok(inv)
-                    } else {
-                        Err(error)
-                    };
-                }
-                Err(e) => error = error.max(e),
-            }
-        }
         for pattern in UN_PATTERNS {
             match pattern.invert_extract(curr, asm) {
                 Ok((new, un_inv)) => {
                     dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {un_inv:?}");
                     curr = new;
-                    if curr.is_empty() {
-                        return Err(error);
-                    }
-                    inv.prepend(un_inv);
+                    pre.prepend(un_inv);
                     continue 'outer;
                 }
                 Err(e) => error = error.max(e),
             }
         }
-        break Err(error);
+        break;
     }
+    if !pre.is_empty() {
+        let span = pre.span().ok_or(Generic)?;
+        pre = Mod(Dip, eco_vec![pre.sig_node()?], span);
+    }
+
+    // TODO: pre should not be inverted
+
+    // Anti inverse
+    let mut got_anti = false;
+    let mut anti = Node::empty();
+    for pattern in ANTI_PATTERNS {
+        match pattern.invert_extract(curr, asm) {
+            Ok((new, anti_inv)) => {
+                dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
+                curr = new;
+                anti.prepend(anti_inv);
+                got_anti = true;
+                break;
+            }
+            Err(e) => error = error.max(e),
+        }
+    }
+    if !got_anti {
+        return Err(error);
+    }
+
+    // Trailing un inverse
+    let mut post = Node::empty();
+    'outer: loop {
+        for pattern in UN_PATTERNS {
+            match pattern.invert_extract(curr, asm) {
+                Ok((new, un_inv)) => {
+                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {un_inv:?}");
+                    curr = new;
+                    post.prepend(un_inv);
+                    continue 'outer;
+                }
+                Err(e) => error = error.max(e),
+            }
+        }
+        break;
+    }
+    if !post.is_empty() {
+        let span = post
+            .span()
+            .or_else(|| anti.span())
+            .or_else(|| pre.span())
+            .ok_or(Generic)?;
+        post = Mod(Dip, eco_vec![post.sig_node()?], span);
+    }
+
+    anti.prepend(post);
+    anti.prepend(pre);
+
+    dbgln!("anti-inverted\n     {input:?}\n  to {anti:?}");
+    Ok(anti)
 }
 
 pub fn contra_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
@@ -127,7 +172,7 @@ pub fn contra_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
 
 pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &InnerAnti,
-    &InnerAntiDip,
+    &InnerContraDip,
     &JoinPat,
     &ArrayPat,
     &UnpackPat,
@@ -328,18 +373,18 @@ inverse!(
     }
 );
 
-inverse!((InnerAntiDip, input, asm), {
+inverse!((InnerContraDip, input, asm), {
     let [Mod(Dip, args, dip_span), input @ ..] = input else {
         return generic();
     };
     let args: Vec<_> = args.iter().map(|sn| sn.node.clone()).collect();
-    let ([], mut node) = Val.invert_extract(&args, asm)? else {
+    let ([], val) = Val.invert_extract(&args, asm)? else {
         return generic();
     };
-    node.push(Prim(Flip, *dip_span));
-    node.extend(input.iter().cloned());
-    let inv = node.un_inverse(asm)?;
-    Ok((&[], inv))
+    let mut contra = contra_inverse(input, asm)?;
+    contra.prepend(Prim(Flip, *dip_span));
+    contra.prepend(val);
+    Ok((&[], contra))
 });
 
 inverse!(
@@ -450,82 +495,126 @@ inverse!(
 );
 
 inverse!(JoinPat, input, asm, {
-    Ok(match input {
-        [Prim(Join, _), Prim(Join, span), input @ ..] => (
-            input,
-            Node::from_iter([
-                Node::new_push([2]),
-                ImplPrim(UnJoinShape, *span),
-                ImplPrim(UnJoin, *span),
-            ]),
-        ),
-        [Prim(Join, _), Prim(Flip, _), Prim(Join, span), input @ ..] => (
-            input,
-            Node::from_iter([
-                Node::new_push([2]),
-                ImplPrim(UnJoinShapeEnd, *span),
-                ImplPrim(UnJoin, *span),
-            ]),
-        ),
-        [Prim(Flip, _), Prim(Join, _), Prim(Flip, _), Prim(Join, span), input @ ..] => (
-            input,
-            Node::from_iter([
-                Node::new_push([2]),
-                ImplPrim(UnJoinShapeEnd, *span),
-                ImplPrim(UnJoinEnd, *span),
-            ]),
-        ),
-        [Prim(Join, span), input @ ..] => (input, ImplPrim(UnJoin, *span)),
-        [Prim(Flip, span), Prim(Join, _), input @ ..] => (input, ImplPrim(UnJoinEnd, *span)),
-        [Prim(Couple, span), Prim(Flip, _), Prim(Join, _), input @ ..] => {
-            let inv = Node::from_iter([
-                Node::new_push([2]),
-                ImplPrim(UnJoinShapeEnd, *span),
-                ImplPrim(UnCouple, *span),
-            ]);
-            (input, inv)
+    let orig_input = input;
+    let mut input = input;
+    let Some((join_index, join_span)) = (input.iter().enumerate().rev())
+        .filter_map(|(i, node)| match node {
+            Prim(Join, span) => Some((i, *span)),
+            _ => None,
+        })
+        .find(|(i, _)| nodes_clean_sig(&input[..*i]).is_some())
+    else {
+        return generic();
+    };
+    let mut dipped = false;
+    let node = if let Some((inp, mut node)) = Val.invert_extract(input, asm).ok().or_else(|| {
+        let [Mod(Dip, args, _), input @ ..] = input else {
+            return None;
+        };
+        let [inner] = args.as_slice() else {
+            return None;
+        };
+        let Ok(([], val)) = Val.invert_extract(inner.node.as_slice(), asm) else {
+            return None;
+        };
+        dipped = true;
+        Some((input, val))
+    }) {
+        input = inp;
+        if let Some(i) = (1..=input.len())
+            .rev()
+            .find(|&i| nodes_clean_sig(&input[..i]).is_some_and(|sig| sig == (0, 0)))
+        {
+            node.extend(un_inverse(&input[..i], asm)?);
+            input = &input[i..];
         }
-        [Prim(Couple, span), Prim(Join, _), input @ ..] => {
-            let inv = Node::from_iter([
-                Node::new_push([2]),
-                ImplPrim(UnJoinShape, *span),
-                ImplPrim(UnCouple, *span),
-            ]);
-            (input, inv)
-        }
-        input => {
-            let (len, end, inner, boxed, span, input) = match input {
-                [Array {
-                    len: ArrayLen::Static(len),
-                    inner,
-                    boxed,
-                    ..
-                }, Prim(Join, span), input @ ..] => (*len, false, inner, *boxed, *span, input),
-                [Array {
-                    len: ArrayLen::Static(len),
-                    inner,
-                    boxed,
-                    ..
-                }, Prim(Flip, _), Prim(Join, span), input @ ..] => {
-                    (*len, true, inner, *boxed, *span, input)
+        let (prim, span) = match *input {
+            [Prim(Join, span), ref inp @ ..] if dipped => {
+                input = inp;
+                (UnJoinShapeEnd, span)
+            }
+            [Prim(Join, span), ref inp @ ..] => {
+                input = inp;
+                (UnJoinShape, span)
+            }
+            [Prim(Flip, _), Prim(Join, span), ref inp @ ..] if !dipped => {
+                input = inp;
+                (UnJoinShapeEnd, span)
+            }
+            _ => return generic(),
+        };
+        let inner =
+            Node::from_iter([Prim(Primitive::Shape, span), ImplPrim(prim, span)]).sig_node()?;
+        node.extend([
+            Mod(Dip, eco_vec![inner], span),
+            ImplPrim(MatchPattern, span),
+        ]);
+        node
+    } else if let Some(i) = (0..join_index)
+        .find(|&i| nodes_clean_sig(&input[i..join_index]).is_some_and(|sig| sig == (0, 1)))
+    {
+        let mut node = ImplPrim(UnJoin, join_span);
+        node.extend(un_inverse(&input[i..join_index], asm)?);
+        node.extend(un_inverse(&input[..i], asm)?);
+        input = &input[join_index + 1..];
+        node
+    } else {
+        fn invert_inner(mut input: &[Node], asm: &Assembly) -> InversionResult<Node> {
+            let mut node = Node::empty();
+            while !input.is_empty() {
+                if let [Mod(Dip, args, _), inp @ ..] = input {
+                    let [inner] = args.as_slice() else {
+                        return generic();
+                    };
+                    node.extend(invert_inner(inner.node.as_slice(), asm)?);
+                    input = inp;
+                    continue;
                 }
-                _ => return generic(),
-            };
-            let inv = inner.un_inverse(asm)?;
-            let inv_args = inv.sig()?.args;
-            let inv = Node::from_iter([
-                Node::new_push(len),
-                ImplPrim(if end { UnJoinShapeEnd } else { UnJoinShape }, span),
-                Unpack {
-                    count: inv_args,
-                    unbox: boxed,
-                    span,
-                },
-                inv,
-            ]);
-            (input, inv)
+                if let Some((i, _)) = input.iter().enumerate().skip(1).find(|(i, node)| {
+                    nodes_clean_sig(&input[..*i]).is_some() && matches!(node, Mod(Dip, ..))
+                }) {
+                    node.extend(un_inverse(&input[..i], asm)?);
+                    input = &input[i..];
+                    continue;
+                }
+                node.extend(un_inverse(input, asm)?);
+                break;
+            }
+            Ok(node)
         }
-    })
+        let flip_after = join_index > 0 && matches!(input[join_index - 1], Prim(Flip, _));
+        let flip_before = join_index > 1 && matches!(input[0], Prim(Flip, _));
+        let flip = flip_before ^ flip_after;
+        let before = &input[flip_before as usize..join_index - flip_after as usize];
+        input = &input[join_index + 1..];
+        let before_inv = invert_inner(before, asm)?;
+        let before_sig = nodes_clean_sig(&before_inv).ok_or(Generic)?;
+        let mut node = Node::empty();
+        let count = before_sig.outputs.saturating_sub(before_sig.args) + 1;
+        let prim = if count <= 1 {
+            if flip {
+                UnJoinEnd
+            } else {
+                UnJoin
+            }
+        } else {
+            node.push(Push(count.into()));
+            if flip {
+                UnJoinShapeEnd
+            } else {
+                UnJoinShape
+            }
+        };
+        node.push(ImplPrim(prim, join_span));
+        node.push(before_inv);
+        node
+    };
+    let orig_sig = nodes_sig(&orig_input[..orig_input.len() - input.len()])?;
+    let inverted_sig = node.sig()?;
+    if orig_sig.inverse() != inverted_sig {
+        return generic();
+    }
+    Ok((input, node))
 });
 
 inverse!(AntiJoinPat, input, _, {
