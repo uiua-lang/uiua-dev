@@ -28,6 +28,9 @@ fn under_inverse(
     g_sig: Signature,
     asm: &Assembly,
 ) -> InversionResult<(Node, Node)> {
+    if input.is_empty() {
+        return Ok((Node::empty(), Node::empty()));
+    }
     let mut before = Node::empty();
     let mut after = Node::empty();
     let mut curr = input;
@@ -57,6 +60,8 @@ fn under_inverse(
 }
 
 static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
+    &DipPat,
+    &BothPat,
     &Trivial,
     &SwitchPat,
     &PartitionPat,
@@ -273,6 +278,45 @@ macro_rules! under {
         });
     };
 }
+
+under!(DipPat, input, g_sig, asm, Dip, span, [f], {
+    // F inverse
+    let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
+    let (f_before, f_after) = f.under_inverse(inner_g_sig, asm)?;
+    // Rest inverse
+    let (rest_before, rest_after) = under_inverse(input, g_sig, asm)?;
+    let rest_before_sig = rest_before.sig()?;
+    let rest_after_sig = rest_after.sig()?;
+    // Make before
+    let mut before = Mod(Dip, eco_vec![f_before], span);
+    before.push(rest_before);
+    // Make after
+    let mut after = rest_after;
+    let after_inner = if g_sig.args + rest_before_sig.args <= g_sig.outputs + rest_after_sig.outputs
+    {
+        Mod(Dip, eco_vec![f_after], span)
+    } else {
+        f_after.node
+    };
+    after.push(after_inner);
+    Ok((&[], before, after))
+});
+
+under!(BothPat, input, g_sig, asm, Dip, span, [f], {
+    // F inverse
+    let (f_before, f_after) = if g_sig.args <= g_sig.outputs {
+        let inv = f.under_inverse(g_sig, asm)?;
+        (f.clone(), inv)
+    } else {
+        let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
+        f.under_inverse(inner_g_sig, asm)?
+    };
+    // Rest inverse
+    let (rest_before, rest_after) = under_inverse(input, g_sig, asm)?;
+    let rest_before_sig = rest_before.sig()?;
+    let rest_after_sig = rest_after.sig()?;
+    todo!()
+});
 
 under!(
     "Derives under inverses from un inverses",
