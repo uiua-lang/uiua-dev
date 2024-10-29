@@ -928,7 +928,7 @@ at {}",
     }
     /// Simulates popping a value and immediately pushing it back
     pub(crate) fn touch_stack(&self, n: usize) -> UiuaResult {
-        self.require_height(n)
+        self.require_height(n).map(drop)
     }
     pub(crate) fn make_array(&mut self, len: ArrayLen, inner: Node, boxed: bool) -> UiuaResult {
         let start_height = self.stack_height();
@@ -978,13 +978,13 @@ at {}",
     }
     /// Take some values from the stack
     pub fn take_n(&mut self, n: usize) -> UiuaResult<Vec<Value>> {
-        self.require_height(n)?;
-        Ok(self.rt.stack.split_off(n))
+        let height = self.require_height(n)?;
+        Ok(self.rt.stack.split_off(height))
     }
     /// Copy some values from the stack
     pub fn copy_n(&self, n: usize) -> UiuaResult<Vec<Value>> {
-        self.require_height(n)?;
-        Ok(self.rt.stack[self.rt.stack.len() - n..].to_vec())
+        let height = self.require_height(n)?;
+        Ok(self.rt.stack[height..].to_vec())
     }
     /// Prepare to fork and return the arguments to f
     pub fn prepare_fork(&mut self, f_args: usize, g_args: usize) -> UiuaResult<Vec<Value>> {
@@ -1006,16 +1006,15 @@ at {}",
     }
     /// Get a value some amount from the top of the stack
     pub fn copy_nth(&self, n: usize) -> UiuaResult<Value> {
-        self.require_height(n + 1)?;
-        Ok(self.rt.stack[self.rt.stack.len() - n - 1].clone())
+        let height = self.require_height(n + 1)?;
+        Ok(self.rt.stack[height].clone())
     }
     /// Duplicate some values down the stack
     ///
     /// `depth` must be greater than or equal to `n`
     pub fn dup_values(&mut self, n: usize, depth: usize) -> UiuaResult {
         debug_assert!(depth >= n, "Cannot dup {n} values at depth {depth}");
-        self.require_height(depth)?;
-        let start = self.rt.stack.len() - depth;
+        let start = self.require_height(depth)?;
         for i in 0..n {
             self.rt.stack.push(self.rt.stack[start + i].clone());
         }
@@ -1024,32 +1023,29 @@ at {}",
     }
     /// Rotate the stack up at some depth
     pub fn rotate_up(&mut self, n: usize, depth: usize) -> UiuaResult {
-        self.require_height(depth)?;
-        let start = self.rt.stack.len() - depth;
+        let start = self.require_height(depth)?;
         self.rt.stack[start..].rotate_right(n);
         Ok(())
     }
     /// Rotate the stack down at some depth
     pub fn rotate_down(&mut self, n: usize, depth: usize) -> UiuaResult {
-        self.require_height(depth)?;
-        let start = self.rt.stack.len() - depth;
+        let start = self.require_height(depth)?;
         self.rt.stack[start..].rotate_left(n);
         Ok(())
     }
     /// Access n stack values mutably
     pub fn n_mut(&mut self, n: usize) -> UiuaResult<&mut [Value]> {
-        self.require_height(n)?;
-        let start = self.rt.stack.len() - n;
+        let start = self.require_height(n)?;
         Ok(&mut self.rt.stack[start..])
     }
-    pub(crate) fn require_height(&self, n: usize) -> UiuaResult {
+    pub(crate) fn require_height(&self, n: usize) -> UiuaResult<usize> {
         if self.rt.stack.len() < n {
             return Err(self.error(format!(
                 "Stack was empty when getting argument {}",
                 self.rt.stack.len() + 1
             )));
         }
-        Ok(())
+        Ok(self.rt.stack.len() - n)
     }
     /// Get a reference to the stack
     pub fn stack(&self) -> &[Value] {
