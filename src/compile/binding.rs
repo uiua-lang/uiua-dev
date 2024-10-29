@@ -188,6 +188,12 @@ impl Compiler {
         }
 
         // A non-macro binding
+
+        let is_func = binding
+            .words
+            .iter()
+            .any(|w| matches!(w.value, Word::Func(_)));
+
         let make_fn = {
             let name = name.clone();
             move |mut node: Node, sig: Signature, comp: &mut Compiler| {
@@ -238,7 +244,7 @@ impl Compiler {
         // Resolve signature
         match node.sig() {
             Ok(mut sig) => {
-                if sig == (0, 1) && !self_referenced {
+                if sig == (0, 1) && !self_referenced && !is_func {
                     // Binding is a constant
                     let val = if let [Node::Push(v)] = node.as_slice() {
                         Some(v.clone())
