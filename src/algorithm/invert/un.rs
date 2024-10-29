@@ -73,46 +73,39 @@ pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     let mut curr = input;
     let mut error = Generic;
 
-    // Leading un inverse
-    let mut pre = Node::empty();
-    'outer: loop {
-        for pattern in UN_PATTERNS {
+    // Anti inverse
+    let mut got_anti = false;
+    let mut anti = Node::empty();
+    let mut start = 0;
+    'find_anti: for s in (0..input.len()).rev() {
+        error = Generic;
+        curr = &input[s..];
+        for pattern in ANTI_PATTERNS {
             match pattern.invert_extract(curr, asm) {
-                Ok((new, un_inv)) => {
-                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {un_inv:?}");
+                Ok((new, anti_inv)) => {
+                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
                     curr = new;
-                    pre.prepend(un_inv);
-                    continue 'outer;
+                    anti.prepend(anti_inv);
+                    got_anti = true;
+                    start = s;
+                    break 'find_anti;
                 }
                 Err(e) => error = error.max(e),
             }
         }
-        break;
-    }
-    if !pre.is_empty() {
-        let span = pre.span().ok_or(Generic)?;
-        pre = Mod(Dip, eco_vec![pre.sig_node()?], span);
-    }
-
-    // TODO: pre should not be inverted
-
-    // Anti inverse
-    let mut got_anti = false;
-    let mut anti = Node::empty();
-    for pattern in ANTI_PATTERNS {
-        match pattern.invert_extract(curr, asm) {
-            Ok((new, anti_inv)) => {
-                dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
-                curr = new;
-                anti.prepend(anti_inv);
-                got_anti = true;
-                break;
-            }
-            Err(e) => error = error.max(e),
-        }
     }
     if !got_anti {
         return Err(error);
+    }
+
+    // Leading non-inverted section
+    let pre = Node::from(&input[..start]);
+    let pre_sig = pre.sig()?;
+    if !(pre_sig == (0, 1) || pre_sig.args == pre_sig.outputs) {
+        return generic();
+    }
+    if !pre.is_empty() {
+        dbgln!("leading non-inverted section:\n  {pre:?}");
     }
 
     // Trailing un inverse
@@ -220,8 +213,8 @@ pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Log, (Flip, Pow)),
     &((Flip, Log), (Flip, 1, Flip, Div, Pow)),
     &(Complex, (crate::Complex::I, Mul, Sub)),
-    &(Min, MatchGe),
-    &(Max, MatchLe),
+    &(Min, MatchLe),
+    &(Max, MatchGe),
     &(Orient, AntiOrient),
     &(Drop, AntiDrop),
     &(Select, AntiSelect),
@@ -343,8 +336,15 @@ inverse!(DipPat, input, asm, Dip, span, [f], {
 });
 
 inverse!(OnPat, input, asm, On, span, [f], {
-    let inv = f.anti_inverse(asm)?;
-    Ok((input, Mod(On, eco_vec![inv], span)))
+    let mut inv = f.anti_inverse(asm)?;
+    if f.sig.args == f.sig.outputs {
+        inv = Mod(Dip, eco_vec![inv], span).sig_node()?;
+    }
+    let mut inv = Mod(On, eco_vec![inv], span);
+    if f.sig.args == f.sig.outputs {
+        inv.push(ImplPrim(MatchPattern, span))
+    }
+    Ok((input, inv))
 });
 
 inverse!(ByPat, input, asm, By, span, [f], {
