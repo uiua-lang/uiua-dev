@@ -997,7 +997,7 @@ at {}",
             let len = self.rt.stack.len();
             vals.extend(self.rt.stack.drain(len - f_args..(len - g_args)));
             vals.extend(
-                self.rt.stack[self.rt.stack.len() - (f_args - g_args)..]
+                self.rt.stack[self.rt.stack.len() - g_args..]
                     .iter()
                     .cloned(),
             );
