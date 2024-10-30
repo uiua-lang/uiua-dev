@@ -378,10 +378,14 @@ impl Compiler {
                     && self.words_look_pure(&m.operands)
                 {
                     let mut m = (**m).clone();
-                    for op in m.operands.iter_mut().filter(|w| w.value.is_code()) {
+                    if m.operands.iter().filter(|w| w.value.is_code()).count() == 1 {
+                        let op = m.operands.iter().find(|w| w.value.is_code()).unwrap();
                         if let Some(new) = self.desugar_function_pack_inner(&m.modifier, op)? {
-                            op.value = new;
+                            modified.operands = vec![op.span.clone().sp(new)];
+                            return self.modified(modified, subscript);
                         }
+                    }
+                    for op in m.operands.iter_mut().filter(|w| w.value.is_code()) {
                         op.value = Word::Modified(
                             Modified {
                                 modifier: modified.modifier.clone(),
