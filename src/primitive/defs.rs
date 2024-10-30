@@ -3483,6 +3483,7 @@ impl_primitive!(
     (4, UndoInsert),
     (3, UndoRemove),
     (1(0), TryClose),
+    (2[1], UnBoth),
     // Optimizations
     (1, FirstMinIndex),
     (1, FirstMaxIndex),
