@@ -413,7 +413,7 @@ at {}",
         let mut formatted_node = String::new();
 
         // Uncomment to debug
-        // for val in &self.rt.stack {
+        // for val in self.rt.stack.iter().rev() {
         //     print!("{:?} ", val);
         // }
         // if self.rt.stack.is_empty() {
@@ -422,7 +422,7 @@ at {}",
         // println!();
         // if !self.rt.under_stack.is_empty() {
         //     print!("under: ");
-        //     for val in &self.rt.under_stack {
+        //     for val in self.rt.under_stack.iter().rev() {
         //         print!("{:?} ", val);
         //     }
         //     println!();
@@ -1019,6 +1019,9 @@ at {}",
         let start = self.require_height(depth)?;
         for i in 0..n {
             self.rt.stack.push(self.rt.stack[start + i].clone());
+        }
+        if n != depth {
+            self.rt.stack[start..].rotate_right(n);
         }
         Ok(())
     }
