@@ -551,7 +551,7 @@ at {}",
                     val.set_label(if label.is_empty() { None } else { Some(label) });
                 })
             }),
-            Node::RemoveLabel(span) => {
+            Node::RemoveLabel(_, span) => {
                 self.with_span(span, |env| env.monadic_mut(|val| val.set_label(None)))
             }
             Node::ValidateType {
@@ -795,7 +795,7 @@ at {}",
         &mut self,
         node: Node,
         frame: StackFrame,
-        call_span: usize,
+        _call_span: usize,
     ) -> UiuaResult {
         let start_height = self.rt.stack.len();
         let sig = frame.sig;
@@ -815,13 +815,16 @@ at {}",
         let height_diff = self.rt.stack.len() as isize - start_height as isize;
         let sig_diff = sig.outputs as isize - sig.args as isize;
         if height_diff != sig_diff {
-            return Err(self.error_with_span(
-                self.asm.spans[call_span].clone(),
-                format!(
-                    "Function modified the stack by {height_diff} values, but its \
-                    signature of {sig} implies a change of {sig_diff}"
-                ),
-            ));
+            let message = format!(
+                "Function modified the stack by {height_diff} values, but its \
+                signature of {sig} implies a change of {sig_diff}"
+            );
+            #[cfg(debug_assertions)]
+            {
+                panic!("{message}");
+            }
+            #[cfg(not(debug_assertions))]
+            return Err(self.error_with_span(self.asm.spans[_call_span].clone(), message));
         }
         Ok(())
     }

@@ -210,7 +210,7 @@ impl Compiler {
             node.push(Node::Prim(Primitive::Pick, span));
             if boxed {
                 node.push(Node::ImplPrim(ImplPrimitive::UnBox, span));
-                node.push(Node::RemoveLabel(span));
+                node.push(Node::RemoveLabel(Some(field.name.clone()), span));
             }
             // Add validator
             if let Some((va_instrs, validation_only, _va_span)) = field.validator.take() {
@@ -286,8 +286,8 @@ impl Compiler {
             .map(|f| f.init.as_ref().map(|sn| sn.sig.args).unwrap_or(1))
             .sum();
         let mut node = if has_fields {
-            let mut args = EcoVec::new();
-            for field in &fields {
+            let mut inner = Node::default();
+            for field in fields.iter().rev() {
                 let mut arg = if let Some(sn) = &field.init {
                     let mut arg = sn.clone();
                     if !boxed {
@@ -306,11 +306,22 @@ impl Compiler {
                 if boxed {
                     arg.node.push(Node::Label(field.name.clone(), span));
                 }
-                args.push(arg);
+                if !inner.is_empty() {
+                    for _ in 0..arg.sig.args {
+                        inner = Node::Mod(
+                            Primitive::Dip,
+                            eco_vec![inner
+                                .sig_node()
+                                .expect("Field initializer should have a signature")],
+                            span,
+                        );
+                    }
+                }
+                inner.push(arg.node);
             }
             Node::Array {
                 len: ArrayLen::Static(fields.len()),
-                inner: Node::Mod(Primitive::Bracket, args, span).into(),
+                inner: inner.into(),
                 boxed,
                 span,
             }

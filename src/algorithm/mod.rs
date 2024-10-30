@@ -41,7 +41,10 @@ pub(crate) fn get_ops<const N: usize>(
     let mut res = array::from_fn(|_| SigNode::default());
     let mut ops = ops.into_iter();
     for res in &mut res {
-        *res = ops.next().ok_or_else(|| {
+        *res = ops.next().ok_or_else(|| -> UiuaError {
+            #[cfg(debug_assertions)]
+            panic!("Not enough operands");
+            #[cfg(not(debug_assertions))]
             env.error(
                 "Not enough operands. \
                 This is a bug in the interpreter.",

@@ -43,7 +43,7 @@ slotmap::new_key_type! {
 /// It is a lightweight handle that can be used to look up the function's code in an [`Assembly`].
 ///
 /// It also contains the function's [`FunctionId`] and [`Signature`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Function {
     /// The function's id
     pub id: FunctionId,
@@ -51,6 +51,12 @@ pub struct Function {
     pub sig: Signature,
     inner: FunctionKeyInner,
     hash: u64,
+}
+
+impl fmt::Debug for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ← {}", self.id, self.sig)
+    }
 }
 
 impl PartialEq for Function {
@@ -693,5 +699,28 @@ impl Inputs {
             InputSrc::Str(index) => self.strings.get(*index).map(|src| f(src)),
             InputSrc::Macro(span) => self.macros.get(span).map(|src| f(&src)),
         }
+    }
+}
+
+impl fmt::Debug for Assembly {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct FmtFunctions<'a>(&'a Assembly);
+        impl<'a> fmt::Debug for FmtFunctions<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list()
+                    .entries(self.0.bindings.iter().filter_map(|b| {
+                        if let BindingKind::Func(func) = &b.kind {
+                            Some((func, &self.0[func]))
+                        } else {
+                            None
+                        }
+                    }))
+                    .finish()
+            }
+        }
+        f.debug_struct("Assembly")
+            .field("root", &self.root)
+            .field("functions", &FmtFunctions(self))
+            .finish()
     }
 }

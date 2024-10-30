@@ -139,6 +139,12 @@ macro_rules! span_from_nodes {
 }
 span_from_nodes!(A, B);
 
+/// Optionally allow a leading value
+///
+/// The value will not be pushed during the "undo" step
+#[derive(Debug)]
+struct MaybeVal<P>(P);
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub enum InversionError {
     #[default]
