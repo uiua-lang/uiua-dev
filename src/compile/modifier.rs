@@ -952,7 +952,7 @@ impl Compiler {
 
             let mut code = String::new();
             (|| -> UiuaResult {
-                if let Some(index) = node_unbound_index(&mac.root.node, &self.asm) {
+                if let Some(index) = self.node_unbound_index(&mac.root.node) {
                     let name = self.scope.names.iter().find_map(|(name, local)| {
                         if local.index == index {
                             Some(name)
@@ -970,7 +970,7 @@ impl Compiler {
 
                 let span = self.add_span(modifier_span.clone());
                 let env = &mut self.macro_env;
-                env.asm = self.asm.clone();
+                swap(&mut env.asm, &mut self.asm);
                 env.rt.call_stack.last_mut().unwrap().call_span = span;
 
                 // Run the macro function
@@ -982,9 +982,13 @@ impl Compiler {
                 #[cfg(feature = "native_sys")]
                 let enabled =
                     crate::sys_native::set_output_enabled(self.pre_eval_mode != PreEvalMode::Lsp);
-                env.exec(mac.root)?;
+                let res = env.exec(mac.root);
                 #[cfg(feature = "native_sys")]
                 crate::sys_native::set_output_enabled(enabled);
+                if let Err(e) = res {
+                    swap(&mut env.asm, &mut self.asm);
+                    return Err(e);
+                }
 
                 let val = env.pop("macro result")?;
 
@@ -1000,6 +1004,8 @@ impl Compiler {
                         code.push_str(&s);
                     }
                 }
+
+                swap(&mut env.asm, &mut self.asm);
                 Ok(())
             })()
             .map_err(|e| e.trace_macro(r.name.value.clone(), modifier_span.clone()))?;
@@ -1035,6 +1041,20 @@ impl Compiler {
         };
         self.macro_depth -= 1;
         Ok(node)
+    }
+    fn node_unbound_index(&self, node: &Node) -> Option<usize> {
+        match node {
+            Node::Run(nodes) => nodes.iter().find_map(|node| self.node_unbound_index(node)),
+            Node::CallGlobal(index, _)
+                if self.asm.bindings.get(*index).map_or(true, |binding| {
+                    matches!(binding.kind, BindingKind::Const(None))
+                }) && !self.macro_env.rt.unevaluated_constants.contains_key(index) =>
+            {
+                Some(*index)
+            }
+            Node::Call(func, _) => self.node_unbound_index(&self.asm[func]),
+            _ => None,
+        }
     }
     /// Expand a positional macro
     fn expand_index_macro(
@@ -1133,7 +1153,7 @@ impl Compiler {
                 ),
             ));
         }
-        if let Some(index) = node_unbound_index(&sn.node, &comp.asm) {
+        if let Some(index) = comp.node_unbound_index(&sn.node) {
             let name = comp.scope.names.iter().find_map(|(ident, local)| {
                 if local.index == index {
                     Some(ident)
@@ -1190,20 +1210,5 @@ impl Compiler {
         (scope.names).extend(self.scope.names.drain(macro_names_len..));
         self.scope = scope;
         res
-    }
-}
-
-fn node_unbound_index(node: &Node, asm: &Assembly) -> Option<usize> {
-    match node {
-        Node::Run(nodes) => nodes.iter().find_map(|node| node_unbound_index(node, asm)),
-        Node::CallGlobal(index, _)
-            if asm.bindings.get(*index).map_or(true, |binding| {
-                matches!(binding.kind, BindingKind::Const(None))
-            }) =>
-        {
-            Some(*index)
-        }
-        Node::Call(func, _) => node_unbound_index(&asm[func], asm),
-        _ => None,
     }
 }

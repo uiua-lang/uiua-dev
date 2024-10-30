@@ -66,6 +66,10 @@ pub(crate) struct Runtime {
     cli_arguments: Vec<String>,
     /// File that was passed to the interpreter for execution
     cli_file_path: PathBuf,
+    /// Code for unevaluated pure constants, in case they are needed for macros
+    ///
+    /// This should only be used in the compile-time environment
+    pub(crate) unevaluated_constants: HashMap<usize, Node>,
     /// The system backend
     pub(crate) backend: Arc<dyn SysBackend>,
     /// The thread interface
@@ -200,6 +204,7 @@ impl Default for Runtime {
             thread: ThisThread::default(),
             output_comments: HashMap::new(),
             memo: Arc::new(ThreadLocal::new()),
+            unevaluated_constants: HashMap::new(),
             test_results: Vec::new(),
             reports: Vec::new(),
         }
@@ -463,7 +468,7 @@ at {}",
                 let binding = self.asm.bindings.get(index).ok_or_else(|| {
                     self.error(
                         "Called out-of-bounds binding. \
-                            This is a bug in the interpreter.",
+                        This is a bug in the interpreter.",
                     )
                 })?;
                 match binding.kind.clone() {
@@ -471,10 +476,23 @@ at {}",
                         self.rt.stack.push(val);
                         Ok(())
                     }
-                    BindingKind::Const(None) => Err(self.error(
-                        "Called unbound constant. \
-                        This is a bug in the interpreter.",
-                    )),
+                    BindingKind::Const(None) => {
+                        if let Some(node) = self.rt.unevaluated_constants.remove(&index) {
+                            (|| -> UiuaResult {
+                                self.exec(node)?;
+                                let val = self.pop("constant")?;
+                                self.push(val.clone());
+                                self.asm.bindings.make_mut()[index].kind =
+                                    BindingKind::Const(Some(val));
+                                Ok(())
+                            })()
+                        } else {
+                            Err(self.error(
+                                "Called unbound constant. \
+                                This is a bug in the interpreter.",
+                            ))
+                        }
+                    }
                     BindingKind::Func(f) => {
                         self.respect_recursion_limit().and_then(|_| self.call(&f))
                     }
@@ -1370,6 +1388,7 @@ at {}",
                 interrupted: self.rt.interrupted.clone(),
                 output_comments: HashMap::new(),
                 memo: self.rt.memo.clone(),
+                unevaluated_constants: HashMap::new(),
                 test_results: Vec::new(),
                 reports: Vec::new(),
                 thread,

@@ -255,6 +255,13 @@ impl Compiler {
                     let is_const = val.is_some();
                     self.compile_bind_const(name, local, val, spandex, comment.as_deref());
                     if !is_const {
+                        // Add binding instrs to unevaluated constants
+                        if node.is_pure(Purity::Pure, &self.asm) {
+                            self.macro_env
+                                .rt
+                                .unevaluated_constants
+                                .insert(local.index, node.clone());
+                        }
                         // Add binding instrs to root
                         self.asm.root.push(node);
                         self.asm.root.push(Node::BindGlobal {
