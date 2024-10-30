@@ -180,6 +180,7 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &CustomPat,
     &FormatPat,
     &FillPat,
+    &InsertPat,
     &(Sqrt, (Dup, Mul)),
     &((Dup, Add), (2, Div)),
     &((Dup, Mul), Sqrt),
@@ -188,9 +189,9 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &(Orient, (Dup, Shape, Len, Range)),
     &(Sort, UnSort),
     &(SortDown, UnSort),
-    &MaybeVal((ValidateType, ValidateType)),
-    &MaybeVal((TagVariant, ValidateVariant)),
-    &MaybeVal((ValidateVariant, TagVariant)),
+    &RequireVal((ValidateType, ValidateType)),
+    &RequireVal((TagVariant, ValidateVariant)),
+    &RequireVal((ValidateVariant, TagVariant)),
     &(Dup, (Over, Flip, MatchPattern)),
     &PrimPat,
     &ImplPrimPat,
@@ -422,30 +423,6 @@ inverse!(
 
 inverse!(RowsPat, input, asm, Rows, span, [f], {
     Ok((input, Mod(Rows, eco_vec![f.un_inverse(asm)?], span)))
-});
-
-inverse!(AntiInsertPat, input, asm, {
-    let (input, val) = Val.invert_extract(input, asm)?;
-    let &[Prim(Insert, span), ref input @ ..] = input else {
-        return generic();
-    };
-    let inv = Node::from_iter([
-        PushUnder(1, span),
-        val,
-        Prim(Over, span),
-        Prim(Over, span),
-        Prim(Has, span),
-        Node::new_push(1),
-        ImplPrim(MatchPattern, span),
-        Prim(Over, span),
-        Prim(Over, span),
-        Prim(Get, span),
-        PushUnder(1, span),
-        Prim(Remove, span),
-        PopUnder(2, span),
-        ImplPrim(MatchPattern, span),
-    ]);
-    Ok((input, inv))
 });
 
 inverse!(ScanPat, input, asm, {
@@ -684,15 +661,50 @@ inverse!(FormatPat, input, _, ref, Format(parts, span), {
     Ok((input, MatchFormatPattern(parts.clone(), *span)))
 });
 
-inverse!(FillPat, input, asm, Fill, span, args, {
-    let [fill, f] = args else {
-        return generic();
-    };
+inverse!(FillPat, input, asm, Fill, span, [fill, f], {
     if fill.sig != (0, 1) {
         return generic();
     }
     let inv = f.un_inverse(asm)?;
     Ok((input, ImplMod(UnFill, eco_vec![fill.clone(), inv], span)))
+});
+
+inverse!(InsertPat, input, asm, {
+    let (input, first) = Val.invert_extract(input, asm)?;
+    let second = Val.invert_extract(input, asm);
+    let &[Prim(Insert, span), ref input @ ..] = input else {
+        return generic();
+    };
+    let (input, key, value) = if let Ok((input, key)) = second {
+        (input, key, Some(first))
+    } else {
+        (input, first, None)
+    };
+    let mut node = Node::from_iter([
+        key,
+        Prim(Over, span),
+        Prim(Over, span),
+        Prim(Has, span),
+        Node::new_push(1),
+        ImplPrim(MatchPattern, span),
+        Prim(Over, span),
+        Prim(Over, span),
+        Prim(Get, span),
+        PushUnder(1, span),
+        Prim(Remove, span),
+        PopUnder(1, span),
+    ]);
+    if let Some(value) = value {
+        node.extend(value);
+        node.push(ImplPrim(MatchPattern, span));
+    }
+    Ok((input, node))
+});
+
+inverse!(AntiInsertPat, input, _, Prim(Insert, span), {
+    let args = eco_vec![Prim(Get, span).sig_node()?, Prim(Remove, span).sig_node()?];
+    let inv = Mod(Fork, args, span);
+    Ok((input, inv))
 });
 
 #[derive(Debug)]
@@ -897,6 +909,25 @@ where
 }
 
 impl<P: InvertPattern> InvertPattern for MaybeVal<P> {
+    fn invert_extract<'a>(
+        &self,
+        input: &'a [Node],
+        asm: &Assembly,
+    ) -> InversionResult<(&'a [Node], Node)> {
+        let (input, val) = if let Ok((input, val)) = Val.invert_extract(input, asm) {
+            (input, Some(val))
+        } else {
+            (input, None)
+        };
+        let (input, mut inv) = self.0.invert_extract(input, asm)?;
+        if let Some(val) = val {
+            inv.prepend(val);
+        }
+        Ok((input, inv))
+    }
+}
+
+impl<P: InvertPattern> InvertPattern for RequireVal<P> {
     fn invert_extract<'a>(
         &self,
         input: &'a [Node],

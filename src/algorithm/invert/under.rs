@@ -73,10 +73,17 @@ static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
     &ReversePat,
     &TransposePat,
     &RotatePat,
+    &FillPat,
     &CustomPat,
     // Sign ops
     &Stash(1, Abs, (Sign, Mul)),
     &Stash(1, Sign, (Abs, Mul)),
+    // Mod
+    &MaybeVal((
+        Modulus,
+        (Over, Over, Flip, Over, Div, Floor, Mul, PushUnd(1), Modulus),
+        (PopUnd(1), Add),
+    )),
     // Array restructuring
     &Stash(2, Take, UndoTake),
     &Stash(2, Drop, UndoDrop),
@@ -606,6 +613,16 @@ under!(RotatePat, input, g_sig, _, Prim(Rotate, span), {
     };
     let before = Node::from_iter([CopyToUnder(1, span), Prim(Rotate, span)]);
     let after = Node::from_iter([PopUnder(1, span), ImplPrim(UndoRotate(count), span)]);
+    Ok((input, before, after))
+});
+
+under!(FillPat, input, g_sig, asm, Fill, span, [fill, f], {
+    if fill.sig != (0, 1) {
+        return generic();
+    }
+    let (f_before, f_after) = f.under_inverse(g_sig, asm)?;
+    let before = Mod(Fill, eco_vec![fill.clone(), f_before], span);
+    let after = ImplMod(UnFill, eco_vec![fill.clone(), f_after], span);
     Ok((input, before, after))
 });
 

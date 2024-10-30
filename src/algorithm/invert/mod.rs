@@ -82,6 +82,7 @@ as_node!(A, B, C);
 as_node!(A, B, C, D);
 as_node!(A, B, C, D, E);
 as_node!(A, B, C, D, E, F);
+as_node!(A, B, C, D, E, F, G, H, I);
 
 trait SpanFromNodes: Sized + fmt::Debug + Sync {
     fn span_from_nodes<'a>(
@@ -144,6 +145,12 @@ span_from_nodes!(A, B);
 /// The value will not be pushed during the "undo" step
 #[derive(Debug)]
 struct MaybeVal<P>(P);
+
+/// Require a leading value
+///
+/// The value will not be pushed during the "undo" step
+#[derive(Debug)]
+struct RequireVal<P>(P);
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub enum InversionError {
