@@ -1,7 +1,6 @@
 //! Algorithms for performing operations on arrays
 
 use std::{
-    array,
     cmp::Ordering,
     collections::{BTreeSet, BinaryHeap, HashMap},
     convert::Infallible,
@@ -35,29 +34,19 @@ pub mod table;
 pub mod zip;
 
 pub(crate) fn get_ops<const N: usize>(
-    ops: impl IntoIterator<Item = SigNode>,
+    ops: EcoVec<SigNode>,
     env: &Uiua,
 ) -> UiuaResult<[SigNode; N]> {
-    let mut res = array::from_fn(|_| SigNode::default());
-    let mut ops = ops.into_iter();
-    for res in &mut res {
-        *res = ops.next().ok_or_else(|| -> UiuaError {
+    ops.try_into().map_err(|ops: EcoVec<SigNode>| {
+        env.error(if ops.len() < N {
             #[cfg(debug_assertions)]
             panic!("Not enough operands");
             #[cfg(not(debug_assertions))]
-            env.error(
-                "Not enough operands. \
-                This is a bug in the interpreter.",
-            )
-        })?;
-    }
-    if ops.next().is_some() {
-        return Err(env.error(
-            "Too many operands. \
-            This is a bug in the interpreter.",
-        ));
-    }
-    Ok(res)
+            "Not enough operands. This is a bug in the interpreter."
+        } else {
+            "Too many operands.  This is a bug in the interpreter."
+        })
+    })
 }
 
 pub trait Indexable: IntoIterator + Deref<Target = [Self::Item]> {}
