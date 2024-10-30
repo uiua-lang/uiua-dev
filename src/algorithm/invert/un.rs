@@ -348,6 +348,18 @@ inverse!(OnPat, input, asm, On, span, [f], {
 });
 
 inverse!(ByPat, input, asm, By, span, [f], {
+    // Under's undo step
+    if let Ok((before, after)) = f.node.under_inverse(Signature::new(1, 1), asm) {
+        dbg!();
+        let mut inv = before;
+        (0..f.sig.outputs).for_each(|_| inv.push(Prim(Pop, span)));
+        for _ in 0..f.sig.outputs {
+            inv = Mod(Dip, eco_vec![inv.sig_node()?], span);
+        }
+        inv.push(after);
+        return Ok((input, inv));
+    }
+    // Contra inverse
     let inv = f.contra_inverse(asm)?;
     Ok((input, Mod(By, eco_vec![inv], span)))
 });
