@@ -270,7 +270,7 @@ impl VirtualEnv {
                 }
                 ArrayLen::Dynamic(len) => self.handle_args_outputs(*len, 1),
             },
-            Node::Label(..) | Node::RemoveLabel(_) => self.handle_args_outputs(1, 1),
+            Node::Label(..) | Node::RemoveLabel(..) => self.handle_args_outputs(1, 1),
             Node::Call(func, _) => self.handle_sig(func.sig),
             Node::CallMacro(_, sig, _) | Node::CallGlobal(_, sig) => self.handle_sig(*sig),
             Node::BindGlobal { .. } => self.handle_args_outputs(1, 0),

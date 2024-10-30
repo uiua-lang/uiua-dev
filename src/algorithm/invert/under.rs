@@ -635,16 +635,7 @@ where
         }
     }
 }
-
-/// Optionally allow a leading value
-///
-/// The value will not be pushed during the "undo" step
-#[derive(Debug)]
-struct MaybeVal<P>(P);
-impl<P> UnderPattern for MaybeVal<P>
-where
-    P: UnderPattern,
-{
+impl<P: UnderPattern> UnderPattern for MaybeVal<P> {
     fn under_extract<'a>(
         &self,
         mut input: &'a [Node],

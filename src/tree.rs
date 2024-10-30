@@ -30,7 +30,7 @@ node!(
     CallMacro(index(usize), sig(Signature), args(Ops)),
     BindGlobal { index: usize, span: usize },
     Label(label(EcoString), span(usize)),
-    RemoveLabel(span(usize)),
+    RemoveLabel(label(Option<EcoString>), span(usize)),
     Format(parts(EcoVec<EcoString>), span(usize)),
     MatchFormatPattern(parts(EcoVec<EcoString>), span(usize)),
     CustomInverse(cust(Box<CustomInverse>), span(usize)),
@@ -396,11 +396,25 @@ impl fmt::Debug for Node {
                 tuple.finish()
             }
             Node::Array {
-                len, boxed: true, ..
-            } => write!(f, "{{{}{}}}", Primitive::Len, len),
+                len,
+                inner,
+                boxed: true,
+                ..
+            } => {
+                write!(f, "{}{}{{", Primitive::Len, len)?;
+                inner.fmt(f)?;
+                write!(f, "}}")
+            }
             Node::Array {
-                len, boxed: false, ..
-            } => write!(f, "[{}{}]", Primitive::Len, len),
+                len,
+                inner,
+                boxed: false,
+                ..
+            } => {
+                write!(f, "{}{}[", Primitive::Len, len)?;
+                inner.fmt(f)?;
+                write!(f, "]")
+            }
             Node::Call(func, _) => write!(f, "call {}", func.id),
             Node::CallGlobal(index, _) => write!(f, "<call global {index}>"),
             Node::CallMacro(index, _, args) => {
@@ -412,7 +426,7 @@ impl fmt::Debug for Node {
             }
             Node::BindGlobal { index, .. } => write!(f, "<bind global {index}>"),
             Node::Label(label, _) => write!(f, "${label}"),
-            Node::RemoveLabel(_) => write!(f, "remove label"),
+            Node::RemoveLabel(..) => write!(f, "remove label"),
             Node::Format(parts, _) => {
                 write!(f, "$\"")?;
                 for (i, part) in parts.iter().enumerate() {

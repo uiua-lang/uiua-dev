@@ -188,9 +188,9 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &(Orient, (Dup, Shape, Len, Range)),
     &(Sort, UnSort),
     &(SortDown, UnSort),
-    &((Val, ValidateType), ValidateType),
-    &((Val, TagVariant), ValidateVariant),
-    &((Val, ValidateVariant), TagVariant),
+    &MaybeVal((ValidateType, ValidateType)),
+    &MaybeVal((TagVariant, ValidateVariant)),
+    &MaybeVal((ValidateVariant, TagVariant)),
     &(Dup, (Over, Flip, MatchPattern)),
     &PrimPat,
     &ImplPrimPat,
@@ -349,15 +349,16 @@ inverse!(OnPat, input, asm, On, span, [f], {
 
 inverse!(ByPat, input, asm, By, span, [f], {
     // Under's undo step
-    if let Ok((before, after)) = f.node.under_inverse(Signature::new(1, 1), asm) {
-        dbg!();
-        let mut inv = before;
-        (0..f.sig.outputs).for_each(|_| inv.push(Prim(Pop, span)));
-        for _ in 0..f.sig.outputs {
-            inv = Mod(Dip, eco_vec![inv.sig_node()?], span);
+    if f.sig.args == 1 {
+        if let Ok((before, after)) = f.node.under_inverse(Signature::new(1, 1), asm) {
+            let mut inv = before;
+            (0..f.sig.outputs).for_each(|_| inv.push(Prim(Pop, span)));
+            for _ in 0..f.sig.outputs {
+                inv = Mod(Dip, eco_vec![inv.sig_node()?], span);
+            }
+            inv.push(after);
+            return Ok((input, inv));
         }
-        inv.push(after);
-        return Ok((input, inv));
     }
     // Contra inverse
     let inv = f.contra_inverse(asm)?;
@@ -707,6 +708,12 @@ impl InvertPattern for Trivial {
             [TrackCaller(inner), input @ ..] => {
                 Ok((input, TrackCaller(inner.un_inverse(asm)?.into())))
             }
+            [Label(label, span), input @ ..] => {
+                Ok((input, RemoveLabel(Some(label.clone()), *span)))
+            }
+            [RemoveLabel(Some(label), span), input @ ..] => {
+                Ok((input, Label(label.clone(), *span)))
+            }
             [node @ SetOutputComment { .. }, input @ ..] => Ok((input, node.clone())),
             [Call(f, _), input @ ..] => Ok((input, asm[f].un_inverse(asm).map_err(|e| e.func(f))?)),
             _ => generic(),
@@ -886,5 +893,18 @@ where
             span = span.or(sp);
         }
         Some((nodes, span))
+    }
+}
+
+impl<P: InvertPattern> InvertPattern for MaybeVal<P> {
+    fn invert_extract<'a>(
+        &self,
+        input: &'a [Node],
+        asm: &Assembly,
+    ) -> InversionResult<(&'a [Node], Node)> {
+        let (input, val) = Val.invert_extract(input, asm)?;
+        let (input, mut inv) = self.0.invert_extract(input, asm)?;
+        inv.prepend(val);
+        Ok((input, inv))
     }
 }
