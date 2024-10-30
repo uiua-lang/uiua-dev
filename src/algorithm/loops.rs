@@ -200,6 +200,7 @@ fn repeat_impl(f: SigNode, inv: Option<SigNode>, n: f64, env: &mut Uiua) -> Uiua
 pub fn do_(ops: Ops, env: &mut Uiua) -> UiuaResult {
     crate::profile_function!();
     let [body, cond] = get_ops(ops, env)?;
+    dbg!(&body, &cond);
     let body_sig = body.sig;
     let cond_sig = cond.sig;
     if cond_sig.outputs < 1 {

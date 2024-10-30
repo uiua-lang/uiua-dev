@@ -547,7 +547,11 @@ impl VirtualEnv {
             }
             Node::TrackCaller(inner) | Node::NoInline(inner) => self.node(inner)?,
         }
-        // println!("{instr:?} -> {}/{}", -(self.min_height as i32), self.height);
+        // println!(
+        //     "{node:?} -> {}/{}",
+        //     -(self.stack.min_height as i32),
+        //     self.stack.height
+        // );
         Ok(())
     }
     fn push(&mut self, val: BasicValue) {
@@ -592,10 +596,11 @@ impl VirtualEnv {
                         .loop_overreach());
                     }
                     Ordering::Less if self.array_depth == 0 => {
+                        self.handle_args_outputs(sig.args, sig.outputs);
                         return Err(SigCheckError::from(format!(
                             "repeat with infinity and a function with signature {sig}"
                         ))
-                        .loop_variable(sig.args + 1));
+                        .loop_variable(self.stack.sig().args));
                     }
                     _ => self.handle_sig(sig),
                 }
@@ -613,10 +618,11 @@ impl VirtualEnv {
                     .loop_overreach());
                 }
                 Ordering::Less if self.array_depth == 0 => {
+                    self.handle_args_outputs(sig.args, sig.outputs);
                     return Err(SigCheckError::from(format!(
                         "repeat with no number and a function with signature {sig}"
                     ))
-                    .loop_variable(sig.args + 1));
+                    .loop_variable(self.stack.sig().args));
                 }
                 Ordering::Less => self.handle_sig(sig),
             }

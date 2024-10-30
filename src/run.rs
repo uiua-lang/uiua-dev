@@ -1016,12 +1016,10 @@ at {}",
     ///
     /// `depth` must be greater than or equal to `n`
     pub fn dup_values(&mut self, n: usize, depth: usize) -> UiuaResult {
-        debug_assert!(depth >= n, "Cannot dup {n} values at depth {depth}");
         let start = self.require_height(depth)?;
         for i in 0..n {
             self.rt.stack.push(self.rt.stack[start + i].clone());
         }
-        self.rt.stack.rotate_right(n);
         Ok(())
     }
     /// Rotate the stack up at some depth
