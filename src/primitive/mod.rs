@@ -189,6 +189,7 @@ impl fmt::Display for ImplPrimitive {
             UnXlsx => write!(f, "{Un}{Xlsx}"),
             UnFft => write!(f, "{Un}{Fft}"),
             UnDatetime => write!(f, "{Un}{DateTime}"),
+            UnBoth => write!(f, "{Un}{Both}"),
             ImageDecode => write!(f, "{Un}{ImageEncode}"),
             GifDecode => write!(f, "{Un}{GifEncode}"),
             AudioDecode => write!(f, "{Un}{AudioEncode}"),
@@ -995,10 +996,10 @@ impl Primitive {
             }
             Primitive::Both => {
                 let [f] = get_ops(ops, env)?;
+                let vals = env.take_n(f.sig.args)?;
                 env.exec(f.node.clone())?;
-                let vals = env.take_n(f.sig.outputs)?;
-                env.exec(f.node)?;
                 env.push_all(vals);
+                env.exec(f.node)?;
             }
             Primitive::Dip => {
                 let [f] = get_ops(ops, env)?;
@@ -1632,6 +1633,13 @@ impl ImplPrimitive {
             ImplPrimitive::UnFill => fill!(ops, env, with_unfill, without_unfill_but),
             ImplPrimitive::ReduceTable => table::reduce_table(ops, env)?,
             ImplPrimitive::RowsWindows => zip::rows_windows(ops, env)?,
+            ImplPrimitive::UnBoth => {
+                let [f] = get_ops(ops, env)?;
+                env.exec(f.node.clone())?;
+                let vals = env.take_n(f.sig.outputs)?;
+                env.exec(f.node)?;
+                env.push_all(vals);
+            }
             prim => {
                 return Err(env.error(if prim.modifier_args().is_some() {
                     format!(
