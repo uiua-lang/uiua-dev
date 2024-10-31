@@ -50,6 +50,8 @@ pub(crate) struct Runtime {
     unfill_stack: Vec<Value>,
     /// The fill boundary stack
     fill_boundary_stack: Vec<(usize, usize)>,
+    /// The depth of arrays under construction
+    pub(crate) array_depth: usize,
     /// A limit on the execution duration in milliseconds
     pub(crate) execution_limit: Option<f64>,
     /// The time at which execution started
@@ -186,6 +188,7 @@ impl Default for Runtime {
             fill_stack: Vec::new(),
             fill_boundary_stack: Vec::new(),
             unfill_stack: Vec::new(),
+            array_depth: 0,
             backend: Arc::new(SafeSys::default()),
             time_instrs: false,
             last_time: 0.0,
@@ -953,7 +956,10 @@ at {}",
     }
     pub(crate) fn make_array(&mut self, len: ArrayLen, inner: Node, boxed: bool) -> UiuaResult {
         let start_height = self.stack_height();
-        self.exec(inner)?;
+        self.rt.array_depth += 1;
+        let res = self.exec(inner);
+        self.rt.array_depth -= 1;
+        res?;
         let start = match len {
             ArrayLen::Static(len) => self.stack_height() - len,
             ArrayLen::Dynamic(len) => start_height - len,
@@ -1376,7 +1382,8 @@ at {}",
                 fill_boundary_stack: Vec::new(),
                 unfill_stack: Vec::new(),
                 recur_stack: self.rt.recur_stack.clone(),
-                call_stack: Vec::new(),
+                call_stack: Vec::from_iter(self.rt.call_stack.last().cloned()),
+                array_depth: 0,
                 time_instrs: self.rt.time_instrs,
                 last_time: self.rt.last_time,
                 cli_arguments: self.rt.cli_arguments.clone(),

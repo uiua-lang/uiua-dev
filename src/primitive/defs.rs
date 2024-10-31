@@ -3163,7 +3163,7 @@ primitive!(
     /// If pathing on a grid like the examples above, we can use [un][where] to visualize the path that was taken!
     /// ex: # Experimental!
     ///   : Neis ← [∩¯,,⇌.⇡2]
-    ///   : °□⊢ astar(+Neis¤|⌵/ℂ-|≍) 3_4 13_20
+    ///   : °□⊢ astar(+Neis¤|⌵/ℂ-|≍) 3_4 10_14
     ///   : °⊚
     ///   : ▽⟜≡▽8 # Upscale
     ///

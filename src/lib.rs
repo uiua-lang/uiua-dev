@@ -49,7 +49,7 @@ comp.print_diagnostics(true);
 let asm = comp.load_str("+ 3 5").unwrap().finish();
 
 let mut uiua = Uiua::with_native_sys();
-uiua.run_asm(&asm).unwrap();
+uiua.run_asm(asm).unwrap();
 let res = uiua.pop_int().unwrap();
 assert_eq!(res, 8);
 ```
@@ -100,8 +100,8 @@ assert_eq!(x.as_int(&uiua, "").unwrap(), 5);
 let f = uiua.bound_functions().remove("F").unwrap();
 let mut comp = Compiler::new().with_assembly(uiua.take_asm());
 comp.create_bind_function("AddTwo", (1, 1), move |uiua| {
-    uiua.call(f.clone())?;
-    uiua.call(f.clone())
+    uiua.call(&f)?;
+    uiua.call(&f)
 }).unwrap();
 comp.load_str("AddTwo 3").unwrap();
 uiua.run_asm(comp.finish()).unwrap();

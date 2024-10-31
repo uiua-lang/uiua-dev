@@ -504,7 +504,7 @@ impl Compiler {
                     Node::Mod(By, eco_vec![sn], span)
                 }
             }
-            prim @ (With | Off | Above | Below) => {
+            prim @ (With | Off) => {
                 let (mut sn, _) = self.monadic_modifier_op(modified)?;
                 if sn.sig.args < 2 {
                     sn.sig.outputs += 2 - sn.sig.args;
@@ -512,6 +512,27 @@ impl Compiler {
                 }
                 let span = self.add_span(modified.modifier.span.clone());
                 Node::Mod(prim, eco_vec![sn], span)
+            }
+            prim @ (Above | Below) => {
+                let (mut sn, _) = self.monadic_modifier_op(modified)?;
+                if sn.sig.args < 2 {
+                    sn.sig.args += 1;
+                    sn.sig.outputs += 1;
+                }
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::Mod(prim, eco_vec![sn], span)
+            }
+            Fork => {
+                let (f, g, f_span, _) = self.dyadic_modifier_ops(modified)?;
+                if f.node.as_primitive() == Some(Primitive::Identity) {
+                    self.emit_diagnostic(
+                        "Prefer `⟜` over `⊃∘` for clarity",
+                        DiagnosticKind::Style,
+                        modified.modifier.span.clone().merge(f_span),
+                    );
+                }
+                let span = self.add_span(modified.modifier.span.clone());
+                Node::Mod(Primitive::Fork, eco_vec![f, g], span)
             }
             Backward => {
                 let (SigNode { mut node, sig }, _) = self.monadic_modifier_op(modified)?;
@@ -809,6 +830,51 @@ impl Compiler {
                 }
                 let span = self.add_span(modified.modifier.span.clone());
                 Node::Mod(prim, eco_vec![sn], span)
+            }
+            Stringify => {
+                let operand = modified.code_operands().next().unwrap();
+                let s = format_word(operand, &self.asm.inputs);
+                Node::new_push(s)
+            }
+            Quote => {
+                let operand = modified.code_operands().next().unwrap().clone();
+                let node = self.do_comptime(prim, operand, &modified.modifier.span)?;
+                let code: String = match node {
+                    Node::Push(Value::Char(chars)) if chars.rank() == 1 => {
+                        chars.data.iter().collect()
+                    }
+                    Node::Push(Value::Char(chars)) => {
+                        return Err(self.error(
+                            modified.modifier.span.clone(),
+                            format!(
+                                "quote's argument compiled to a \
+                                rank {} array rather than a string",
+                                chars.rank()
+                            ),
+                        ))
+                    }
+                    Node::Push(value) => {
+                        return Err(self.error(
+                            modified.modifier.span.clone(),
+                            format!(
+                                "quote's argument compiled to a \
+                                {} array rather than a string",
+                                value.type_name()
+                            ),
+                        ))
+                    }
+                    _ => {
+                        return Err(self.error(
+                            modified.modifier.span.clone(),
+                            "quote's argument did not compile to a string",
+                        ));
+                    }
+                };
+                self.quote(&code, &"quote".into(), &modified.modifier.span)?
+            }
+            Sig => {
+                let (sn, _) = self.monadic_modifier_op(modified)?;
+                Node::from_iter([Node::new_push(sn.sig.outputs), Node::new_push(sn.sig.args)])
             }
             _ => return Ok(None),
         }))
