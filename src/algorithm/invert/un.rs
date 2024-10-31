@@ -211,6 +211,7 @@ pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Pow, (1, Flip, Div, Pow)),
     &((Flip, Pow), Log),
     &(Log, (Flip, Pow)),
+    &((Flip, 1, Flip, Div, Pow), (Flip, Log)),
     &((Flip, Log), (Flip, 1, Flip, Div, Pow)),
     &(Complex, (crate::Complex::I, Mul, Sub)),
     &(Min, MatchLe),
@@ -384,21 +385,23 @@ inverse!(
                 }
             }
             generic()
-        } else if let [Mod(Dip, args, dip_span), input @ ..] = input {
-            // Starts with dip value
-            let [f] = args.as_slice() else {
-                return generic();
-            };
-            let ([], mut node) = Val.invert_extract(f.node.as_slice(), asm)? else {
-                return generic();
-            };
-            node.push(Prim(Flip, *dip_span));
-            node.extend(input.iter().cloned());
-            let ([], inv) = InnerAnti.invert_extract(node.as_slice(), asm)? else {
-                return generic();
-            };
-            Ok((&[], inv))
-        } else {
+        }
+        // else if let [Mod(Dip, args, dip_span), input @ ..] = input {
+        //     // Starts with dip value
+        //     let [f] = args.as_slice() else {
+        //         return generic();
+        //     };
+        //     let ([], mut node) = Val.invert_extract(f.node.as_slice(), asm)? else {
+        //         return generic();
+        //     };
+        //     node.push(Prim(Flip, *dip_span));
+        //     node.extend(input.iter().cloned());
+        //     let ([], inv) = InnerAnti.invert_extract(node.as_slice(), asm)? else {
+        //         return generic();
+        //     };
+        //     Ok((&[], inv))
+        // }
+        else {
             generic()
         }
     }

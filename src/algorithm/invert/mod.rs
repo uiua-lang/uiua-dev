@@ -18,7 +18,7 @@ use crate::{
 
 use un::*;
 
-pub(crate) const DEBUG: bool = true;
+pub(crate) const DEBUG: bool = false;
 
 macro_rules! dbgln {
     ($($arg:tt)*) => {
@@ -113,6 +113,19 @@ impl SpanFromNodes for ImplPrimitive {
     ) -> Option<(&'a [Node], Option<usize>)> {
         match nodes {
             [Node::ImplPrim(prim, span), rest @ ..] if self == prim => Some((rest, Some(*span))),
+            _ => None,
+        }
+    }
+}
+
+impl SpanFromNodes for i32 {
+    fn span_from_nodes<'a>(
+        &self,
+        nodes: &'a [Node],
+        _: &Assembly,
+    ) -> Option<(&'a [Node], Option<usize>)> {
+        match nodes {
+            [Node::Push(n), rest @ ..] if *n == *self => Some((rest, None)),
             _ => None,
         }
     }

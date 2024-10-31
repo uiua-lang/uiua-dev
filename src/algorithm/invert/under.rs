@@ -497,8 +497,16 @@ under!(
             let after = anti.node;
             (before, after, to_save)
         } else if let Ok(normal) = &cust.normal {
-            let (before, after) = normal.node.under_inverse(g_sig, asm)?;
-            (before, after, 0)
+            match normal.node.under_inverse(g_sig, asm) {
+                Ok((before, after)) => (before, after, 0),
+                Err(e) => {
+                    if let Some(un) = cust.un.as_ref().filter(|un| un.sig == normal.sig) {
+                        (normal.node.clone(), un.node.clone(), 0)
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         } else {
             return generic();
         };

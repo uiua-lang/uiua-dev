@@ -1838,6 +1838,19 @@ impl fmt::Display for Value {
     }
 }
 
+impl PartialEq<i32> for Value {
+    fn eq(&self, other: &i32) -> bool {
+        if self.rank() > 0 {
+            return false;
+        }
+        match self {
+            Value::Num(arr) => arr.data[0] == (*other as f64),
+            Value::Byte(arr) => arr.data[0] as i32 == *other,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct ValueBuilder {
     value: Option<Value>,
