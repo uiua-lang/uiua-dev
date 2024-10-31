@@ -60,7 +60,7 @@ fn under_inverse(
 }
 
 static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
-    &DipPat,
+    &OnPat,
     &BothPat,
     &Trivial,
     &SwitchPat,
@@ -75,6 +75,7 @@ static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
     &RotatePat,
     &FillPat,
     &CustomPat,
+    &DupPat,
     // Sign ops
     &Stash(1, Abs, (Sign, Mul)),
     &Stash(1, Sign, (Abs, Mul)),
@@ -217,6 +218,7 @@ static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
     )),
     // Patterns that need to be last
     &StashAntiPat,
+    &DipPat,
     &StashContraPat,
     &FromUnPat,
 ];
@@ -287,6 +289,9 @@ macro_rules! under {
 }
 
 under!(DipPat, input, g_sig, asm, Dip, span, [f], {
+    if f.sig.args == 0 {
+        return generic();
+    }
     // F inverse
     let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
     let (f_before, f_after) = f.under_inverse(inner_g_sig, asm)?;
@@ -302,6 +307,29 @@ under!(DipPat, input, g_sig, asm, Dip, span, [f], {
     let after_inner = if g_sig.args + rest_before_sig.args <= g_sig.outputs + rest_after_sig.outputs
     {
         Mod(Dip, eco_vec![f_after], span)
+    } else {
+        f_after.node
+    };
+    after.push(after_inner);
+    Ok((&[], before, after))
+});
+
+under!(OnPat, input, g_sig, asm, On, span, [f], {
+    // F inverse
+    let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
+    let (f_before, f_after) = f.under_inverse(inner_g_sig, asm)?;
+    // Rest inverse
+    let (rest_before, rest_after) = under_inverse(input, g_sig, asm)?;
+    let rest_before_sig = rest_before.sig()?;
+    let rest_after_sig = rest_after.sig()?;
+    // Make before
+    let mut before = Mod(On, eco_vec![f_before], span);
+    before.push(rest_before);
+    // Make after
+    let mut after = rest_after;
+    let after_inner = if g_sig.args + rest_before_sig.args <= g_sig.outputs + rest_after_sig.outputs
+    {
+        Mod(On, eco_vec![f_after], span)
     } else {
         f_after.node
     };
@@ -331,9 +359,10 @@ under!(
     (FromUnPat, input, _, asm),
     {
         for pat in UN_PATTERNS {
-            if let Ok((new, inv)) = pat.invert_extract(input, asm) {
-                let nodes = &input[..input.len() - new.len()];
-                return Ok((new, Node::from(nodes), inv));
+            if let Ok((inp, inv)) = pat.invert_extract(input, asm) {
+                let node = Node::from(&input[..input.len() - inp.len()]);
+                dbgln!("matched un pattern for under {pat:?}\n  on {input:?}\n  to {node:?}\n  and {inv:?}");
+                return Ok((inp, node, inv));
             }
         }
         generic()
@@ -354,6 +383,7 @@ under!(
                     .unwrap_or(0);
                 let before = Node::from_iter([CopyToUnder(1, span), Node::from(nodes)]);
                 let after = Node::from_iter([PopUnder(1, span), inv]);
+                dbgln!("matched anti pattern for under {pat:?}\n  on {input:?}\n  to {before:?}\n  and {after:?}");
                 return Ok((new, before, after));
             }
         }
@@ -376,6 +406,7 @@ under!(
                 let before =
                     Node::from_iter([Prim(Over, span), PushUnder(1, span), Node::from(nodes)]);
                 let after = Node::from_iter([PopUnder(1, span), Prim(Flip, span), inv]);
+                dbgln!("matched contra pattern for under {pat:?}\n  on {input:?}\n  to {before:?}\n  and {after:?}");
                 return Ok((new, before, after));
             }
         }
@@ -448,26 +479,98 @@ under!(FoldPat, input, g_sig, asm, Fold, span, [f], {
     Ok((input, befores, afters))
 });
 
-under!(CustomPat, input, _, _, ref, CustomInverse(cust, span), {
-    let normal = cust.normal.clone()?;
-    let (mut before, mut after, to_save) = if let Some((before, after)) = cust.under.clone() {
-        if before.sig.outputs < normal.sig.outputs {
+under!(
+    (CustomPat, input, g_sig, asm),
+    ref,
+    CustomInverse(cust, span),
+    {
+        let normal = cust.normal.clone()?;
+        let (mut before, mut after, to_save) = if let Some((before, after)) = cust.under.clone() {
+            if before.sig.outputs < normal.sig.outputs {
+                return generic();
+            }
+            let to_save = before.sig.outputs - normal.sig.outputs;
+            (before.node, after.node, to_save)
+        } else if let Some(anti) = cust.anti.clone() {
+            let to_save = anti.sig.args - normal.sig.outputs;
+            let before = Mod(On, eco_vec![normal.clone()], *span);
+            let after = anti.node;
+            (before, after, to_save)
+        } else if let Ok(normal) = &cust.normal {
+            let (before, after) = normal.node.under_inverse(g_sig, asm)?;
+            (before, after, 0)
+        } else {
             return generic();
+        };
+        if to_save > 0 {
+            before.push(PushUnder(to_save, *span));
+            after.prepend(PopUnder(to_save, *span));
         }
-        let to_save = before.sig.outputs - normal.sig.outputs;
-        (before.node, after.node, to_save)
-    } else if let Some(anti) = cust.anti.clone() {
-        let to_save = anti.sig.args - normal.sig.outputs;
-        let before = Mod(On, eco_vec![normal.clone()], *span);
-        let after = anti.node;
-        (before, after, to_save)
-    } else {
-        return generic();
-    };
-    if to_save > 0 {
-        before.push(PushUnder(to_save, *span));
-        after.prepend(PopUnder(to_save, *span));
+        Ok((input, before, after))
     }
+);
+
+under!(DupPat, input, g_sig, asm, Prim(Dup, dup_span), {
+    let dyadic_i = (0..=input.len())
+        .find(|&i| nodes_clean_sig(&input[..i]).is_some_and(|sig| sig == (2, 1)))
+        .ok_or(Generic)?;
+    let dyadic_whole = &input[..dyadic_i];
+    let input = &input[dyadic_i..];
+    let (monadic_i, monadic_sig) = (0..=dyadic_whole.len())
+        .rev()
+        .filter_map(|i| nodes_clean_sig(&dyadic_whole[..i]).map(|sig| (i, sig)))
+        .find(|(_, sig)| sig.args == sig.outputs)
+        .ok_or(Generic)?;
+    let monadic_part = &dyadic_whole[..monadic_i];
+    let dyadic_part = &dyadic_whole[monadic_i..];
+    dbgln!("under monadic part: {monadic_part:?}");
+    dbgln!("under dyadic part: {dyadic_part:?}");
+    let (monadic_before, monadic_after) = under_inverse(monadic_part, g_sig, asm)?;
+
+    let mut before = Prim(Dup, dup_span);
+    let mut after = Node::empty();
+
+    let temp = |temp: bool| {
+        if temp {
+            before.push(CopyToUnder(1, dup_span));
+        }
+        before.extend(monadic_before);
+        before.extend(dyadic_part.iter().cloned());
+
+        if temp {
+            after.push(PopUnder(1, dup_span));
+        }
+    };
+
+    match dyadic_part {
+        [Prim(Add, span)] if monadic_sig == (0, 0) => {
+            temp(false);
+            after.push(Node::new_push(2));
+            after.push(Prim(Div, *span));
+        }
+        [Prim(Add, span)] => {
+            temp(true);
+            after.push(Prim(Sub, *span));
+        }
+        [Prim(Sub, span)] => {
+            temp(true);
+            after.push(Prim(Add, *span));
+        }
+        [Prim(Mul, span)] if monadic_sig == (0, 0) => {
+            temp(false);
+            after.push(Prim(Sqrt, *span));
+        }
+        [Prim(Mul, span)] => {
+            temp(true);
+            after.push(Prim(Div, *span));
+        }
+        [Prim(Div, span)] => {
+            temp(true);
+            after.push(Prim(Mul, *span));
+        }
+        _ => return generic(),
+    }
+    after.push(monadic_after);
     Ok((input, before, after))
 });
 
