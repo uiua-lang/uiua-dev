@@ -484,7 +484,11 @@ impl Compiler {
                 let (mut sn, _) = self.monadic_modifier_op(modified)?;
                 let span = self.add_span(modified.modifier.span.clone());
                 if sn.sig.args == 0 {
-                    sn.node.push(Node::Prim(Flip, span));
+                    if sn.sig.outputs == 0 {
+                        sn.node.push(Node::Prim(Identity, span));
+                    } else {
+                        sn.node.push(Node::Prim(Flip, span));
+                    }
                     sn.node
                 } else {
                     Node::Mod(On, eco_vec![sn], span)

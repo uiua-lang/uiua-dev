@@ -1,4 +1,4 @@
-use crate::SigNode;
+use crate::{check::nodes_sig, SigNode};
 
 use super::*;
 
@@ -218,6 +218,7 @@ static UNDER_PATTERNS: &[&dyn UnderPattern] = &[
     )),
     // Patterns that need to be last
     &StashAntiPat,
+    &FlipPat,
     &DipPat,
     &StashContraPat,
     &FromUnPat,
@@ -315,6 +316,9 @@ under!(DipPat, input, g_sig, asm, Dip, span, [f], {
 });
 
 under!(OnPat, input, g_sig, asm, On, span, [f], {
+    // if g_sig.args <= g_sig.outputs {
+    //     return generic();
+    // }
     // F inverse
     let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
     let (f_before, f_after) = f.under_inverse(inner_g_sig, asm)?;
@@ -327,8 +331,9 @@ under!(OnPat, input, g_sig, asm, On, span, [f], {
     before.push(rest_before);
     // Make after
     let mut after = rest_after;
-    let after_inner = if g_sig.args + rest_before_sig.args <= g_sig.outputs + rest_after_sig.outputs
-    {
+    let after_inner = if g_sig.args == g_sig.outputs {
+        Mod(Dip, eco_vec![f_after], span)
+    } else if g_sig.args + rest_before_sig.args <= g_sig.outputs + rest_after_sig.outputs {
         Mod(On, eco_vec![f_after], span)
     } else {
         f_after.node
@@ -469,14 +474,18 @@ under!(FoldPat, input, g_sig, asm, Fold, span, [f], {
     if f_before.sig.outputs > f_before.sig.args || f_after.sig.outputs > f_after.sig.args {
         return generic();
     }
-    let befores = Node::from_iter([
+    let before = Node::from_iter([
         Prim(Dup, span),
         Prim(Len, span),
+        Mod(
+            Dip,
+            eco_vec![Mod(Fold, eco_vec![f_before], span).sig_node()?],
+            span,
+        ),
         PushUnder(1, span),
-        Mod(Fold, eco_vec![f_before], span),
     ]);
-    let afters = Node::from_iter([PopUnder(1, span), Mod(Repeat, eco_vec![f_after], span)]);
-    Ok((input, befores, afters))
+    let after = Node::from_iter([PopUnder(1, span), Mod(Repeat, eco_vec![f_after], span)]);
+    Ok((input, before, after))
 });
 
 under!(
@@ -734,6 +743,21 @@ under!(FillPat, input, g_sig, asm, Fill, span, [fill, f], {
     let (f_before, f_after) = f.under_inverse(g_sig, asm)?;
     let before = Mod(Fill, eco_vec![fill.clone(), f_before], span);
     let after = ImplMod(UnFill, eco_vec![fill.clone(), f_after], span);
+    Ok((input, before, after))
+});
+
+under!(FlipPat, input, g_sig, asm, Prim(Flip, span), {
+    let (rest_before, rest_after) = under_inverse(input, g_sig, asm)?;
+    let rest_before_sig = nodes_sig(&rest_before)?;
+    let rest_after_sig = nodes_sig(&rest_after)?;
+    let total_args = g_sig.args + rest_before_sig.args + rest_after_sig.args;
+    let total_outputs = g_sig.outputs + rest_before_sig.outputs + rest_after_sig.outputs;
+    let before = Prim(Flip, span);
+    let after = if total_outputs < total_args {
+        Node::empty()
+    } else {
+        before.clone()
+    };
     Ok((input, before, after))
 });
 
