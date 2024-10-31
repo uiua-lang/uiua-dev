@@ -470,7 +470,7 @@ impl VirtualEnv {
                 }
                 On | By => {
                     let [f] = get_args(args)?;
-                    self.handle_args_outputs(f.args, f.outputs + 1);
+                    self.handle_args_outputs(f.args.max(1), f.outputs + 1);
                 }
                 Above | Below => {
                     let [f] = get_args(args)?;

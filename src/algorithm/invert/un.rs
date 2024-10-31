@@ -221,6 +221,7 @@ pub static ANTI_PATTERNS: &[&dyn InvertPattern] = &[
     &(Select, AntiSelect),
     &(Pick, AntiPick),
     &(Base, AntiBase),
+    &AntiFillPat,
     &AntiTrivial,
     &AntiRepeatPat,
     &AntiInsertPat,
@@ -337,12 +338,22 @@ inverse!(DipPat, input, asm, Dip, span, [f], {
 });
 
 inverse!(OnPat, input, asm, On, span, [f], {
-    let mut inv = f.anti_inverse(asm)?;
-    if f.sig.args == f.sig.outputs {
+    let orig_sig = f.sig;
+    let (f, val) = if let Ok((f, val)) = Val.invert_extract(f.node.as_slice(), asm) {
+        (Node::from(f).sig_node()?, Some(val))
+    } else {
+        (f.clone(), None)
+    };
+    let mut inv = f.node.anti_inverse(asm)?;
+    if let Some(val) = val {
+        inv.prepend(val);
+    }
+    let mut inv = inv.sig_node()?;
+    if orig_sig.args == orig_sig.outputs {
         inv = Mod(Dip, eco_vec![inv], span).sig_node()?;
     }
     let mut inv = Mod(On, eco_vec![inv], span);
-    if f.sig.args == f.sig.outputs {
+    if orig_sig.args == orig_sig.outputs {
         inv.push(ImplPrim(MatchPattern, span))
     }
     Ok((input, inv))
@@ -681,6 +692,14 @@ inverse!(FillPat, input, asm, Fill, span, [fill, f], {
         return generic();
     }
     let inv = f.un_inverse(asm)?;
+    Ok((input, ImplMod(UnFill, eco_vec![fill.clone(), inv], span)))
+});
+
+inverse!(AntiFillPat, input, asm, Fill, span, [fill, f], {
+    if fill.sig != (0, 1) {
+        return generic();
+    }
+    let inv = f.anti_inverse(asm)?;
     Ok((input, ImplMod(UnFill, eco_vec![fill.clone(), inv], span)))
 });
 
