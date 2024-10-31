@@ -94,7 +94,7 @@ impl fmt::Display for ArrayLen {
 }
 
 /// A custom inverse node
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CustomInverse {
     /// The normal function to call
@@ -118,6 +118,24 @@ impl Default for CustomInverse {
             under: None,
             anti: None,
         }
+    }
+}
+
+impl fmt::Debug for CustomInverse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = f.debug_struct("custom inverse");
+        s.field("normal", &self.normal.as_ref().map(|sn| &sn.node));
+        if let Some(un) = &self.un {
+            s.field("un", &un.node);
+        }
+        if let Some(anti) = &self.anti {
+            s.field("anti", &anti.node);
+        }
+        if let Some(under) = &self.under {
+            s.field("do", &under.0.node);
+            s.field("undo", &under.1.node);
+        }
+        s.finish()
     }
 }
 
@@ -448,10 +466,7 @@ impl fmt::Debug for Node {
                 write!(f, "\"")
             }
             Node::Switch { branches, .. } => write!(f, "<switch {}>", branches.len()),
-            Node::CustomInverse(cust, _) => f
-                .debug_tuple("custom inverse")
-                .field(&cust.normal.as_ref().map(|sn| &sn.node))
-                .finish(),
+            Node::CustomInverse(cust, _) => cust.fmt(f),
             Node::Unpack {
                 count,
                 unbox: false,
