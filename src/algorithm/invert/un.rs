@@ -101,7 +101,7 @@ pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     // Leading non-inverted section
     let pre = Node::from(&input[..start]);
     let pre_sig = pre.sig()?;
-    if !(pre_sig == (0, 1) || pre_sig.args == pre_sig.outputs) {
+    if pre_sig.args != pre_sig.outputs {
         return generic();
     }
     if !pre.is_empty() {
@@ -378,30 +378,29 @@ inverse!(
     {
         if let Ok((input, mut node)) = Val.invert_extract(input, asm) {
             // Starts with a value
-            for end in 1..=input.len() {
+            for end in (1..=input.len()).rev() {
                 if let Ok(inv) = anti_inverse(&input[..end], asm) {
                     node.push(inv);
+                    dbgln!("matched inner anti pattern for un\n  on {input:?}\n  to {node:?}");
                     return Ok((&input[end..], node));
                 }
             }
             generic()
-        }
-        // else if let [Mod(Dip, args, dip_span), input @ ..] = input {
-        //     // Starts with dip value
-        //     let [f] = args.as_slice() else {
-        //         return generic();
-        //     };
-        //     let ([], mut node) = Val.invert_extract(f.node.as_slice(), asm)? else {
-        //         return generic();
-        //     };
-        //     node.push(Prim(Flip, *dip_span));
-        //     node.extend(input.iter().cloned());
-        //     let ([], inv) = InnerAnti.invert_extract(node.as_slice(), asm)? else {
-        //         return generic();
-        //     };
-        //     Ok((&[], inv))
-        // }
-        else {
+        } else if let [Mod(Dip, args, dip_span), input @ ..] = input {
+            // Starts with dip value
+            let [f] = args.as_slice() else {
+                return generic();
+            };
+            let ([], mut node) = Val.invert_extract(f.node.as_slice(), asm)? else {
+                return generic();
+            };
+            node.push(Prim(Flip, *dip_span));
+            node.extend(input.iter().cloned());
+            let ([], inv) = InnerAnti.invert_extract(node.as_slice(), asm)? else {
+                return generic();
+            };
+            Ok((&[], inv))
+        } else {
             generic()
         }
     }
