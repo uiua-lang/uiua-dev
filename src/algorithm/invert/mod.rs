@@ -18,7 +18,7 @@ use crate::{
 
 use un::*;
 
-pub(crate) const DEBUG: bool = false;
+pub(crate) const DEBUG: bool = true;
 
 macro_rules! dbgln {
     ($($arg:tt)*) => {
@@ -139,6 +139,7 @@ macro_rules! span_from_nodes {
     };
 }
 span_from_nodes!(A, B);
+span_from_nodes!(A, B, C, D, E);
 
 /// Optionally allow a leading value
 ///

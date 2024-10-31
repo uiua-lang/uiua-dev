@@ -77,7 +77,7 @@ pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     let mut got_anti = false;
     let mut anti = Node::empty();
     let mut start = 0;
-    'find_anti: for s in (0..input.len()).rev() {
+    'find_anti: for s in 0..input.len() {
         error = Generic;
         curr = &input[s..];
         for pattern in ANTI_PATTERNS {
@@ -181,9 +181,8 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &FormatPat,
     &FillPat,
     &InsertPat,
+    &DupPat,
     &(Sqrt, (Dup, Mul)),
-    &((Dup, Add), (2, Div)),
-    &((Dup, Mul), Sqrt),
     &(Select, (Dup, Len, Range)),
     &(Pick, (Dup, Shape, Range)),
     &(Orient, (Dup, Shape, Len, Range)),
@@ -376,27 +375,41 @@ inverse!(
     "Matches an anti inverse with the first argument as part of the input",
     (InnerAnti, input, asm),
     {
-        let (input, mut node) = Val.invert_extract(input, asm)?;
-        for end in 1..=input.len() {
-            if let Ok(inv) = anti_inverse(&input[..end], asm) {
-                node.push(inv);
-                return Ok((&input[end..], node));
+        if let Ok((input, mut node)) = Val.invert_extract(input, asm) {
+            // Starts with a value
+            for end in 1..=input.len() {
+                if let Ok(inv) = anti_inverse(&input[..end], asm) {
+                    node.push(inv);
+                    return Ok((&input[end..], node));
+                }
             }
+            generic()
+        } else if let [Mod(Dip, args, dip_span), input @ ..] = input {
+            // Starts with dip value
+            let [f] = args.as_slice() else {
+                return generic();
+            };
+            let ([], mut node) = Val.invert_extract(f.node.as_slice(), asm)? else {
+                return generic();
+            };
+            node.push(Prim(Flip, *dip_span));
+            node.extend(input.iter().cloned());
+            let ([], inv) = InnerAnti.invert_extract(node.as_slice(), asm)? else {
+                return generic();
+            };
+            Ok((&[], inv))
+        } else {
+            generic()
         }
-        generic()
     }
 );
 
-inverse!((InnerContraDip, input, asm), {
-    let [Mod(Dip, args, dip_span), input @ ..] = input else {
-        return generic();
-    };
-    let args: Vec<_> = args.iter().map(|sn| sn.node.clone()).collect();
-    let ([], val) = Val.invert_extract(&args, asm)? else {
+inverse!(InnerContraDip, input, asm, Dip, dip_span, [f], {
+    let ([], val) = Val.invert_extract(f.node.as_slice(), asm)? else {
         return generic();
     };
     let mut contra = contra_inverse(input, asm)?;
-    contra.prepend(Prim(Flip, *dip_span));
+    contra.prepend(Prim(Flip, dip_span));
     contra.prepend(val);
     Ok((&[], contra))
 });
@@ -705,6 +718,60 @@ inverse!(AntiInsertPat, input, _, Prim(Insert, span), {
     let args = eco_vec![Prim(Get, span).sig_node()?, Prim(Remove, span).sig_node()?];
     let inv = Mod(Fork, args, span);
     Ok((input, inv))
+});
+
+inverse!(DupPat, input, asm, Prim(Dup, dup_span), {
+    let Some(dyadic_i) =
+        (0..=input.len()).find(|&i| nodes_clean_sig(&input[..i]).is_some_and(|sig| sig == (2, 1)))
+    else {
+        // Pattern matching
+        let sig = nodes_sig(input)?;
+        return if sig.args == sig.outputs {
+            let inv = Node::from_iter([Prim(Over, dup_span), ImplPrim(MatchPattern, dup_span)]);
+            Ok((input, inv))
+        } else {
+            generic()
+        };
+    };
+
+    // Special cases
+    let dyadic_whole = &input[..dyadic_i];
+    let input = &input[dyadic_i..];
+    let monadic_i = (0..=dyadic_whole.len())
+        .rev()
+        .find(|&i| {
+            nodes_clean_sig(&dyadic_whole[..i]).is_some_and(|sig| sig.args == 0 && sig.outputs == 0)
+        })
+        .ok_or(Generic)?;
+    let monadic_part = &dyadic_whole[..monadic_i];
+    let dyadic_part = &dyadic_whole[monadic_i..];
+    dbgln!("inverse monadic part: {monadic_part:?}");
+    dbgln!("inverse dyadic part: {dyadic_part:?}");
+    let monadic_inv = un_inverse(monadic_part, asm)?;
+    let inverse = match *dyadic_part {
+        [Prim(Primitive::Add, span)] => {
+            Node::from_iter([monadic_inv, Node::new_push(2), Prim(Primitive::Div, span)])
+        }
+        [Prim(Primitive::Mul, span)] => {
+            let mut inv = Prim(Primitive::Sqrt, span);
+            if !monadic_inv.is_empty() {
+                inv.extend([
+                    Prim(Primitive::Dup, dup_span),
+                    monadic_inv,
+                    Prim(Primitive::Pop, span),
+                ]);
+            }
+            inv
+        }
+        _ => {
+            let mut inv = monadic_inv;
+            inv.extend(un_inverse(dyadic_part, asm)?);
+            inv.push(Prim(Primitive::Over, dup_span));
+            inv.push(ImplPrim(ImplPrimitive::MatchPattern, dup_span));
+            inv
+        }
+    };
+    Ok((input, inverse))
 });
 
 #[derive(Debug)]
