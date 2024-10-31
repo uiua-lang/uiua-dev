@@ -240,6 +240,7 @@ impl Compiler {
                     ),
                 }
             }
+            println!("{}: {:?}", id, node);
             let func = self
                 .asm
                 .add_function(id.clone(), Signature::new(1, 1), node);

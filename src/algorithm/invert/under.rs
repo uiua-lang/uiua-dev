@@ -343,15 +343,13 @@ under!(OnPat, input, g_sig, asm, On, span, [f], {
 });
 
 under!(BothPat, input, g_sig, asm, Both, span, [f], {
-    let (f_before, f_after) = if g_sig.args > g_sig.outputs {
-        let inv = f.un_inverse(asm)?;
-        (f.clone(), inv)
-    } else {
-        let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
-        f.under_inverse(inner_g_sig, asm)?
-    };
+    let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
+    let (f_before, mut f_after) = f.under_inverse(inner_g_sig, asm)?;
     let before = Mod(Both, eco_vec![f_before], span);
     let after = if g_sig.args > g_sig.outputs {
+        let to_discard = f_after.node.under_sig()?.args;
+        f_after.node.push(PopUnder(to_discard, span));
+        (0..to_discard).for_each(|_| f_after.node.push(Prim(Pop, span)));
         f_after.node
     } else {
         ImplMod(UnBoth, eco_vec![f_after], span)
