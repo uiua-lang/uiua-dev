@@ -399,10 +399,11 @@ impl VirtualEnv {
                         Signature::new(cond.args, (cond.outputs + copy_count).saturating_sub(1));
                     let comp_sig = body.compose(cond_sub_sig);
                     if comp_sig.args < comp_sig.outputs && self.array_depth == 0 {
+                        self.handle_args_outputs(comp_sig.args, comp_sig.outputs);
                         return Err(SigCheckError::from(format!(
                             "do with a function with signature {comp_sig}"
                         ))
-                        .loop_variable(comp_sig.args));
+                        .loop_variable(self.stack.sig().args));
                     }
                     self.handle_args_outputs(
                         comp_sig.args,
@@ -474,11 +475,11 @@ impl VirtualEnv {
                 }
                 Above | Below => {
                     let [f] = get_args(args)?;
-                    self.handle_args_outputs(f.args.max(2), f.outputs + f.args.max(2));
+                    self.handle_args_outputs(f.args, f.args + f.outputs);
                 }
                 With | Off => {
                     let [f] = get_args(args)?;
-                    self.handle_args_outputs(f.args.max(2), f.outputs + 1);
+                    self.handle_args_outputs(f.args, f.outputs + 1);
                 }
                 prim if prim.modifier_args().is_some() => {
                     return Err(SigCheckError::from(format!(
