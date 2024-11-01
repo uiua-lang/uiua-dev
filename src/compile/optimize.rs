@@ -83,11 +83,13 @@ opt!(
 
 opt!(
     ReduceTableOpt,
-    [Mod(Table, table_args, span), Mod(Reduce, reduce_args, _)],
+    [Mod(Table, table_args, span), Mod(Reduce, reduce_args, _)](
+        table_args[0].sig == (2, 1) && reduce_args[0].sig == (2, 1)
+    ),
     ImplMod(
         ReduceTable,
-        (table_args.iter().cloned())
-            .chain(reduce_args.iter().cloned())
+        (reduce_args.iter().cloned())
+            .chain(table_args.iter().cloned())
             .collect(),
         *span
     )
@@ -275,17 +277,17 @@ fn replace_nodes(nodes: &mut EcoVec<Node>, i: usize, n: usize, new: Node) {
 }
 
 macro_rules! opt {
-    ($name:ident, [$($pat:pat),*], $new:expr) => {
-        opt!($name, ([$($pat),*], $new));
+    ($name:ident, [$($pat:pat),*] $(($cond:expr))?, $new:expr) => {
+        opt!($name, ([$($pat),*] $(($cond))?, $new));
     };
-    ($name:ident, $(([$($pat:pat),*], $new:expr)),* $(,)?) => {
+    ($name:ident, $(([$($pat:pat),*] $(($cond:expr))?, $new:expr)),* $(,)?) => {
         struct $name;
         impl Optimization for $name {
             fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool {
                 for i in 0..nodes.len() {
                     match &nodes[i..] {
                         $(
-                            [$($pat),*, ..] => {
+                            [$($pat),*, ..] $(if $cond)? => {
                                 const N: usize = 0 $(+ {stringify!($pat); 1})*;
                                 let new = $new;
                                 replace_nodes(nodes, i, N, new.into());
