@@ -692,9 +692,9 @@ pub fn gen_code_view(code: &str) -> View {
                                 view!(<span class=class data-title=title>{text}</span>).into_view(),
                             )
                         }
-                        SpanKind::Placeholder(op) => {
+                        SpanKind::Placeholder(_) => {
                             let class = format!("code-span {}", color_class);
-                            let title = format!("placeholder {}", op.name());
+                            let title = "placeholder";
                             frag_views.push(
                                 view!(<span class=class data-title=title>{text}</span>).into_view(),
                             )

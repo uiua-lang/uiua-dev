@@ -20,7 +20,7 @@ use crate::{
 node!(
     Array { len: ArrayLen, inner: Box<Node>, boxed: bool, span: usize },
     CallGlobal(index(usize), sig(Signature)),
-    CallMacro(index(usize), sig(Signature), args(Ops)),
+    CallMacro{ index: usize, sig: Signature, args: Ops, span: usize },
     BindGlobal { index: usize, span: usize },
     Label(label(EcoString), span(usize)),
     RemoveLabel(label(Option<EcoString>), span(usize)),
@@ -452,7 +452,7 @@ impl fmt::Debug for Node {
             }
             Node::Call(func, _) => write!(f, "call {}", func.id),
             Node::CallGlobal(index, _) => write!(f, "<call global {index}>"),
-            Node::CallMacro(index, _, args) => {
+            Node::CallMacro { args, index, .. } => {
                 let mut tuple = f.debug_tuple(&format!("<call macro {index}>"));
                 for node in args {
                     tuple.field(node);

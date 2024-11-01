@@ -165,13 +165,13 @@ impl Compiler {
             self.analyze_macro_body(&name, &words, &mut recursive);
             if recursive {
                 self.experimental_error(span, || {
-                    "Recursive positional macros are experimental. \
+                    "Recursive index macros are experimental. \
                     Add `# Experimental!` to the top of the file to use them."
                 });
                 if binding.signature.is_none() {
                     self.add_error(
                         span.clone(),
-                        "Recursive positional macro must have a \
+                        "Recursive index macro must have a \
                         signature declared after the ←",
                     );
                 }

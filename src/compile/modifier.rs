@@ -903,12 +903,18 @@ impl Compiler {
         }
         let node = if let Some(mut mac) = self.index_macros.get(&local.index).cloned() {
             // Index macros
+            let span = self.add_span(modifier_span.clone());
             match self.scope.kind {
                 ScopeKind::Temp(Some(mac_local)) if mac_local.macro_index == local.index => {
                     // Recursive
                     let args = self.args(operands)?;
                     if let Some(sig) = mac.sig {
-                        Node::CallMacro(mac_local.expansion_index, sig, args)
+                        Node::CallMacro {
+                            index: mac_local.expansion_index,
+                            sig,
+                            args,
+                            span,
+                        }
                     } else {
                         Node::empty()
                     }
@@ -961,7 +967,6 @@ impl Compiler {
                         self.asm.bindings.make_mut()[macro_local.expansion_index].kind =
                             BindingKind::Func(func.clone());
                     }
-                    let span = self.add_span(modifier_span);
                     Node::Call(func, span)
                 }
             }
@@ -1104,10 +1109,10 @@ impl Compiler {
             })?
             .1
         } else {
-            // Recursive positional macro inside itself
+            // Recursive index macro inside itself
             let _ = self.words(operands)?;
             let _ = self.ident(r.name.value.clone(), r.name.span, true)?;
-            todo!("recursive positional macro inside itself")
+            todo!("recursive index macro inside itself")
         };
         self.macro_depth -= 1;
         Ok(node)
@@ -1126,7 +1131,7 @@ impl Compiler {
             _ => None,
         }
     }
-    /// Expand a positional macro
+    /// Expand a index macro
     fn expand_index_macro(
         &mut self,
         name: Ident,
@@ -1139,8 +1144,6 @@ impl Compiler {
         if hygenic {
             set_in_macro_arg(&mut operands);
         }
-        let mut ops = collect_placeholder(macro_words);
-        ops.reverse();
         let span = span.merge(operands.last().unwrap().span.clone());
         let operands: Vec<Sp<Word>> = operands.into_iter().filter(|w| w.value.is_code()).collect();
         self.replace_placeholders(macro_words, &operands)?;
@@ -1159,8 +1162,8 @@ impl Compiler {
     fn replace_placeholders(&self, words: &mut Vec<Sp<Word>>, initial: &[Sp<Word>]) -> UiuaResult {
         let mut error = None;
         recurse_words_mut(words, &mut |word| match &mut word.value {
-            Word::Placeholder(PlaceholderOp::Nth(n)) => {
-                if let Some(replacement) = initial.get(*n as usize) {
+            Word::Placeholder(n) => {
+                if let Some(replacement) = initial.get(*n) {
                     *word = replacement.clone();
                 } else {
                     error = Some(self.error(
