@@ -101,7 +101,7 @@ pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
     // Leading non-inverted section
     let pre = Node::from(&input[..start]);
     let pre_sig = pre.sig()?;
-    if pre_sig.args != pre_sig.outputs {
+    if pre_sig.args != pre_sig.outputs || pre_sig.outputs > 1 {
         return generic();
     }
     if !pre.is_empty() {
