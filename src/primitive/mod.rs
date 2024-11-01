@@ -238,7 +238,7 @@ impl fmt::Display for ImplPrimitive {
             ReplaceRand => write!(f, "{Gap}{Rand}"),
             ReplaceRand2 => write!(f, "{Gap}{Gap}{Rand}"),
             ReduceContent => write!(f, "{Reduce}{Content}"),
-            ReduceTable => write!(f, "{Reduce}(…){Content}"),
+            ReduceTable => write!(f, "{Reduce}(…){Table}"),
             Adjacent => write!(f, "{Rows}{Reduce}(…){Windows}"),
             RowsWindows => write!(f, "{Rows}(…){Windows}"),
             CountUnique => write!(f, "{Len}{Deduplicate}"),
