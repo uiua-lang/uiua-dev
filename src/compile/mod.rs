@@ -1,6 +1,7 @@
 mod binding;
 mod data;
 mod modifier;
+mod optimize;
 
 use std::{
     cell::RefCell,
@@ -426,6 +427,9 @@ impl Compiler {
         }
 
         let res = self.catching_crash(input, |env| env.items(items, false));
+
+        self.asm.root.optimize();
+        dbg!(&self.asm.root);
 
         if self.print_diagnostics {
             for diagnostic in self.take_diagnostics() {

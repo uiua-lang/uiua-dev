@@ -186,19 +186,10 @@ impl Node {
         }
     }
     /// Get a mutable slice of the nodes in this node
-    ///
-    /// Transforms the node into a [`Node::Run`] if it is not already a [`Node::Run`]
     pub fn as_mut_slice(&mut self) -> &mut [Node] {
         match self {
             Node::Run(nodes) => nodes.make_mut(),
-            other => {
-                let first = take(other);
-                let Node::Run(nodes) = other else {
-                    unreachable!()
-                };
-                nodes.push(first);
-                nodes.make_mut()
-            }
+            other => slice::from_mut(other),
         }
     }
     /// Slice the node to get a subnode
