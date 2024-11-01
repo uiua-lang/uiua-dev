@@ -219,8 +219,9 @@ impl Compiler {
                 match inverse {
                     Ok(va_inverse) => node.push(Node::CustomInverse(
                         CustomInverse {
-                            normal: Ok(make_node(va_inverse)),
-                            un: Some(make_node(va_instrs)),
+                            normal: Ok(make_node(va_inverse.clone())),
+                            un: Some(make_node(va_instrs.clone())),
+                            under: Some((make_node(va_inverse), make_node(va_instrs))),
                             ..Default::default()
                         }
                         .into(),
@@ -228,7 +229,8 @@ impl Compiler {
                     )),
                     Err(_) if validation_only => node.push(Node::CustomInverse(
                         CustomInverse {
-                            un: Some(make_node(va_instrs)),
+                            un: Some(make_node(va_instrs.clone())),
+                            under: Some((Default::default(), make_node(va_instrs))),
                             ..Default::default()
                         }
                         .into(),
@@ -240,7 +242,6 @@ impl Compiler {
                     ),
                 }
             }
-            println!("{}: {:?}", id, node);
             let func = self
                 .asm
                 .add_function(id.clone(), Signature::new(1, 1), node);
