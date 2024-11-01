@@ -1,7 +1,7 @@
 mod binding;
 mod data;
 mod modifier;
-mod optimize;
+pub(crate) mod optimize;
 
 use std::{
     cell::RefCell,

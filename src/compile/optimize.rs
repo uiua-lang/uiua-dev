@@ -2,11 +2,29 @@ use super::*;
 
 use crate::{ImplPrimitive::*, Node::*, Primitive::*};
 
+pub(crate) const DEBUG: bool = false;
+
+macro_rules! dbgln {
+    ($($arg:tt)*) => {
+        if DEBUG {
+            println!($($arg)*); // Allow println
+        }
+    }
+}
+use dbgln;
+
 impl Node {
     pub(super) fn optimize(&mut self) {
+        dbgln!("optimizing {self:?}");
         match self {
             Run(nodes) => {
-                while OPTIMIZATIONS.iter().any(|op| op.match_and_replace(nodes)) {}
+                while OPTIMIZATIONS.iter().any(|op| {
+                    if !op.match_and_replace(nodes) {
+                        return false;
+                    }
+                    dbgln!("applied optimization {op:?}");
+                    true
+                }) {}
                 if nodes.len() == 1 {
                     *self = take(nodes).remove(0);
                 }
@@ -55,13 +73,22 @@ static OPTIMIZATIONS: &[&dyn Optimization] = &[
     &((SortDown, Reverse), Sort),
     &((Pop, Rand), ReplaceRand),
     &((Pop, Pop, Rand), ReplaceRand2),
+    &InlineCustomInverse,
     &TransposeOpt,
     &ReduceTableOpt,
     &ReduceDepthOpt,
+    &AdjacentOpt,
     &AstarOpt,
     &PopConst,
     &TraceOpt,
+    &ValidateTypeOpt,
 ];
+
+opt!(
+    InlineCustomInverse,
+    [CustomInverse(cust, _)](cust.normal.is_ok()),
+    cust.normal.clone().unwrap().node
+);
 
 opt!(PopConst, [Push(_), Prim(Pop, _)], []);
 
@@ -95,6 +122,53 @@ opt!(
     )
 );
 
+opt!(
+    ValidateTypeOpt,
+    (
+        [
+            Prim(Dup, _),
+            Prim(Type, _),
+            Push(val),
+            ImplPrim(MatchPattern, span)
+        ],
+        [Push(val.clone()), ImplPrim(ValidateType, *span)]
+    ),
+    (
+        [Prim(Type, _), Push(val), ImplPrim(MatchPattern, span)],
+        [Push(val.clone()), ImplPrim(ValidateTypeConsume, *span)]
+    )
+);
+
+#[derive(Debug)]
+struct AdjacentOpt;
+impl Optimization for AdjacentOpt {
+    fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool {
+        for i in 0..nodes.len() {
+            let [Prim(Windows, _), Mod(Rows, args, span), ..] = &nodes[i..] else {
+                continue;
+            };
+            let [f] = args.as_slice() else {
+                continue;
+            };
+            match f.node.as_slice() {
+                [Mod(Reduce, reduce_args, span)] if reduce_args[0].sig == (2, 1) => {
+                    let impl_mod = ImplMod(ImplPrimitive::Adjacent, reduce_args.clone(), *span);
+                    replace_nodes(nodes, i, 2, impl_mod);
+                    return true;
+                }
+                _ if args[0].sig == (1, 1) => {
+                    let impl_mod = ImplMod(ImplPrimitive::RowsWindows, args.clone(), *span);
+                    replace_nodes(nodes, i, 2, impl_mod);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
+#[derive(Debug)]
 struct ReduceDepthOpt;
 impl Optimization for ReduceDepthOpt {
     fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool {
@@ -172,9 +246,37 @@ opt!(
             *span
         )
     ),
+    (
+        [
+            ImplPrim(
+                TraceN {
+                    n: a,
+                    inverse: inv_a,
+                    stack_sub,
+                },
+                span
+            ),
+            ImplPrim(
+                TraceN {
+                    n: b,
+                    inverse: inv_b,
+                    ..
+                },
+                _
+            )
+        ](inv_a == inv_b),
+        ImplPrim(
+            TraceN {
+                n: a + b,
+                inverse: *inv_a,
+                stack_sub: *stack_sub
+            },
+            *span
+        )
+    )
 );
 
-trait Optimization: Sync {
+trait Optimization: Debug + Sync {
     fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool;
 }
 
@@ -194,7 +296,7 @@ where
     }
 }
 
-trait OptPattern: Sync {
+trait OptPattern: Debug + Sync {
     fn match_nodes(&self, nodes: &[Node]) -> Option<(usize, Option<usize>)>;
 }
 impl OptPattern for Primitive {
@@ -221,6 +323,7 @@ impl OptPattern for i32 {
         }
     }
 }
+#[derive(Debug)]
 struct Or<A, B>(A, B);
 impl<A, B> OptPattern for Or<A, B>
 where
@@ -234,6 +337,7 @@ where
     }
 }
 
+#[derive(Debug)]
 struct M<A, B>(A, B);
 impl OptPattern for M<Primitive, Primitive> {
     fn match_nodes(&self, nodes: &[Node]) -> Option<(usize, Option<usize>)> {
@@ -251,7 +355,7 @@ impl OptPattern for M<Primitive, Primitive> {
     }
 }
 
-trait OptReplace: Sync {
+trait OptReplace: Debug + Sync {
     fn replacement_node(&self, span: usize) -> Node;
 }
 impl OptReplace for Primitive {
@@ -281,6 +385,7 @@ macro_rules! opt {
         opt!($name, ([$($pat),*] $(($cond))?, $new));
     };
     ($name:ident, $(([$($pat:pat),*] $(($cond:expr))?, $new:expr)),* $(,)?) => {
+        #[derive(Debug)]
         struct $name;
         impl Optimization for $name {
             fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool {
@@ -302,6 +407,7 @@ macro_rules! opt {
         }
     };
 }
+use fmt::Debug;
 use opt;
 
 macro_rules! opt_pattern {
