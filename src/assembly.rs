@@ -43,7 +43,7 @@ slotmap::new_key_type! {
 /// It is a lightweight handle that can be used to look up the function's code in an [`Assembly`].
 ///
 /// It also contains the function's [`FunctionId`] and [`Signature`].
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct Function {
     /// The function's id
     pub id: FunctionId,
@@ -70,6 +70,31 @@ impl Eq for Function {}
 impl Hash for Function {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.hash.hash(state);
+    }
+}
+
+impl Serialize for Function {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        (&self.id, &self.sig, &self.inner, &self.hash).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Function {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let (id, sig, inner, hash) =
+            <(FunctionId, Signature, FunctionKeyInner, u64)>::deserialize(deserializer)?;
+        Ok(Function {
+            id,
+            sig,
+            inner,
+            hash,
+        })
     }
 }
 
@@ -255,90 +280,61 @@ impl Assembly {
     }
     /// Serialize the assembly into a `.uasm` file
     pub fn to_uasm(&self) -> String {
-        // let mut uasm = String::new();
+        let mut uasm = serde_json::to_string_pretty(&self.root).unwrap();
+        uasm.push('\n');
 
-        // for instr in &self.instrs {
-        //     let json = serde_json::to_value(instr).unwrap();
-        //     match &json {
-        //         serde_json::Value::Object(map) => {
-        //             if map.len() == 1 {
-        //                 let key = map.keys().next().unwrap();
-        //                 let value = map.values().next().unwrap();
-        //                 uasm.push_str(&format!("{} {}\n", key, value));
-        //                 continue;
-        //             }
-        //         }
-        //         serde_json::Value::Array(arr) => {
-        //             if arr.len() == 2 {
-        //                 if let serde_json::Value::String(key) = &arr[0] {
-        //                     let value = &arr[1];
-        //                     uasm.push_str(&format!("{} {}\n", key, value));
-        //                     continue;
-        //                 }
-        //             }
-        //         }
-        //         serde_json::Value::String(s) => {
-        //             uasm.push_str(&format!("{s:?}"));
-        //             uasm.push('\n');
-        //             continue;
-        //         }
-        //         _ => (),
-        //     }
-        //     uasm.push_str(&json.to_string());
-        //     uasm.push('\n');
-        // }
+        uasm.push_str("\nBINDINGS\n");
+        for binding in &self.bindings {
+            if !binding.public {
+                uasm.push_str("private ");
+            }
+            if let serde_json::Value::Object(map) = serde_json::to_value(&binding.kind).unwrap() {
+                if map.len() == 1 {
+                    let key = map.keys().next().unwrap();
+                    let value = map.values().next().unwrap();
+                    uasm.push_str(&format!("{} {}\n", key, value));
+                    continue;
+                }
+            }
+            uasm.push_str(&serde_json::to_string(&binding.kind).unwrap());
+            uasm.push('\n');
+        }
 
-        // uasm.push_str("\nTOP SLICES\n");
-        // for slice in &self.top_slices {
-        //     uasm.push_str(&format!("{} {}\n", slice.start, slice.len));
-        // }
+        uasm.push_str("\nFUNCTIONS\n");
+        for (key, func) in &self.functions {
+            uasm.push_str(&serde_json::to_string(&key).unwrap());
+            uasm.push_str(": ");
+            uasm.push_str(&serde_json::to_string(&func).unwrap());
+        }
 
-        // uasm.push_str("\nBINDINGS\n");
-        // for binding in &self.bindings {
-        //     if !binding.public {
-        //         uasm.push_str("private ");
-        //     }
-        //     if let serde_json::Value::Object(map) = serde_json::to_value(&binding.kind).unwrap() {
-        //         if map.len() == 1 {
-        //             let key = map.keys().next().unwrap();
-        //             let value = map.values().next().unwrap();
-        //             uasm.push_str(&format!("{} {}\n", key, value));
-        //             continue;
-        //         }
-        //     }
-        //     uasm.push_str(&serde_json::to_string(&binding.kind).unwrap());
-        //     uasm.push('\n');
-        // }
+        uasm.push_str("\nSPANS\n");
+        for span in self.spans.iter().skip(1) {
+            if let Span::Code(span) = span {
+                uasm.push_str(&serde_json::to_string(&span.src).unwrap());
+                uasm.push(' ');
+                uasm.push_str(&serde_json::to_string(&span.start).unwrap());
+                uasm.push(' ');
+                uasm.push_str(&serde_json::to_string(&span.end).unwrap());
+            }
+            uasm.push('\n');
+        }
 
-        // uasm.push_str("\nSPANS\n");
-        // for span in self.spans.iter().skip(1) {
-        //     if let Span::Code(span) = span {
-        //         uasm.push_str(&serde_json::to_string(&span.src).unwrap());
-        //         uasm.push(' ');
-        //         uasm.push_str(&serde_json::to_string(&span.start).unwrap());
-        //         uasm.push(' ');
-        //         uasm.push_str(&serde_json::to_string(&span.end).unwrap());
-        //     }
-        //     uasm.push('\n');
-        // }
+        uasm.push_str("\nFILES\n");
+        for entry in &self.inputs.files {
+            let key = entry.key();
+            let value = entry.value();
+            uasm.push_str(&format!("{}: {:?}\n", key.display(), value));
+        }
 
-        // uasm.push_str("\nFILES\n");
-        // for entry in &self.inputs.files {
-        //     let key = entry.key();
-        //     let value = entry.value();
-        //     uasm.push_str(&format!("{}: {:?}\n", key.display(), value));
-        // }
+        if !self.inputs.strings.is_empty() {
+            uasm.push_str("\nSTRING INPUTS\n");
+            for src in &self.inputs.strings {
+                uasm.push_str(&serde_json::to_string(src).unwrap());
+                uasm.push('\n');
+            }
+        }
 
-        // if !self.inputs.strings.is_empty() {
-        //     uasm.push_str("\nSTRING INPUTS\n");
-        //     for src in &self.inputs.strings {
-        //         uasm.push_str(&serde_json::to_string(src).unwrap());
-        //         uasm.push('\n');
-        //     }
-        // }
-
-        // uasm
-        todo!()
+        uasm
     }
 }
 

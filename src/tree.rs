@@ -9,7 +9,7 @@ use std::{
 
 use ecow::{eco_vec, EcoString, EcoVec};
 use indexmap::IndexSet;
-use serde::{Deserialize, Serialize};
+use serde::*;
 
 use crate::{
     algorithm::invert::{InversionError, InversionResult},
@@ -18,14 +18,7 @@ use crate::{
 };
 
 node!(
-    Run(nodes(EcoVec<Node>)),
-    Push(val(Value)),
-    Prim(prim(Primitive), span(usize)),
-    ImplPrim(prim(ImplPrimitive), span(usize)),
-    Mod(prim(Primitive), args(Ops), span(usize)),
-    ImplMod(prim(ImplPrimitive), args(Ops), span(usize)),
     Array { len: ArrayLen, inner: Box<Node>, boxed: bool, span: usize },
-    Call(func(Function), span(usize)),
     CallGlobal(index(usize), sig(Signature)),
     CallMacro(index(usize), sig(Signature), args(Ops)),
     BindGlobal { index: usize, span: usize },
@@ -44,10 +37,24 @@ node!(
     PopUnder(n(usize), span(usize)),
     NoInline(inner(Box<Node>)),
     TrackCaller(inner(Box<Node>)),
+    (#[serde(untagged)] rep),
+    Run(nodes(EcoVec<Node>)),
+    (#[serde(untagged)] rep),
+    Push(val(Value)),
+    (#[serde(untagged)] rep),
+    Prim(prim(Primitive), span(usize)),
+    (#[serde(untagged)] rep),
+    ImplPrim(prim(ImplPrimitive), span(usize)),
+    (#[serde(untagged)] rep),
+    Mod(prim(Primitive), args(Ops), span(usize)),
+    (#[serde(untagged)] rep),
+    ImplMod(prim(ImplPrimitive), args(Ops), span(usize)),
+    (#[serde(untagged)] rep),
+    Call(func(Function), span(usize)),
 );
 
 /// A node with a signature
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct SigNode {
     /// The node
     pub node: Node,
@@ -68,6 +75,19 @@ impl SigNode {
 impl From<SigNode> for Node {
     fn from(sn: SigNode) -> Self {
         sn.node
+    }
+}
+
+impl Serialize for SigNode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (self.sig.args, self.sig.outputs, &self.node).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SigNode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (args, outputs, node) = <(usize, usize, Node)>::deserialize(deserializer)?;
+        Ok(SigNode::new(node, Signature::new(args, outputs)))
     }
 }
 
