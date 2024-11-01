@@ -358,7 +358,7 @@ impl From<&[Node]> for Node {
 
 impl<const N: usize> From<[Node; N]> for Node {
     fn from(nodes: [Node; N]) -> Self {
-        Node::from_iter(nodes.into_iter())
+        Node::from_iter(nodes)
     }
 }
 

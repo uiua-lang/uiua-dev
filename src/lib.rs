@@ -346,6 +346,9 @@ mod tests {
         if crate::ffi::DEBUG {
             panic!("ffi::DEBUG is true");
         }
+        if crate::compile::optimize::DEBUG {
+            panic!("compile::optimize::DEBUG is true");
+        }
     }
 
     #[test]
