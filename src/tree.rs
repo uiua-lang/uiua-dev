@@ -356,6 +356,12 @@ impl From<&[Node]> for Node {
     }
 }
 
+impl<const N: usize> From<[Node; N]> for Node {
+    fn from(nodes: [Node; N]) -> Self {
+        Node::from_iter(nodes.into_iter())
+    }
+}
+
 impl FromIterator<Node> for Node {
     fn from_iter<T: IntoIterator<Item = Node>>(iter: T) -> Self {
         let mut iter = iter.into_iter();
