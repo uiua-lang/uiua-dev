@@ -1403,10 +1403,7 @@ code:
                 BindingKind::IndexMacro(_) => {
                     return Err(self.error(
                         comp.module.span.clone(),
-                        format!(
-                            "`{}` is a positional macro, not a module",
-                            comp.module.value
-                        ),
+                        format!("`{}` is an index macro, not a module", comp.module.value),
                     ))
                 }
                 BindingKind::CodeMacro(_) => {
@@ -2004,28 +2001,6 @@ fn words_look_pervasive(words: &[Sp<Word>]) -> bool {
         Word::Modified(m) if m.modifier.value == Modifier::Primitive(Primitive::Each) => true,
         _ => false,
     })
-}
-
-fn collect_placeholder(words: &[Sp<Word>]) -> Vec<Sp<PlaceholderOp>> {
-    let mut ops = Vec::new();
-    for word in words {
-        match &word.value {
-            Word::Placeholder(op) => ops.push(word.span.clone().sp(*op)),
-            Word::Strand(items) => ops.extend(collect_placeholder(items)),
-            Word::Array(arr) => arr.lines.iter().for_each(|line| {
-                ops.extend(collect_placeholder(line));
-            }),
-            Word::Func(func) => func.lines.iter().rev().for_each(|line| {
-                ops.extend(collect_placeholder(line));
-            }),
-            Word::Modified(m) => ops.extend(collect_placeholder(&m.operands)),
-            Word::Pack(pack) => pack.branches.iter().for_each(|branch| {
-                (branch.value.lines.iter()).for_each(|line| ops.extend(collect_placeholder(line)))
-            }),
-            _ => {}
-        }
-    }
-    ops
 }
 
 fn set_in_macro_arg(words: &mut Vec<Sp<Word>>) {

@@ -513,7 +513,9 @@ at {}",
                     )),
                 }
             }
-            Node::CallMacro(..) => todo!("call macro"),
+            Node::CallMacro {
+                index, args, span, ..
+            } => self.with_span(span, |env| todo!()),
             Node::BindGlobal { span, index } => {
                 let local = LocalName {
                     index,

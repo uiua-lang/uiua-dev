@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    ast::{Item, Modifier, ModuleKind, PlaceholderOp, Ref, RefComponent, Word},
+    ast::{Item, Modifier, ModuleKind, Ref, RefComponent, Word},
     ident_modifier_args, is_custom_glyph,
     lex::{CodeSpan, Sp},
     parse::parse,
@@ -37,7 +37,7 @@ pub enum SpanKind {
     Label,
     Signature,
     Whitespace,
-    Placeholder(PlaceholderOp),
+    Placeholder(usize),
     Delimiter,
     FuncDelim(Signature, SetInverses),
     ImportSrc(ImportSrc),
