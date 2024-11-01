@@ -5,10 +5,30 @@ use crate::{ImplPrimitive::*, Node::*, Primitive::*};
 impl Node {
     pub(super) fn optimize(&mut self) {
         match self {
-            Node::Run(nodes) => {
+            Run(nodes) => {
                 while OPTIMIZATIONS.iter().any(|op| op.match_and_replace(nodes)) {}
                 if nodes.len() == 1 {
                     *self = take(nodes).remove(0);
+                }
+            }
+            Mod(_, args, _) | ImplMod(_, args, _) => {
+                for arg in args.make_mut() {
+                    arg.node.optimize();
+                }
+            }
+            CustomInverse(cust, _) => {
+                if let Ok(normal) = cust.normal.as_mut() {
+                    normal.node.optimize();
+                }
+                if let Some(un) = cust.un.as_mut() {
+                    un.node.optimize();
+                }
+                if let Some(anti) = cust.anti.as_mut() {
+                    anti.node.optimize();
+                }
+                if let Some((before, after)) = cust.under.as_mut() {
+                    before.node.optimize();
+                    after.node.optimize();
                 }
             }
             _ => {}
@@ -36,21 +56,119 @@ static OPTIMIZATIONS: &[&dyn Optimization] = &[
     &((Pop, Rand), ReplaceRand),
     &((Pop, Pop, Rand), ReplaceRand2),
     &TransposeOpt,
+    &ReduceTableOpt,
+    &ReduceDepthOpt,
+    &AstarOpt,
+    &PopConst,
+    &TraceOpt,
 ];
+
+opt!(PopConst, [Push(_), Prim(Pop, _)], []);
 
 opt!(
     TransposeOpt,
     (
         [Prim(Transpose, span), Prim(Transpose, _)],
-        ImplPrim(TransposeN(2), span)
+        ImplPrim(TransposeN(2), *span)
     ),
     (
         [ImplPrim(TransposeN(n), span), Prim(Transpose, _)],
-        ImplPrim(TransposeN(n + 1), span)
+        ImplPrim(TransposeN(n + 1), *span)
     ),
     (
         [ImplPrim(TransposeN(a), span), ImplPrim(TransposeN(b), _)],
-        ImplPrim(TransposeN(a + b), span)
+        ImplPrim(TransposeN(a + b), *span)
+    ),
+);
+
+opt!(
+    ReduceTableOpt,
+    [Mod(Table, table_args, span), Mod(Reduce, reduce_args, _)],
+    ImplMod(
+        ReduceTable,
+        (table_args.iter().cloned())
+            .chain(reduce_args.iter().cloned())
+            .collect(),
+        *span
+    )
+);
+
+struct ReduceDepthOpt;
+impl Optimization for ReduceDepthOpt {
+    fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool {
+        for i in 0..nodes.len() {
+            let [Mod(Rows, args, _), ..] = &nodes[i..] else {
+                continue;
+            };
+            let [f] = args.as_slice() else {
+                continue;
+            };
+            match f.node.as_slice() {
+                [Mod(Reduce, reduce_args, span)] => {
+                    let impl_mod = ImplMod(ReduceDepth(1), reduce_args.clone(), *span);
+                    replace_nodes(nodes, i, 1, impl_mod);
+                    return true;
+                }
+                [ImplMod(ReduceDepth(depth), reduce_args, span)] => {
+                    let impl_mod = ImplMod(ReduceDepth(depth + 1), reduce_args.clone(), *span);
+                    replace_nodes(nodes, i, 1, impl_mod);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
+opt!(
+    AstarOpt,
+    (
+        [Mod(Astar, args, span), Prim(First, _)],
+        ImplMod(AstarFirst, args.clone(), *span)
+    ),
+    (
+        [Mod(Astar, args, span), Prim(Pop, pop_span)],
+        [
+            ImplMod(AstarFirst, args.clone(), *span),
+            Prim(Pop, *pop_span)
+        ]
+    ),
+);
+
+opt!(
+    TraceOpt,
+    (
+        [Prim(Trace, span), Prim(Trace, _)],
+        ImplPrim(
+            TraceN {
+                n: 2,
+                inverse: false,
+                stack_sub: false
+            },
+            *span
+        )
+    ),
+    (
+        [
+            ImplPrim(
+                TraceN {
+                    n,
+                    inverse: false,
+                    ..
+                },
+                span
+            ),
+            Prim(Trace, _)
+        ],
+        ImplPrim(
+            TraceN {
+                n: n + 1,
+                inverse: false,
+                stack_sub: false
+            },
+            *span
+        )
     ),
 );
 
@@ -66,11 +184,7 @@ where
     fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool {
         for i in 0..nodes.len() {
             if let Some((n, Some(span))) = self.0.match_nodes(&nodes[i..]) {
-                let orig_len = nodes.len();
-                nodes.make_mut()[i..].rotate_left(n);
-                nodes.truncate(orig_len - n);
-                nodes.extend(self.1.replacement_node(span));
-                nodes.make_mut()[i..].rotate_left(orig_len - n);
+                replace_nodes(nodes, i, n, self.1.replacement_node(span));
                 return true;
             }
         }
@@ -149,6 +263,17 @@ impl OptReplace for ImplPrimitive {
     }
 }
 
+fn replace_nodes(nodes: &mut EcoVec<Node>, i: usize, n: usize, new: Node) {
+    // dbg!(&nodes, i, n, &new);
+    let orig_len = nodes.len();
+    debug_assert!(orig_len - n >= i);
+    nodes.make_mut()[i..].rotate_left(n);
+    nodes.truncate(orig_len - n);
+    nodes.extend(new);
+    let added = nodes.len() - (orig_len - n);
+    nodes.make_mut()[i..].rotate_right(added);
+}
+
 macro_rules! opt {
     ($name:ident, [$($pat:pat),*], $new:expr) => {
         opt!($name, ([$($pat),*], $new));
@@ -157,17 +282,13 @@ macro_rules! opt {
         struct $name;
         impl Optimization for $name {
             fn match_and_replace(&self, nodes: &mut EcoVec<Node>) -> bool {
-                const N: usize = 0 $(+ {stringify!($($pat),*); 1})*;
                 for i in 0..nodes.len() {
                     match &nodes[i..] {
                         $(
-                            &[$($pat),*, ..] => {
-                                let orig_len = nodes.len();
+                            [$($pat),*, ..] => {
+                                const N: usize = 0 $(+ {stringify!($pat); 1})*;
                                 let new = $new;
-                                nodes.make_mut()[i..].rotate_left(N);
-                                nodes.truncate(orig_len - N);
-                                nodes.extend(new);
-                                nodes.make_mut()[i..].rotate_left(orig_len - N);
+                                replace_nodes(nodes, i, N, new.into());
                                 return true;
                             }
                         )*
