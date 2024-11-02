@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     collections::hash_map::DefaultHasher,
     fmt,
     hash::{Hash, Hasher},
@@ -544,6 +545,7 @@ impl Node {
                             .iter()
                             .all(|arg| recurse(&arg.node, purity, asm, visited))
                 }
+                Node::Array { inner, .. } => recurse(inner, purity, asm, visited),
                 Node::Call(func, _) => {
                     visited.insert(func) && recurse(&asm[func], purity, asm, visited)
                 }
@@ -581,6 +583,7 @@ impl Node {
                 Node::Mod(_, args, _) | Node::ImplMod(_, args, _) => {
                     args.iter().all(|arg| recurse(&arg.node, asm, visited))
                 }
+                Node::Array { inner, .. } => recurse(inner, asm, visited),
                 Node::Call(func, _) => visited.insert(func) && recurse(&asm[func], asm, visited),
                 Node::CallGlobal(index, _) => {
                     if let Some(binding) = asm.bindings.get(*index) {
@@ -669,6 +672,18 @@ impl Node {
 impl Deref for Node {
     type Target = [Node];
     fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl AsRef<[Node]> for Node {
+    fn as_ref(&self) -> &[Node] {
+        self.as_slice()
+    }
+}
+
+impl Borrow<[Node]> for Node {
+    fn borrow(&self) -> &[Node] {
         self.as_slice()
     }
 }

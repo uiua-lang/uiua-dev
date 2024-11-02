@@ -1,11 +1,8 @@
 //! Compiler code for modifiers
 #![allow(clippy::redundant_closure_call)]
 
-use std::slice;
-
-use crate::lsp::SetInverses;
-
 use super::*;
+use pre_eval::PreEvalMode;
 
 impl Compiler {
     fn desugar_function_pack_inner(

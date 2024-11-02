@@ -23,7 +23,7 @@ pub struct Assembly {
     /// The top-level node
     pub root: Node,
     /// Functions
-    functions: EcoVec<Node>,
+    pub(crate) functions: EcoVec<Node>,
     /// A list of global bindings
     pub bindings: EcoVec<BindingInfo>,
     pub(crate) spans: EcoVec<Span>,

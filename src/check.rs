@@ -1,6 +1,7 @@
 //! Signature checker implementation
 
 use std::{
+    array,
     cell::RefCell,
     cmp::Ordering,
     collections::HashMap,
@@ -434,16 +435,27 @@ impl VirtualEnv {
                     self.handle_args_outputs(f.args + g.args, f.outputs + g.outputs);
                 }
                 Both => {
-                    let [f] = get_args(args)?;
-                    self.handle_args_outputs(f.args * 2, f.outputs * 2);
+                    let [f] = get_args_nodes(args)?;
+                    let mut args = Vec::with_capacity(f.sig.args);
+                    for _ in 0..f.sig.args {
+                        args.push(self.pop());
+                    }
+                    self.node(&f.node)?;
+                    for arg in args.into_iter().rev() {
+                        self.push(arg);
+                    }
+                    self.node(&f.node)?;
                 }
                 Dip => {
-                    let [f] = get_args(args)?;
-                    self.handle_args_outputs(f.args + 1, f.outputs + 1);
+                    let [f] = get_args_nodes(args)?;
+                    let x = self.pop();
+                    self.node(&f.node)?;
+                    self.push(x);
                 }
                 Gap => {
-                    let [f] = get_args(args)?;
-                    self.handle_args_outputs(f.args + 1, f.outputs);
+                    let [f] = get_args_nodes(args)?;
+                    _ = self.pop();
+                    self.node(&f.node)?;
                 }
                 On | By => {
                     let [f] = get_args(args)?;
@@ -517,9 +529,9 @@ impl VirtualEnv {
                 }
             }
             Node::CopyToUnder(n, _) => {
-                self.under
-                    .stack
-                    .extend(self.stack.stack.iter().rev().take(*n).cloned());
+                for val in self.stack.stack.iter().rev().take(*n).cloned() {
+                    self.under.push(val);
+                }
             }
             Node::PopUnder(n, _) => {
                 for _ in 0..*n {
@@ -610,6 +622,13 @@ impl VirtualEnv {
         }
         Ok(())
     }
+}
+
+fn get_args_nodes<const N: usize>(args: &[SigNode]) -> Result<[&SigNode; N], SigCheckError> {
+    if args.len() != N {
+        return Err(format!("Expected {} arguments, but got {}", N, args.len()).into());
+    }
+    Ok(array::from_fn(|i| &args[i]))
 }
 
 fn get_args<const N: usize>(args: &[SigNode]) -> Result<[Signature; N], SigCheckError> {

@@ -2,6 +2,7 @@ mod binding;
 mod data;
 mod modifier;
 pub(crate) mod optimize;
+mod pre_eval;
 
 use std::{
     cell::RefCell,
@@ -13,6 +14,7 @@ use std::{
     mem::{replace, swap, take},
     panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
+    slice,
     sync::Arc,
 };
 
@@ -27,7 +29,7 @@ use crate::{
     function::DynamicFunction,
     ident_modifier_args,
     lex::{CodeSpan, Sp, Span},
-    lsp::{CodeMeta, ImportSrc, SigDecl},
+    lsp::{CodeMeta, ImportSrc, SetInverses, SigDecl},
     parse::{count_placeholders, flip_unsplit_lines, parse, split_words},
     Array, ArrayLen, Assembly, BindingKind, Boxed, CustomInverse, Diagnostic, DiagnosticKind,
     DocComment, DocCommentSig, Function, FunctionId, GitTarget, Ident, ImplPrimitive, InputSrc,
@@ -35,6 +37,7 @@ use crate::{
     Signature, SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult, Value, CONSTANTS,
     EXAMPLE_UA, SUBSCRIPT_NUMS, VERSION,
 };
+pub use pre_eval::PreEvalMode;
 
 /// The Uiua compiler
 #[derive(Clone)]
@@ -237,48 +240,6 @@ pub struct LocalName {
     pub public: bool,
 }
 
-/// The mode that dictates how much code to pre-evaluate at compile time
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum PreEvalMode {
-    /// Evaluate as much as possible at compile time, even impure expressions
-    ///
-    /// Recursive functions and certain system functions are not evaluated
-    Lsp,
-    /// Does not evalute pure constants and expressions at comptime, but still evaluates `comptime`
-    Lazy,
-    /// Pre-evaluate each line, but not multiple lines together
-    Line,
-    /// The normal mode. Tries to evaluate pure, time-bounded constants and expressions at comptime
-    #[default]
-    Normal,
-}
-
-const MAX_PRE_EVAL_ELEMS: usize = 1000;
-const MAX_PRE_EVAL_RANK: usize = 4;
-
-impl PreEvalMode {
-    #[allow(unused)]
-    fn matches_node(&self, node: &Node, asm: &Assembly) -> bool {
-        if node.iter().any(|node| {
-            matches!(
-                node,
-                Node::Push(val)
-                    if val.element_count() > MAX_PRE_EVAL_ELEMS
-                    || val.rank() > MAX_PRE_EVAL_RANK
-            )
-        }) {
-            return false;
-        }
-        match self {
-            PreEvalMode::Normal | PreEvalMode::Line => {
-                node.is_pure(Purity::Pure, asm) && node.is_limit_bounded(asm)
-            }
-            PreEvalMode::Lazy => false,
-            PreEvalMode::Lsp => node.is_pure(Purity::Impure, asm) && node.is_limit_bounded(asm),
-        }
-    }
-}
-
 impl Compiler {
     /// Create a new compiler
     pub fn new() -> Self {
@@ -429,6 +390,16 @@ impl Compiler {
         let res = self.catching_crash(input, |env| env.items(items, false));
 
         self.asm.root.optimize();
+        if let Some((root, errs)) = self.pre_eval(&self.asm.root) {
+            self.asm.root = root;
+            self.errors.extend(errs);
+        }
+        for i in 0..self.asm.functions.len() {
+            if let Some((root, errs)) = self.pre_eval(&self.asm.functions[i]) {
+                self.asm.functions.make_mut()[i] = root;
+                self.errors.extend(errs);
+            }
+        }
         // dbg!(&self.asm.root);
 
         if self.print_diagnostics {
