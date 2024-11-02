@@ -513,24 +513,38 @@ at {}",
                     )),
                 }
             }
-            Node::CallMacro {
-                index, args, span, ..
-            } => self.with_span(span, |env| todo!()),
+            Node::CallMacro { index, span, .. } => self.with_span(span, |env| {
+                let binding = env.asm.bindings.get(index).ok_or_else(|| {
+                    env.error(
+                        "Called out-of-bounds binding. \
+                        This is a bug in the interpreter.",
+                    )
+                })?;
+                let func = match &binding.kind {
+                    BindingKind::Func(f) => f.clone(),
+                    _ => {
+                        return Err(env.error(
+                            "Recursive macro is not bound as a function. \
+                            This is a bug in the interpreter.",
+                        ))
+                    }
+                };
+                env.call(&func)
+            }),
             Node::BindGlobal { span, index } => {
                 let local = LocalName {
                     index,
                     public: false,
                 };
-                if let Some(mut value) = self.rt.stack.pop() {
-                    value.compress();
-                    // Binding is a constant
-                    self.asm.bind_const(local, Some(value), span, None);
-                } else {
+                let Some(mut value) = self.rt.stack.pop() else {
                     return Err(self.error(
                         "No values on the stack for binding. \
                         This is a bug in the interpreter",
                     ));
-                }
+                };
+                value.compress();
+                // Binding is a constant
+                self.asm.bind_const(local, Some(value), span, None);
                 Ok(())
             }
             Node::Array {

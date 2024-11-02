@@ -907,12 +907,10 @@ impl Compiler {
             match self.scope.kind {
                 ScopeKind::Temp(Some(mac_local)) if mac_local.macro_index == local.index => {
                     // Recursive
-                    let args = self.args(operands)?;
                     if let Some(sig) = mac.sig {
                         Node::CallMacro {
                             index: mac_local.expansion_index,
                             sig,
-                            args,
                             span,
                         }
                     } else {
@@ -1109,10 +1107,7 @@ impl Compiler {
             })?
             .1
         } else {
-            // Recursive index macro inside itself
-            let _ = self.words(operands)?;
-            let _ = self.ident(r.name.value.clone(), r.name.span, true)?;
-            todo!("recursive index macro inside itself")
+            Node::empty()
         };
         self.macro_depth -= 1;
         Ok(node)
