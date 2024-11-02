@@ -343,7 +343,10 @@ under!(OnPat, input, g_sig, asm, On, span, [f], {
 });
 
 under!(BothPat, input, g_sig, asm, Both, span, [f], {
-    let inner_g_sig = Signature::new(g_sig.args.saturating_sub(1), g_sig.outputs);
+    let inner_g_sig = Signature::new(
+        g_sig.args.saturating_sub(1),
+        g_sig.outputs.saturating_sub(1),
+    );
     let (f_before, mut f_after) = f.under_inverse(inner_g_sig, asm)?;
     let before = Mod(Both, eco_vec![f_before], span);
     let after = if g_sig.args > g_sig.outputs {

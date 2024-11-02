@@ -199,7 +199,7 @@ impl fmt::Display for ImplPrimitive {
             UndoUnbits => write!(f, "{Under}{Un}{Bits}"),
             AntiBase => write!(f, "{Under}{Base}"),
             UndoReverse { .. } => write!(f, "{Under}{Reverse}"),
-            UndoTransposeN(..) => write!(f, "{Under}{Transpose}"),
+            UndoTransposeN(n, _) => write!(f, "{Under}{Transpose}({n})"),
             UndoRotate(_) => write!(f, "{Under}{Rotate}"),
             UndoTake => write!(f, "{Under}{Take}"),
             UndoDrop => write!(f, "{Under}{Drop}"),
