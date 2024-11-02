@@ -137,7 +137,10 @@ impl Compiler {
                         nodes.push(sn);
                         spans.push(span);
                     }
-                    let mut cust = CustomInverse::default();
+                    let mut cust = CustomInverse {
+                        is_obverse: true,
+                        ..Default::default()
+                    };
                     match nodes.as_slice() {
                         [a, b] => {
                             cust.normal = Ok(a.clone());
@@ -637,6 +640,7 @@ impl Compiler {
                 let mut cust = CustomInverse {
                     normal: Ok(sn.clone()),
                     under: Some((sn.clone(), sn.clone())),
+                    is_obverse: true,
                     ..Default::default()
                 };
                 if sn.sig == sn.sig.inverse() {

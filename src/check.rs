@@ -75,26 +75,6 @@ pub(crate) struct AllSignatures {
     pub under: Signature,
 }
 
-pub(crate) fn naive_under_sig(f: Signature, g: Signature) -> Signature {
-    let f_inv = if f.outputs > 1 {
-        f.inverse()
-    } else {
-        Signature::new(f.args.min(1), f.outputs)
-    };
-    let mut curr = 0i32;
-    let mut min = 0i32;
-    curr -= f.args as i32;
-    min = min.min(curr);
-    curr += f.outputs as i32;
-    curr -= g.args as i32;
-    min = min.min(curr);
-    curr += g.outputs as i32;
-    curr -= f_inv.args as i32;
-    min = min.min(curr);
-    curr += f_inv.outputs as i32;
-    Signature::new(min.unsigned_abs() as usize, (curr - min) as usize)
-}
-
 /// An environment that emulates the runtime but only keeps track of the stack.
 struct VirtualEnv {
     stack: Stack,
@@ -417,10 +397,6 @@ impl VirtualEnv {
                 Anti => {
                     let [sig] = get_args(args)?;
                     self.handle_sig(sig.anti().unwrap_or(sig));
-                }
-                Under => {
-                    let [f, g] = get_args(args)?;
-                    self.handle_sig(naive_under_sig(f, g));
                 }
                 Fold => {
                     let [f] = get_args(args)?;

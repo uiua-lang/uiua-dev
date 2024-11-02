@@ -128,6 +128,10 @@ pub struct CustomInverse {
     /// The anti inverse
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anti: Option<SigNode>,
+    /// Whether this was created with obverse
+    ///
+    /// Inverses that are not set by obverse may be overridden
+    pub is_obverse: bool,
 }
 
 impl Default for CustomInverse {
@@ -137,6 +141,7 @@ impl Default for CustomInverse {
             un: None,
             under: None,
             anti: None,
+            is_obverse: false,
         }
     }
 }
