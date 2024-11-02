@@ -1154,7 +1154,7 @@ impl<'a> Formatter<'a> {
                 self.format_modifier(&m.modifier);
                 self.format_words(&m.operands, true, depth);
             }
-            Word::Placeholder(op) => self.push(&word.span, &op.to_string()),
+            Word::Placeholder(i) => self.push(&word.span, &format!("^{i}")),
             Word::Subscript(sub) => match &sub.word.value {
                 Word::Modified(m) => {
                     self.format_modifier(&m.modifier);
