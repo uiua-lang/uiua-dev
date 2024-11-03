@@ -182,6 +182,7 @@ pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
     &FillPat,
     &InsertPat,
     &DupPat,
+    &DumpPat,
     &(Sqrt, (Dup, Mul)),
     &(Select, (Dup, Len, Range)),
     &(Pick, (Dup, Shape, Range)),
@@ -793,6 +794,10 @@ inverse!(DupPat, input, asm, Prim(Dup, dup_span), {
         }
     };
     Ok((input, inverse))
+});
+
+inverse!(DumpPat, input, _, ref, Mod(Dump, args, span), {
+    Ok((input, ImplMod(UnDump, args.clone(), *span)))
 });
 
 #[derive(Debug)]
