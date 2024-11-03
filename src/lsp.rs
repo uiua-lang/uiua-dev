@@ -85,33 +85,67 @@ pub enum BindingDocsKind {
     },
 }
 
-/// Get spans and their kinds from Uiua code
-pub fn spans(input: &str) -> (Vec<Sp<SpanKind>>, Inputs) {
-    spans_with_backend(input, SafeSys::default())
+/// Span data extracted from Uiua code
+pub struct Spans {
+    /// The spans
+    pub spans: Vec<Sp<SpanKind>>,
+    /// The inputs used to build the spans
+    pub inputs: Inputs,
+    /// Top-level values for lines
+    pub top_level_values: BTreeMap<usize, Vec<Value>>,
 }
 
-#[doc(hidden)]
-/// Used for coloring code in the REPL
-pub fn spans_with_compiler(input: &str, compiler: &Compiler) -> (Vec<Sp<SpanKind>>, Inputs) {
-    let mut compiler = compiler.clone();
-    let src = InputSrc::Str(compiler.asm.inputs.strings.len().saturating_sub(1));
-    let (items, _, _) = parse(input, src.clone(), &mut compiler.asm.inputs);
-    let spanner = Spanner {
-        src,
-        asm: compiler.asm,
-        code_meta: compiler.code_meta,
-        errors: Vec::new(),
-        diagnostics: Vec::new(),
-    };
-    (spanner.items_spans(&items), spanner.asm.inputs.clone())
-}
-
-/// Get spans and their kinds from Uiua code with a custom backend
-pub fn spans_with_backend(input: &str, backend: impl SysBackend) -> (Vec<Sp<SpanKind>>, Inputs) {
-    let src = InputSrc::Str(0);
-    let (items, _, _) = parse(input, src.clone(), &mut Inputs::default());
-    let spanner = Spanner::new(src, input, backend);
-    (spanner.items_spans(&items), spanner.asm.inputs)
+impl Spans {
+    /// Get spans and their kinds from Uiua code
+    pub fn from_input(input: &str) -> Self {
+        Self::with_backend(input, SafeSys::default())
+    }
+    /// Get spans and their kinds from Uiua code with a custom backend
+    pub fn with_backend(input: &str, backend: impl SysBackend) -> Self {
+        let src = InputSrc::Str(0);
+        let (items, _, _) = parse(input, src.clone(), &mut Inputs::default());
+        let spanner = Spanner::new(src, input, backend);
+        let spans = spanner.items_spans(&items);
+        let inputs = spanner.asm.inputs;
+        let top_level_values = spanner
+            .code_meta
+            .top_level_values
+            .into_iter()
+            .map(|(span, vals)| (span.start.line as usize, vals))
+            .collect();
+        Spans {
+            spans,
+            inputs,
+            top_level_values,
+        }
+    }
+    #[doc(hidden)]
+    /// Get spans using the given compiler
+    pub fn with_compiler(input: &str, compiler: &Compiler) -> Self {
+        let mut compiler = compiler.clone();
+        let src = InputSrc::Str(compiler.asm.inputs.strings.len().saturating_sub(1));
+        let (items, _, _) = parse(input, src.clone(), &mut compiler.asm.inputs);
+        let spanner = Spanner {
+            src,
+            asm: compiler.asm,
+            code_meta: compiler.code_meta,
+            errors: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        let spans = spanner.items_spans(&items);
+        let inputs = spanner.asm.inputs;
+        let top_level_values = spanner
+            .code_meta
+            .top_level_values
+            .into_iter()
+            .map(|(span, vals)| (span.start.line as usize, vals))
+            .collect();
+        Spans {
+            spans,
+            inputs,
+            top_level_values,
+        }
+    }
 }
 
 /// Code metadata for use in IDE tools

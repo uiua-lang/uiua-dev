@@ -13,6 +13,8 @@ This version is not yet released. If you are reading this on the website, then t
   - This massively simplifies compilation as well as optimizations and the derivation of inverses
   - This should not affect any language semantics
 - Improve pattern matching error messages
+### Website
+- Add a new pad setting to show line values to the right of the code
 
 ## 0.13.0 - 2024-10-21
 You can find the release announcement [here](https://uiua.org/blog/uiua-0.13.0).

@@ -189,7 +189,7 @@ pub use self::{
     function::*,
     lex::is_ident_char,
     lex::*,
-    lsp::{spans, SpanKind},
+    lsp::{SpanKind, Spans},
     parse::{ident_modifier_args, parse, ParseError},
     primitive::*,
     run::*,
@@ -258,7 +258,7 @@ mod tests {
             }
 
             // Make sure lsp spans doesn't panic
-            _ = spans(&code);
+            _ = Spans::from_input(&code);
         }
         _ = std::fs::remove_file("example.ua");
     }
@@ -305,7 +305,7 @@ mod tests {
         use super::*;
         for path in test_files(|_| true) {
             let code = std::fs::read_to_string(&path).unwrap();
-            spans(&code);
+            Spans::from_input(&code);
         }
     }
 
