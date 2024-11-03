@@ -675,9 +675,10 @@ impl Compiler {
                 let spandex = self.add_span(span.clone());
                 let mut cust = CustomInverse {
                     normal: Ok(sn.clone()),
+                    un: (sn.sig.args == sn.sig.outputs).then(|| sn.clone()),
+                    anti: (sn.sig == (2, 2)).then(|| sn.clone()),
                     under: Some((sn.clone(), sn.clone())),
                     is_obverse: true,
-                    ..Default::default()
                 };
                 if sn.sig == sn.sig.inverse() {
                     cust.un = Some(sn.clone());

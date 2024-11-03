@@ -362,7 +362,6 @@ F ← {⊓$A$B} # Track caller!
 
 # Memo
 F ← memo(+⌊×10⚂)
-
 ⍤⤙≍ F1 F1
 ⍤⤙≍ F5 F5
 
@@ -388,6 +387,10 @@ B ← |1 (⨬(+⊃(B-1|B-2)|1)<2.)
 F ← ⌅(+|-) # Track Caller!
 ⍤⤙≍ 7 F 2 5
 ⍤⤙≍ 3 ⌝F 2 5
+
+# Composition with contra inverse
+F ← ⌅⍜⊢¯ ⊏⊙"nubtqphsoe" -@0 °⋕
+⍤⤙≍ ⟜(°F F) 118
 
 # ThisFile
 ⍤⤙≍ $"tests_units.ua" Sep ThisFile

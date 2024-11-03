@@ -13,11 +13,6 @@ impl Node {
         dbgln!("anti-inverting {self:?}");
         anti_inverse(self.as_slice(), asm)
     }
-    /// Get the contra inverse of this node
-    fn contra_inverse(&self, asm: &Assembly) -> InversionResult<Node> {
-        dbgln!("contra-inverting {self:?}");
-        contra_inverse(self.as_slice(), asm)
-    }
 }
 
 impl SigNode {
@@ -29,12 +24,6 @@ impl SigNode {
     /// Get the anti inverse of this node
     pub fn anti_inverse(&self, asm: &Assembly) -> InversionResult<SigNode> {
         let inv = self.node.anti_inverse(asm)?;
-        let sig = self.sig.anti().ok_or(Generic)?;
-        Ok(SigNode::new(inv, sig))
-    }
-    /// Get the contra inverse of this node
-    fn contra_inverse(&self, asm: &Assembly) -> InversionResult<SigNode> {
-        let inv = self.node.contra_inverse(asm)?;
         let sig = self.sig.anti().ok_or(Generic)?;
         Ok(SigNode::new(inv, sig))
     }
@@ -83,7 +72,7 @@ pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
         for pattern in ANTI_PATTERNS {
             match pattern.invert_extract(curr, asm) {
                 Ok((new, anti_inv)) => {
-                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
+                    dbgln!("matched anti pattern {pattern:?}\n  on {curr:?}\n  to {anti_inv:?}");
                     curr = new;
                     anti.prepend(anti_inv);
                     got_anti = true;
@@ -114,7 +103,9 @@ pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
         for pattern in UN_PATTERNS {
             match pattern.invert_extract(curr, asm) {
                 Ok((new, un_inv)) => {
-                    dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {un_inv:?}");
+                    dbgln!(
+                        "matched un pattern for anti {pattern:?}\n  on {curr:?}\n  to {un_inv:?}"
+                    );
                     curr = new;
                     post.prepend(un_inv);
                     continue 'outer;
@@ -138,29 +129,6 @@ pub fn anti_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
 
     dbgln!("anti-inverted\n     {input:?}\n  to {anti:?}");
     Ok(anti)
-}
-
-pub fn contra_inverse(input: &[Node], asm: &Assembly) -> InversionResult<Node> {
-    let mut curr = input;
-    let mut error = Generic;
-    for pattern in CONTRA_PATTERNS {
-        match pattern.invert_extract(curr, asm) {
-            Ok((new, mut contra_inv)) => {
-                dbgln!("matched pattern {pattern:?}\n  on {curr:?}\n  to {contra_inv:?}");
-                curr = new;
-                if curr.is_empty() {
-                    dbgln!("contra-inverted\n  {input:?}\n  to {contra_inv:?}");
-                    return Ok(contra_inv);
-                }
-                let rest_inv = un_inverse(curr, asm)?;
-                contra_inv.push(rest_inv);
-                dbgln!("contra-inverted\n  {input:?}\n  to {contra_inv:?}");
-                return Ok(contra_inv);
-            }
-            Err(e) => error = error.max(e),
-        }
-    }
-    Err(error)
 }
 
 pub static UN_PATTERNS: &[&dyn InvertPattern] = &[
@@ -374,8 +342,12 @@ inverse!(ByPat, input, asm, By, span, [f], {
         }
     }
     // Contra inverse
-    let inv = f.contra_inverse(asm)?;
-    Ok((input, Mod(By, eco_vec![inv], span)))
+    for pat in CONTRA_PATTERNS {
+        if let Ok(([], inv)) = pat.invert_extract(&f.node, asm) {
+            return Ok((input, Mod(By, eco_vec![inv.sig_node()?], span)));
+        }
+    }
+    generic()
 });
 
 inverse!("Match a constant exactly", (MatchConst, input, asm), {
@@ -388,13 +360,13 @@ inverse!(
     "Matches an anti inverse with the first argument as part of the input",
     (InnerAnti, input, asm),
     {
-        if let Ok((input, mut node)) = Val.invert_extract(input, asm) {
+        if let Ok((inp, val)) = Val.invert_extract(input, asm) {
             // Starts with a value
-            for end in (1..=input.len()).rev() {
-                if let Ok(inv) = anti_inverse(&input[..end], asm) {
-                    node.push(inv);
-                    dbgln!("matched inner anti pattern for un\n  on {input:?}\n  to {node:?}");
-                    return Ok((&input[end..], node));
+            for end in 1..=inp.len() {
+                if let Ok(mut inv) = anti_inverse(&inp[..end], asm) {
+                    inv.prepend(val);
+                    dbgln!("matched inner anti pattern for un\n  on {input:?}\n  to {inv:?}");
+                    return Ok((&inp[end..], inv));
                 }
             }
             generic()
@@ -422,10 +394,14 @@ inverse!(InnerContraDip, input, asm, Dip, dip_span, [f], {
     let ([], val) = Val.invert_extract(f.node.as_slice(), asm)? else {
         return generic();
     };
-    let mut contra = contra_inverse(input, asm)?;
-    contra.prepend(Prim(Flip, dip_span));
-    contra.prepend(val);
-    Ok((&[], contra))
+    for pat in CONTRA_PATTERNS {
+        if let Ok((inp, mut inv)) = pat.invert_extract(input, asm) {
+            inv.prepend(Prim(Flip, dip_span));
+            inv.prepend(val);
+            return Ok((inp, inv));
+        }
+    }
+    generic()
 });
 
 inverse!(
