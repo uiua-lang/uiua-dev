@@ -53,8 +53,13 @@ impl PreEvalMode {
             let len = visited.len();
             let matches = match node {
                 Node::Run(nodes) => nodes.iter().all(|node| recurse(mode, node, asm, visited)),
-                Node::Mod(_, args, _) | Node::ImplMod(_, args, _) => {
-                    args.iter().all(|sn| recurse(mode, &sn.node, asm, visited))
+                Node::Mod(prim, args, _) => {
+                    prim.purity() == Purity::Pure
+                        && args.iter().all(|sn| recurse(mode, &sn.node, asm, visited))
+                }
+                Node::ImplMod(prim, args, _) => {
+                    prim.purity() == Purity::Pure
+                        && args.iter().all(|sn| recurse(mode, &sn.node, asm, visited))
                 }
                 Node::NoInline(_) => false,
                 Node::Array { inner, .. } => recurse(mode, inner, asm, visited),
@@ -111,7 +116,7 @@ impl Compiler {
                     && nodes_clean_sig(section).is_some_and(|sig| sig.args == 0 && sig.outputs > 0)
                 {
                     let mut success = false;
-                    match self.comptime_node(section.into()) {
+                    match self.comptime_node(&section.into()) {
                         Ok(Some(values)) => {
                             // println!("section: {section:?}");
                             // println!("values: {values:?}");
@@ -145,16 +150,29 @@ impl Compiler {
         }
         new.map(|new| (new, errors))
     }
-    fn comptime_node(&self, node: Node) -> UiuaResult<Option<Vec<Value>>> {
+    pub(super) fn comptime_node(&self, node: &Node) -> UiuaResult<Option<Vec<Value>>> {
+        if node.iter().all(|node| matches!(node, Node::Push(_))) {
+            return Ok(Some(
+                node.iter()
+                    .map(|node| match node {
+                        Node::Push(val) => val.clone(),
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            ));
+        }
+        if !self.pre_eval_mode.matches_node(node, &self.asm) {
+            return Ok(None);
+        }
         thread_local! {
             static CACHE: RefCell<HashMap<Node, Option<Vec<Value>>>> = RefCell::new(HashMap::new());
         }
         CACHE.with(|cache| {
-            if let Some(stack) = cache.borrow_mut().get(&node) {
+            if let Some(stack) = cache.borrow_mut().get(node) {
                 return Ok(stack.clone());
             }
             let mut asm = self.asm.clone();
-            asm.root = node;
+            asm.root = node.clone();
             let mut env = if self.pre_eval_mode == PreEvalMode::Lsp {
                 #[cfg(feature = "native_sys")]
                 {

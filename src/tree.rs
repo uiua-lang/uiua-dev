@@ -580,6 +580,7 @@ impl Node {
             let is = match node {
                 Node::Run(nodes) => nodes.iter().all(|node| recurse(node, asm, visited)),
                 Node::Prim(Primitive::Send | Primitive::Recv, _) => false,
+                Node::Prim(Primitive::Sys(op), _) if op.purity() <= Purity::Mutating => false,
                 Node::Mod(_, args, _) | Node::ImplMod(_, args, _) => {
                     args.iter().all(|arg| recurse(&arg.node, asm, visited))
                 }

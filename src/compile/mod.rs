@@ -523,7 +523,7 @@ code:
         &mut self,
         mut lines: Vec<Vec<Sp<Word>>>,
         must_run: bool,
-        _precomp: bool,
+        precomp: bool,
         prelude: &mut BindingPrelude,
     ) -> UiuaResult {
         fn words_should_run_anyway(words: &[Sp<Word>]) -> bool {
@@ -593,7 +593,10 @@ code:
                 );
             }
             // Compile the words
+            let binding_count_before = self.asm.bindings.len();
+            let root_len_before = self.asm.root.len();
             let mut line_node = self.line(line, true)?;
+            let binding_count_after = self.asm.bindings.len();
             match line_node.sig() {
                 Ok(sig) => {
                     // Update scope stack height
@@ -611,6 +614,37 @@ code:
                                 line_node.pop();
                                 line_node.push(Node::ImplPrim(ImplPrimitive::TestAssert, span));
                             }
+                        }
+                    }
+                    // Try to evaluate at comptime
+                    // This can be done when:
+                    // - the pre-eval mode is not `Line`
+                    // - there are at least as many push nodes preceding the current line as there are arguments to the line
+                    // - the words create no bindings
+                    if precomp
+                        && self.pre_eval_mode != PreEvalMode::Line
+                        && !line_node.is_empty()
+                        && binding_count_before == binding_count_after
+                        && root_len_before == self.asm.root.len()
+                        && self.asm.root.len() >= sig.args
+                        && (self.asm.root.iter().rev().take(sig.args))
+                            .all(|node| matches!(node, Node::Push(_)))
+                    {
+                        // The nodes for evaluation are the preceding
+                        // push nodes, followed by the current line
+                        let mut node = Node::from(&self.asm.root[self.asm.root.len() - sig.args..]);
+                        node.extend(line_node.iter().cloned());
+                        match self.comptime_node(&node) {
+                            Ok(Some(vals)) => {
+                                // Track top-level values
+                                self.code_meta.top_level_values.insert(span, vals.clone());
+                                // Truncate root
+                                self.asm.root.truncate(self.asm.root.len() - sig.args);
+                                // Set line node to the evaluated values
+                                line_node = vals.into_iter().map(Node::Push).collect();
+                            }
+                            Ok(None) => {}
+                            Err(e) => self.errors.push(e),
                         }
                     }
                 }

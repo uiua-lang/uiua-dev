@@ -249,7 +249,14 @@ impl Compiler {
                     let val = if let [Node::Push(v)] = node.as_slice() {
                         Some(v.clone())
                     } else {
-                        None
+                        match self.comptime_node(&node) {
+                            Ok(Some(vals)) => vals.into_iter().next(),
+                            Ok(None) => None,
+                            Err(e) => {
+                                self.errors.push(e);
+                                None
+                            }
+                        }
                     };
 
                     let is_const = val.is_some();
