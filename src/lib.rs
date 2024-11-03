@@ -340,7 +340,7 @@ mod tests {
                 }
             }
         });
-        if crate::algorithm::invert::DEBUG {
+        if crate::compile::invert::DEBUG {
             panic!("invert::DEBUG is true");
         }
         if crate::ffi::DEBUG {

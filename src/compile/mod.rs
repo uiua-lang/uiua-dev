@@ -1,5 +1,6 @@
 mod binding;
 mod data;
+pub(crate) mod invert;
 mod modifier;
 pub(crate) mod optimize;
 mod pre_eval;

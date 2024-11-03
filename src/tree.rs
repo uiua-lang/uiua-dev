@@ -13,8 +13,8 @@ use indexmap::IndexSet;
 use serde::*;
 
 use crate::{
-    algorithm::invert::{InversionError, InversionResult},
     check::SigCheckError,
+    compile::invert::{InversionError, InversionResult},
     Assembly, BindingKind, DynamicFunction, Function, ImplPrimitive, Primitive, Signature, Value,
 };
 

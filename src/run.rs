@@ -17,8 +17,9 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use thread_local::ThreadLocal;
 
 use crate::{
-    algorithm::{self, invert::match_format_pattern, validate_size_impl},
+    algorithm::{self, validate_size_impl},
     fill::Fill,
+    invert::match_format_pattern,
     lex::Span,
     Array, ArrayLen, Assembly, BindingKind, Boxed, CodeSpan, Compiler, Function, FunctionId, Ident,
     ImplPrimitive, Inputs, IntoSysBackend, LocalName, Node, Primitive, Report, SafeSys, SigNode,

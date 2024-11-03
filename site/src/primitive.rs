@@ -486,7 +486,7 @@ fn listed_examples() {
         let Some(end) = line.rfind("\"#").or_else(|| line.rfind('"')) else {
             continue;
         };
-        println!("{line}");
+        eprintln!("{line}");
         let Some(start) = line[..end]
             .rfind("r#\"")
             .map(|i| i + 3)
