@@ -1615,12 +1615,8 @@ code:
                             [Node::Format(..), Node::Prim(Primitive::Dup, _)] => return true,
                             _ => (),
                         }
-                        if !(sub.is_pure(Purity::Pure, &self.asm)
-                            && sub.sig().is_ok_and(|sig| sig == (0, 2)))
-                        {
-                            return false;
-                        }
-                        todo!("switch flex eval")
+                        sub.is_pure(Purity::Pure, &self.asm)
+                            || !sub.sig().is_ok_and(|sig| sig == (0, 2))
                     })
                 });
             br.push((SigNode::new(node, sig), span));
