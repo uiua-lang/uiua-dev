@@ -457,9 +457,27 @@ impl VirtualEnv {
                     _ = self.pop();
                     self.node(&f.node)?;
                 }
-                On | By => {
-                    let [f] = get_args(args)?;
-                    self.handle_args_outputs(f.args.max(1), f.outputs + 1);
+                On => {
+                    let [f] = get_args_nodes(args)?;
+                    let x = self.pop();
+                    self.push(x.clone());
+                    self.node(&f.node)?;
+                    self.push(x);
+                }
+                By => {
+                    let [f] = get_args_nodes(args)?;
+                    let mut args = Vec::with_capacity(f.sig.args);
+                    for _ in 0..f.sig.args {
+                        args.push(self.pop());
+                    }
+                    let x = args.last().cloned();
+                    for arg in args.into_iter().rev() {
+                        self.push(arg);
+                    }
+                    self.node(&f.node)?;
+                    if let Some(x) = x {
+                        self.push(x);
+                    }
                 }
                 Above | Below => {
                     let [f] = get_args(args)?;

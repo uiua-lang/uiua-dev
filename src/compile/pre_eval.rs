@@ -29,29 +29,31 @@ const MAX_PRE_EVAL_RANK: usize = 4;
 
 impl PreEvalMode {
     #[allow(unused)]
-    fn matches_node(&self, node: &Node, asm: &Assembly) -> bool {
+    fn matches_nodes(&self, nodes: &[Node], asm: &Assembly) -> bool {
+        if nodes.iter().all(|node| matches!(node, Node::Push(_))) {
+            return true;
+        }
         if let PreEvalMode::Lazy = self {
             return false;
         }
-        if node.iter().any(|node| {
+        if nodes.iter().any(|node| {
             matches!(
                 node,
                 Node::Push(val)
                     if val.element_count() > MAX_PRE_EVAL_ELEMS
                     || val.rank() > MAX_PRE_EVAL_RANK
             )
-        }) || node.iter().all(|node| matches!(node, Node::Push(_)))
-        {
+        }) {
             return false;
         }
         fn recurse<'a>(
             mode: PreEvalMode,
-            node: &'a Node,
+            nodes: &'a [Node],
             asm: &'a Assembly,
             visited: &mut IndexSet<&'a Function>,
         ) -> bool {
             let len = visited.len();
-            let matches = match node {
+            let matches = nodes.iter().all(|node| match node {
                 Node::Run(nodes) => nodes.iter().all(|node| recurse(mode, node, asm, visited)),
                 Node::Mod(prim, args, _) => {
                     prim.purity() == Purity::Pure
@@ -71,37 +73,24 @@ impl PreEvalMode {
                             _ => node.is_pure(Purity::Pure, asm),
                         }
                 }
-            };
+            });
             visited.truncate(len);
             matches
         }
-        recurse(*self, node, asm, &mut IndexSet::new())
+        recurse(*self, nodes, asm, &mut IndexSet::new())
     }
 }
 
 impl Compiler {
+    fn can_pre_eval(&self, nodes: &[Node]) -> bool {
+        self.pre_eval_mode.matches_nodes(nodes, &self.asm)
+    }
     pub(super) fn pre_eval(&self, node: &Node) -> Option<(Node, Vec<UiuaError>)> {
         let mut errors = Vec::new();
-        if !self.pre_eval_mode.matches_node(node, &self.asm) {
-            return if node
-                .iter()
-                .any(|node| self.pre_eval_mode.matches_node(node, &self.asm))
-            {
-                let node = node
-                    .iter()
-                    .map(|node| {
-                        if let Some((new, errs)) = self.pre_eval(node) {
-                            errors.extend(errs);
-                            new
-                        } else {
-                            node.clone()
-                        }
-                    })
-                    .collect();
-                Some((node, errors))
-            } else {
-                None
-            };
+        if self.pre_eval_mode == PreEvalMode::Lazy
+            || node.iter().all(|node| matches!(node, Node::Push(_)))
+        {
+            return None;
         }
         // println!("pre eval {:?}", node);
         let mut start = 0;
@@ -110,15 +99,13 @@ impl Compiler {
         'start: while start < node.len() {
             for end in (start + 1..=node.len()).rev() {
                 let section = &node[start..end];
-                if section
-                    .iter()
-                    .all(|node| node.is_pure(Purity::Pure, &self.asm))
-                    && nodes_clean_sig(section).is_some_and(|sig| sig.args == 0 && sig.outputs > 0)
+                if nodes_clean_sig(section).is_some_and(|sig| sig.args == 0 && sig.outputs > 0)
+                    && self.can_pre_eval(section)
                 {
+                    // println!("section: {section:?}");
                     let mut success = false;
                     match self.comptime_node(&section.into()) {
                         Ok(Some(values)) => {
-                            // println!("section: {section:?}");
                             // println!("values: {values:?}");
                             for val in &values {
                                 val.validate_shape();
@@ -161,7 +148,7 @@ impl Compiler {
                     .collect(),
             ));
         }
-        if !self.pre_eval_mode.matches_node(node, &self.asm) {
+        if !self.can_pre_eval(node) {
             return Ok(None);
         }
         thread_local! {

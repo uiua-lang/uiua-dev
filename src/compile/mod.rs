@@ -390,15 +390,15 @@ impl Compiler {
 
         let res = self.catching_crash(input, |env| env.items(items, false));
 
+        // Optimize root
         self.asm.root.optimize();
-        if let Some((root, errs)) = self.pre_eval(&self.asm.root) {
-            self.asm.root = root;
-            self.errors.extend(errs);
-        }
+        // Optimize and pre-eval functions
         for i in 0..self.asm.functions.len() {
+            self.asm.functions.make_mut()[i].optimize();
             if let Some((root, errs)) = self.pre_eval(&self.asm.functions[i]) {
                 self.asm.functions.make_mut()[i] = root;
                 self.errors.extend(errs);
+                self.asm.functions.make_mut()[i].optimize();
             }
         }
         // dbg!(&self.asm.root);
@@ -598,6 +598,7 @@ code:
             let root_len_before = self.asm.root.len();
             let mut line_node = self.line(line, true)?;
             let binding_count_after = self.asm.bindings.len();
+            line_node.optimize();
             match line_node.sig() {
                 Ok(sig) => {
                     // Update scope stack height
@@ -635,17 +636,23 @@ code:
                         // push nodes, followed by the current line
                         let mut node = Node::from(&self.asm.root[self.asm.root.len() - sig.args..]);
                         node.extend(line_node.iter().cloned());
-                        match self.comptime_node(&node) {
-                            Ok(Some(vals)) => {
-                                // Track top-level values
-                                self.code_meta.top_level_values.insert(span, vals.clone());
-                                // Truncate root
-                                self.asm.root.truncate(self.asm.root.len() - sig.args);
-                                // Set line node to the evaluated values
-                                line_node = vals.into_iter().map(Node::Push).collect();
+                        if let Some((node, errs)) = self.pre_eval(&node) {
+                            self.errors.extend(errs);
+                            // Track top-level values
+                            if node.iter().all(|node| matches!(node, Node::Push(_))) {
+                                let vals: Vec<_> = node
+                                    .iter()
+                                    .map(|node| match node {
+                                        Node::Push(val) => val.clone(),
+                                        _ => unreachable!(),
+                                    })
+                                    .collect();
+                                self.code_meta.top_level_values.insert(span, vals);
                             }
-                            Ok(None) => {}
-                            Err(e) => self.errors.push(e),
+                            // Truncate root
+                            self.asm.root.truncate(self.asm.root.len() - sig.args);
+                            // Set line node to the pre-evaluated node
+                            line_node = node;
                         }
                     }
                 }
